@@ -1,0 +1,43 @@
+/* Custom MBOM layout overrides */
+
+body.mode-ebom.no-viewer #tabs {
+    left: 0 !important;
+    right: 50% !important;
+    width: unset !important;
+}
+
+body.mode-ebom.no-viewer #mbom {
+    left: 50% !important;
+    right: 0 !important;
+    width: unset !important;
+}
+
+body.mode-ebom.no-viewer #ebom {
+    left: 0 !important;
+    right: 0 !important;
+    width: unset !important;
+}
+
+body.mode-ebom.no-viewer #tabs #viewer,
+body.mode-ebom.no-viewer #tabs #add,
+body.mode-ebom.no-viewer #tabs #operations,
+body.mode-ebom.no-viewer .tab-group-main#viewer,
+body.mode-ebom.no-viewer .tab-group-main#add,
+body.mode-ebom.no-viewer .tab-group-main#operations {
+    display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+}
+
+body.mode-ebom.no-viewer .tab-group-main#ebom,
+body.mode-ebom.no-viewer #tabs #ebom {
+    display: block !important;
+    visibility: visible !important;
+}
+
+body.mode-ebom.no-viewer #toggle-viewer {
+    visibility: visible !important;
+    display: inline-flex !important;
+}
