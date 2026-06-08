@@ -82,3 +82,27 @@ body.dark-theme {
     background : #E0E0E0;
     border-color     : #B0B0B0;
 } */
+
+/* Override header logo to MaM_Software_white.png */
+#header-logo {
+    background-image: url('../images/MaM_Software_white.png') !important;
+    background-size: 56px;
+    background-repeat: no-repeat;
+    background-position: left center;
+    width: 56px;
+    height: 28px;
+    cursor: pointer;
+}
+
+.light-theme #header-logo {
+    background-image: url('../images/MaM_Software_white.png') !important;
+}
+
+#header.dark #header-logo {
+    background-image: url('../images/MaM_Software_white.png') !important;
+    background-size: 130px;
+    height: 42px;
+    max-width: 130px;
+    min-width: 130px;
+    width: 130px;
+}
