@@ -14,8 +14,8 @@
 //  me merged with your custom settings before. This enables administrators to copy individual settings to be changed
 //  from settings.js to custom.js. When updates to settings.js will be provided, the custom settings will still remain
 // ---------------------------------------------------------------------------------------------------------------------------
-exports.tenant       = '';
-exports.clientId     = '';
+exports.tenant       = 'mumbalawender';
+exports.clientId     = 'bDCj0mIgXejQpaG1NfZg474xl3HQW8DOhFKDahLs5mWiEeww';
 exports.redirectUri  = 'http://localhost:8080/callback';
 exports.defaultTheme = 'dark';
 exports.enableCache  = true;    
