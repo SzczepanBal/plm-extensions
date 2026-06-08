@@ -74,6 +74,7 @@ router.get('/error-loading', function(req, res, next) {
 router.get('/abom'          , function(req, res, next) { launch('apps/abom'          , 'abom'          , 'Asset BOM Editor'         , req, res, next); });
 router.get('/classes'       , function(req, res, next) { launch('apps/classes'       , 'classes'       , 'Classification Browser'   , req, res, next); });
 router.get('/client'        , function(req, res, next) { launch('apps/client'        , ''              , 'Mobile PLM Client'        , req, res, next); });
+router.get('/compare'       , function(req, res, next) { launch('apps/compare'       , 'compare'       , 'BOM Comparison'           , req, res, next); });
 router.get('/dashboard'     , function(req, res, next) { launch('apps/dashboard'     , 'dashboard'     , 'Dashboard'                , req, res, next); });
 router.get('/explorer'      , function(req, res, next) { launch('apps/explorer'      , 'explorer'      , 'Product Data Explorer'    , req, res, next); });
 router.get('/impactanalysis', function(req, res, next) { launch('apps/impactanalysis', 'impactanalysis', 'Change Impact Analysis'   , req, res, next); });
@@ -149,7 +150,6 @@ router.get('/pdm'          , function(req, res, next) { launch('dev/pdm'        
 router.get('/pdm-explorer' , function(req, res, next) { launch('dev/pdm-explorer' , '', 'PDM Explorer'                     , req, res, next); });
 router.get('/pnd'          , function(req, res, next) { launch('dev/pnd'          , '', 'Product Data & Processes Explorer', req, res, next); });
 router.get('/resources'    , function(req, res, next) { launch('dev/resources'    , 'resources', 'Resource Allocation'     , req, res, next); });
-router.get('/specification', function(req, res, next) { launch('dev/specification', '', 'Product Specification Editor'     , req, res, next); });
 router.get('/studio'       , function(req, res, next) { launch('dev/studio'       , '', 'Panel Configuration Studio'       , req, res, next); });
 router.get('/transmittals' , function(req, res, next) { launch('dev/transmittals' , '', 'Transmittals Client'              , req, res, next); });
 router.get('/worklist'     , function(req, res, next) { launch('dev/worklist'     , 'worklist', 'Worklist'                 , req, res, next); });

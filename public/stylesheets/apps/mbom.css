@@ -1,7 +1,7 @@
 :root {
 
-    --border-v : 16px;
-    --border-h : 24px;
+    --border-v : 14px;
+    --border-h : 20px;
     
     --width-mbom         : 620px;
     --width-ebom         : 820px;
@@ -15,7 +15,7 @@
     --width-quantity : 42px;
     --width-make-buy : 60px;
 
-    --icon-size     : 22px;
+    --icon-size     : 20px;
     --height-item   : 26px;
     --padding-panel : 20px;
 
@@ -107,7 +107,8 @@ body.mode-operations #viewer { display : block !important; top : 42px; left : 0p
 body.mode-operations #ebom, body.mode-operations #add { display : none !important; }
 body.mode-operations #my-custom-toolbar-views { display : none !important; }
 
-body.details-on #tabs    { right : var(--width-details); }
+body.details-on #tabs    { right : calc(var(--width-mbom) + (2 * var(--border-h)) + var(--width-details)); }
+body.details-on #mbom    { right : var(--width-details) }
 body.details-on #details { right : 0px; }
 
 body.details-on.no-viewer #mbom         { width : calc(50% - (2 * var(--padding-panel)) - 2px - (var(--width-details) / 2)); }
@@ -124,7 +125,6 @@ body.details-on.no-viewer #tabs         { left : calc(50% + (2 * var(--border-h)
 .item.root { border-top : none; }
 .item.root > .item-head { background : var(--color-surface-level-3); }
 .item.root > .item-head .item-toggle,
-.item.root > .item-head .button-filter,
 .item.root > .item-head .button-view,
 .item.root > .item-head .button-view,
 .item.root > .item-head .button-copy,
@@ -215,10 +215,10 @@ body.details-on.no-viewer #tabs         { left : calc(50% + (2 * var(--border-h)
     max-height  : calc(var(--height-item) - 2px);
     min-height  : calc(var(--height-item) - 2px);
     height      : calc(var(--height-item) - 2px);
-    line-height : var(--height-item);
-    max-width   : var(--height-item);
-    min-width   : var(--height-item);
-    width       : var(--height-item);
+    line-height : calc(var(--height-item) - 2px);
+    max-width   : calc(var(--height-item) - 2px);
+    min-width   : calc(var(--height-item) - 2px);
+    width       : calc(var(--height-item) - 2px);
 }
 .item-head-action.button-remove { order : 1; }
 .item-head-action.button-copy   { order : 2; }
@@ -896,7 +896,7 @@ select.view-selector {
 .item > .item-head > .item-icon { 
     background    : var(--color-surface-level-5); 
     border-top    : 1px solid transparent;
-    border-right  : 2px solid var(--color-font); 
+    /* border-right  : 2px solid var(--color-font);  */
     border-bottom : 1px solid transparent;
     border-left   : 1px solid transparent;
     color         : var(--color-font); 
@@ -1012,7 +1012,8 @@ select.view-selector {
     font-weight : bold;
 }
 #convert-confirm {
-    background : var(--color-status-red) !important;
+    background   : var(--color-status-red) !important;
+    border-color : var(--color-status-red) !important;
 }
 
 
@@ -1030,6 +1031,15 @@ select.view-selector {
 #details-subtitle.item-subtitle,
 #details-subtitle.item-subtitle > * {
     font-size : 14px;
+}
+#details-content {
+    right  : 10px;
+    bottom : 10px;
+    left   : 10px;
+}
+#details-tabs {
+    left  : 24px;
+    right : 24px;
 }
 .item-summary > span {
     font-weight : normal;
