@@ -106,3 +106,23 @@ body.dark-theme {
     min-width: 130px;
     width: 130px;
 }
+
+/* Override startup / waiting logo */
+#startup-logo {
+    background-image: url('../images/MaM_Software_white.png') !important;
+    background-size: 390px;
+    background-repeat: no-repeat;
+    height: 258px;
+    width: 390px;
+    position: absolute;
+    top: calc(50% - 220px);
+    left: calc(50% - 195px);
+}
+
+.dark-theme #startup-logo {
+    background-image: url('../images/MaM_Software_white.png') !important;
+}
+
+.light-theme #startup-logo {
+    background-image: url('../images/MaM_Software_white.png') !important;
+}
