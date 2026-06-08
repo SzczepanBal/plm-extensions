@@ -249,7 +249,7 @@ function getUsers() {
     dataUsers = null;
 
     $.get('/plm/users', { 
-        bulk       : false,
+        bulk       : true,
         activeOnly : true, 
         mappedOnly : false
     }, function(response) {
@@ -364,7 +364,7 @@ function getGroups() {
 
     dataGroups = null;
 
-    $.get('/plm/groups', { bulk : true }, function(response) {
+    $.get('/plm/groups', { bulk : true, limit : 500 }, function(response) {
 
         for(let group of response.data.items) {
 
@@ -471,7 +471,7 @@ function getWorkspaceViews(iWorkspace) {
                         .attr('data-workspace', response.params.title)
                         .on('dblclick', function() {
                             let ws = $(this).attr('data-workspace');
-                            $('.view').each(function() {
+                            $('.view:visible').each(function() {
                                 if($(this).attr('data-workspace') === ws) {
                                     $(this).addClass('selected');
                                 }
@@ -570,7 +570,7 @@ function getCharts() {
                 .attr('data-link', chart.__self__)
                 .on('dblclick', function() {
                     let ws = $(this).attr('data-workspace');
-                    $('.chart').each(function() {
+                    $('.chart:visible').each(function() {
                         if($(this).attr('data-workspace') === ws) {
                             $(this).addClass('selected');
                         }
@@ -985,19 +985,22 @@ function insertUsersGroupsGrid() {
             .addClass('group-column-filter')
             .addClass('icon')
             .addClass('icon-starts-with')
-            .attr('title', 'Filter for users assigned to this group')
-            .click(function() {
+            .attr('title', 'Filter for users assigned to this group. Use [Shift] to select multiple groups.')
+            .click(function(e) {
 
                 $(this).toggleClass('active');
 
                 let isActive = $(this).hasClass('active');
 
-                $('.icon-starts-with').removeClass('active');
+                if(!e.shiftKey) $('.icon-starts-with').removeClass('active');
+
                 $('#users-groups-grid-tbody').children().removeClass('hidden');
 
-                if(isActive) {
+                if(isActive) $(this).addClass('active');
 
-                    $(this).addClass('active');
+                let listActive = $('.icon-starts-with.active');
+
+                listActive.each(function() {
 
                     let elemCell = $(this).closest('th');
                     let index    = elemCell.index() + 3;
@@ -1011,7 +1014,7 @@ function insertUsersGroupsGrid() {
 
                     });
                     
-                }
+                });
 
             });
 

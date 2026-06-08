@@ -971,7 +971,8 @@ function clickSearchResult(elemClicked, e) {
 // Insert advanced SEARCH results
 function insertResults(wsId, filters, params) {
 
-    if(isBlank(params)) params = {};
+    if(isBlank(params )) params  = {};
+    if(isBlank(filters)) filters = params.filters;
 
     let id = isBlank(params.id) ? 'results' : params.id;
 
@@ -1083,8 +1084,6 @@ function insertResults(wsId, filters, params) {
             settings[id].fields.push('WF_CURRENT_STATE');
         }
     }
-
-    console.log(settings[id]);
 
     settings[id].load = function() { insertResultsData(id, true); }
 

@@ -37,6 +37,8 @@ let paramsProcesses       = {
     singleToolbar       : 'actions'
 }
 
+let disableViewerSelectionEvent = false;
+
 
 $(document).ready(function() {
 
@@ -102,7 +104,7 @@ $(document).ready(function() {
                 let link = '/api/v3/workspaces/' + urlParameters.wsidcontext + '/items/' + urlParameters.dmsidcontext;
                 openSelectedProductOrAsset(link, 'assets', config.assets.fieldIDs);
             } else if(urlParameters.wsidcontext == workspaceIds.products) {
-                let link = '/api/v3/workspaces/' + urlParameters.wsidcontext + '/items/' + urlParameters.dmsidcontext;
+                let link = '/api/v3/workspaces/' + urlParameters.wsidcontext + '/items/' + (urlParameters.dmsidcontext || urlParameters.dmsId);
                 openSelectedProductOrAsset(link, 'products', config.products.fieldIDs);
             } else if(urlParameters.link !== '') {
                 links.ebom = urlParameters.link;
@@ -2003,7 +2005,7 @@ function onViewerSelectionChanged(event) {
     if (event.dbIdArray.length === 1) {
 
         let proceed = true;
-        let parents = getComponentParents(event.dbIdArray[0]);
+        let parents = viewerGetComponentParents(event);
 
         for(let parent of parents) {
             if(proceed) {
