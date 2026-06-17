@@ -1,0 +1,29 @@
+/*  ADDITIONS */
+/* ----------------------------------------------------------------------------- */
+.dashboard {
+    padding : 10px 30px 30px;
+}
+.report.chart {
+    width: calc(33% - 78px);
+}
+.tiles.grid.m > .tile {
+    max-width   : 400px;
+    min-width   : 400px;
+    width       : 400px;
+}
+.tile-subtitle {
+    white-space : nowrap;
+}
+
+/*  DIALOG */
+/* ----------------------------------------------------------------------------- */
+.dialog {
+    top     : 120px;
+    right   : 180px;
+    bottom  : 120px;
+    left    : 180px;
+}
+.button.clear {
+    float : left;
+    margin-left : 0px;
+}

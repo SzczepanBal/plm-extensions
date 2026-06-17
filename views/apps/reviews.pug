@@ -1,0 +1,104 @@
+extends ../framework/layout
+
+block head
+
+    link(rel='stylesheet', href='/stylesheets/apps/reviews.css')
+    link(rel='stylesheet', href='/stylesheets/custom/reviews.css')
+
+    script(src='/javascripts/apps/reviews.js') 
+    script(src='/javascripts/custom/reviews.js') 
+
+block body
+
+    body.surface-level-1
+
+        #header.dark
+            #header-logo
+            #header-title= title
+            #header-subtitle
+            #header-toolbar
+                #toggle-panel.button.with-icon.icon-toggle-on.filled.hidden(title='Close this review and return to landing page') Toggle Panel
+                #review-close.button.with-icon.icon-close.hidden(title='Close this review and return to landing page') Close
+                #review-finish.button.with-icon.icon-check.hidden(title='Submit this review to its next status and return to landing page') Finish
+                #header-avatar
+
+        #list.screen.panel
+        
+            #main-actions.button.with-icon.icon-filter
+                input#filter(placeholder='Filter')
+        
+            .tabs#main-tabs(data-tab-group='main-tab')
+                #tab-reviews-pending Pending Reviews
+                #tab-reviews-completed Completed Reviews
+                #tab-reviews-all All Reviews
+        
+            .panel-content.surface-level-2#panel-pending.main-tab
+                #list-pending.tiles.grid.xxl
+                #empty 
+                    .icon.icon.icon-info.xxxl
+                    p There are now reviews in this view   
+            
+            .panel-content.surface-level-2#panel-completed.main-tab
+                #list-completed.tiles.grid.xxl
+                #empty 
+                    .icon.icon.icon-info.xxxl
+                    p There are now reviews in this view   
+            
+            .panel-content.surface-level-2#panel-all.main-tab
+                #list-all.tiles.grid.xxl
+                #empty 
+                    .icon.icon.icon-info.xxxl
+                    p There are now reviews in this view   
+
+        #review.screen
+
+            #viewer.viewer.surface-level-2
+            
+            #panel.panel.with-subtitle.with-toggles.compact 
+
+                .panel-header
+                    .panel-subtitle#panel-subtitle
+                    .panel-title#panel-title
+
+                .panel-toggles
+                    div(data-id='comments') Comments
+                    div(data-id='files') Files
+                    div(data-id='bom') BOM
+                    div(data-id='actions') Actions
+
+                .panel-content.with-toolbar#comments
+
+                    .panel-content-toolbar
+                        #button-save-comments.button.default Save
+                    .panel-content-data#comments-data.no-scrollbar
+                        .form-header Requirements
+                        .form-hint Define additional requirements that are not met by the design
+                        textarea#requirements(rows="6")
+                        .form-header Issues
+                        .form-hint Describe any issues that you find within the current design
+                        textarea#issues(rows="6")
+                        .form-header Concerns
+                        .form-hint Let us know if there are concerns about functionality or quality of the current design
+                        textarea#concerns(rows="6")
+                        .form-header Alternatives
+                        .form-hint You got an alternative in mind that we should review? Please describe your proposal
+                        textarea#alternatives(rows="6")
+                        .form-header Deficiencies
+                        .form-hint Any deficiency should go in here
+                        textarea#deficiencies(rows="6")
+                        .form-message Please note that you can use the tab Files to upload documents with additional contents or even define a given action for us to follow up in the Actions tab.
+                
+                .panel-content.with-toolbar#files.surface-level-1
+
+                .panel-content.with-toolbar#bom.surface-level-1
+
+                .panel-content.with-toolbar#actions.surface-level-1
+
+        #create-task.dialog
+
+        #dialog.dialog
+            .dialog-header Finish Design Review
+            .dialog-content Do you really want to finish this Design Review? If you confirm with Yes, you may still access the review later on and review all its data and actions, but you will not be able to edit it any longer.
+            .dialog-footer
+                #dialog-yes.button.default Yes 
+                #dialog-no.button No

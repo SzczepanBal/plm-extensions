@@ -1,0 +1,66 @@
+extends ../framework/layout
+
+block head
+    
+    link(rel='stylesheet', href='/stylesheets/apps/variants.css')
+    link(rel='stylesheet', href='/stylesheets/custom/variants.css')
+    
+    script(src='/javascripts/apps/variants.js')
+    script(src='/javascripts/custom/variants.js')
+        
+block body 
+
+    body.surface-level-1.with-summary
+    
+        #header.dark
+            #header-logo
+            #header-title=title
+            #header-subtitle
+            #header-toolbar
+                .button#button-create-variant.disabled.default(title='Create new variant') Create Variant
+                .button#button-toggle-viewer.with-icon.icon-viewer(title='Click to toggle size of the viewer') Toggle Viewer
+                .button#button-toggle-details.with-icon.icon-panel.filled(title='Click to toggle item details panel on/off') Toggle Details
+                #header-avatar
+        
+        #main.screen.wide-viewer.with-details
+
+            #viewer.viewer
+            
+            #bom.surface-level-1
+
+            #item.surface-level-3
+
+            #create.dialog.surface-level-1
+
+        #selector.dialog
+
+        #dialog-saving.dialog
+            .dialog-header Saving Changes
+            .dialog-content
+                #step1.step 
+                    .step-label#step-label1
+                    .step-progress
+                        #step-bar1.step-bar
+                    #step-counter1.step-counter 
+                #step2.step 
+                    .step-label#step-label2
+                    .step-progress
+                        #step-bar2.step-bar
+                    #step-counter2.step-counter 
+                #step3.step 
+                    .step-label#step-label3
+                    .step-progress
+                        #step-bar3.step-bar
+                    #step-counter3.step-counter 
+                #step4.step 
+                    .step-label#step-label4
+                    .step-progress
+                        #step-bar4.step-bar
+                    #step-counter4.step-counter 
+                #step5.step 
+                    .step-label#step-label5
+                    .step-progress
+                        #step-bar5.step-bar
+                    #step-counter5.step-counter 
+            .dialog-footer
+                #confirm-saving.button.disabled Close     

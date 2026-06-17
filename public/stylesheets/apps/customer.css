@@ -1,0 +1,119 @@
+:root {
+    --width-container   : 1140px;
+    --height-container  : 600px;
+    --width-guide       :  300px;
+    --padding-guide     : 50px;
+}
+body {
+    background : var(--color-gray-100);
+}
+#header-avatar {
+    margin : 0px;
+    height : 72px;
+    width  : 72px;
+}
+
+/*  MASTER LAYOUT */
+/* ----------------------------------------------------------------------------- */
+#container {
+    left : calc(50% - (var(--width-container) / 2));
+    top : calc(50% - 460px);
+    height : var(--height-container);
+    width : var(--width-container);
+}
+#container > div {
+    position : absolute;
+    top : 0px;
+    bottom : 0px;
+}
+#guide {
+    left : 0px;
+    width : var(--width-guide);
+}
+#applications {
+    left : calc(var(--width-guide) + 24px);
+    right : 0px;
+}
+
+
+
+/*  MAIN */
+/* ----------------------------------------------------------------------------- */
+#logo {
+    background-image: url(../../images/autodesk-logo-white.png);
+    background-size: 130px;
+    cursor : pointer;
+    height: 72px;
+    margin : 30px 0px 0px 36px;
+    width: 130px;
+}
+#title {
+    font-size : 32px;
+    font-weight : 800;
+    line-height : 32px;
+    padding : 40px var(--padding-guide) 10px;
+}
+#welcome {
+    display : flex;
+    justify-content: center;
+    padding : 0px var(--padding-guide);
+}
+#help {
+    padding : var(--padding-guide);
+}
+
+
+/*  GUIDE */
+/* ----------------------------------------------------------------------------- */
+#guide {
+    background : var(--color-dark-blue-700);
+    color : white;
+}
+
+
+/*  APPLICATIONS */
+/* ----------------------------------------------------------------------------- */
+#applications {
+    display : flex;
+    flex-direction: column;
+    gap : 20px;
+}
+#applications > div {
+    display : flex;
+    flex-direction: row;
+    float:unset;
+    flex-grow : 1;
+    gap : 30px;
+    min-width: unset;
+    padding : 30px 30px 30px 30px;
+    margin: 0px;
+}
+.button-icon {
+    font-size : 72px;
+    font-weight : 300;
+    line-height : 76px;
+}
+.button-labels { flex-grow : 1;}
+.button-labels > div { text-align : left; }
+.button-title {
+    font-weight : 800;
+    font-size : 24px;
+    line-height : 42px;
+}
+.button-description {
+    font-size : 14px;
+    line-height : 16px;
+    overflow:visible;
+    white-space: normal !important;
+}
+#applications > div::after  {
+    font: normal normal normal 14px/1 'Material Symbols Sharp';
+    font-size : 40px;
+    line-height : 76px;
+    margin-right : 8px;
+    position: relative;
+    top : 2px;
+}
+#applications > div::after {
+    content: '\e5cc';
+}

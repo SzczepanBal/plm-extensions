@@ -1,0 +1,15 @@
+/* MASTER LAYOUT */
+/* ----------------------------------------------------------------------------- */
+#item {
+    border-top-width : 6px;
+    top     : 0px;
+    right   : 0px;
+    bottom  : 0px;
+    left    : 0px;
+}
+
+
+/* OVERRIDE */
+/* ----------------------------------------------------------------------------- */
+#item-subtitle,
+#item-close { display : none; }

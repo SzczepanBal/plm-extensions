@@ -1,0 +1,106 @@
+#viewer-visibility.doc-content 
+    
+    h1 Toggle Component Visibility
+    .definition Hide and unhide components in the viewer. The components may not be shown at all or in transparency mode if ghosting mode is enabled.
+    
+    h2 viewerHideModel(partNumber, params) 
+    p Hides all instances of the component with defined part number. This will call the function viewerHideModels with exact same parameters as described next.
+    p.code 
+        span.indent-1 viewerSetColor('002771', {
+        span.indent-2 usePath : false
+        span.indent-1 });
+    
+    h2 viewerHideModels(partNumbers, params) 
+    p Hides all instances of all components within list of part numbers.
+    p.code 
+        span.indent-1 viewerHideModels(['002771','003881','009119'], {
+        span.indent-2 usePath : false
+        span.indent-1 }) ;
+    p Use the params object (JSON) to enable the required behavior using the parameters listed below.
+    p 
+        table.row-hovering
+            tr 
+                th Parameter 
+                th Description 
+                th Type
+                th Default Value
+            tr 
+                td ghosting
+                td When components get hidden in the viewer, they can be ghosted instead by setting this parameter to true (this behavior is overwritten by the ghosting toggle in the viewer toolbar if enabled)
+                td Boolean 
+                td true  
+            tr 
+                td usePath
+                td Enable this option if paths are provided instead of part numbers, enabling to interact with definded instances of a part number. You can use method getBOMItemPath in BOM display to get the matching path of a selected item.
+                td Boolean 
+                td false
+
+    h2 viewerUnhideModel(partNumber, params) 
+    p Unides all instances of the component with defined part number. This will invoke function viewerHideModels (described next) with exact same parameters.
+    p.code viewerUnhideModel('002771') ;
+    
+    h2 viewerUnhideModels(partNumbers, params) 
+    p Hides all instances of all components within list of part numbers.
+    p.code 
+        span.indent-1 viewerUnhideModelss(['002771','003881','009119'] {
+        span.indent-2 'fitToView' : true
+        span.indent-1 }) ;
+    p Use the params object (JSON) to enable the required behavior using the parameters listed below.
+    p 
+        table.row-hovering
+            tr 
+                th Parameter 
+                th Description 
+                th Type
+                th Default Value
+            tr 
+                td fitToView
+                td This will refresh the viewer after components got unhidden to fit these components into screen
+                td Boolean 
+                td true
+            tr 
+                td highlight
+                td Highlight the components being unhidden by defined color
+                td Boolean 
+                td true                     
+            tr 
+                td resetColors
+                td If set to true, all colors of all components will be reset before
+                td Boolean 
+                td true    
+            tr 
+                td usePath
+                td Enable this option if paths are provided instead of part numbers, enabling to interact with definded instances of a part number. You can use method getBOMItemPath in BOM display to get the matching path of a selected item.
+                td Boolean 
+                td false                    
+            tr 
+                td color
+                td Defines the color to be used for highlighting the given components
+                td Array (red, green, blue, transparency)
+                td [240, 0, 0, 0.5]   
+    h2 viewerUnhideAll(params) 
+    p This will show all components
+    p.code viewerUnhideAll();
+    p Use the params object (JSON) to enable the required behavior using the parameters listed below.
+    p 
+        table.row-hovering
+            tr 
+                th Parameter 
+                th Description 
+                th Type
+                th Default Value
+            tr 
+                td fitToView
+                td This will refresh the viewer after components got unhidden to fit all components into screen
+                td Boolean 
+                td true
+            tr 
+                td resetColors
+                td If set to true, all colors of all components will be reset before
+                td Boolean 
+                td true           
+            tr 
+                td keepHidden
+                td If the hide feature is enabled in the viewer toolbar, the components will remain hidden and reset button will remain
+                td Boolean 
+                td true

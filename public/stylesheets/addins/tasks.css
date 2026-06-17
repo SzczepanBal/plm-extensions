@@ -1,0 +1,83 @@
+/* MASTER LAYOUT */
+/* ----------------------------------------------------------------------------- */
+#mow {
+    border-width : 14px;
+    top          : 0px;
+    right        : 0px;
+    bottom       : 0px;
+    left         : 0px;
+}
+#task {
+    border-width : 14px;
+    top          : 0px;
+    right        : 0px;
+    bottom       : 0px;
+    left         : 0px;
+}
+#add,
+#scrtask {
+    display : none;
+}
+
+
+body.display-task #scrmo   { display : none;  }
+body.display-task #scrtask { display : block; }
+
+
+
+/* MOW */
+/* ----------------------------------------------------------------------------- */
+.mow-date {
+    width : 56px;
+}
+
+
+
+/* TASK */
+/* ----------------------------------------------------------------------------- */
+#task-summary { display : none; }
+.item-status { color : var(--color-font); }
+
+
+/* ADD MANAGED ITEMS DIALOG */
+/* ----------------------------------------------------------------------------- */
+#add {
+    box-shadow : none;
+    /* top: var(--padding-main);
+    left: var(--padding-main);
+    right: var(--padding-main);
+    bottom: var(--padding-main); */
+    left : 0px;
+    right : 0px;
+    bottom : 0px;
+    top : 112px;
+}
+.dialog > div {
+    background : transparent;
+}
+#add-list {
+    min-height : 200px;
+}
+#add .dialog-content {
+
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+}
+#add-deselect, #add-select { float : left;}
+
+#add .dialog-header {
+    padding: 10px;
+    font-size: 14px;
+    font-weight: bold;
+    margin: var(--padding-main);
+    border: none;
+}
+#add .dialog-content {
+    top : 50px;
+}
+#add-root .tile-actions,
+#add-list .tile-actions {
+    right : 41px
+}

@@ -1,0 +1,379 @@
+:root {
+
+    --width-summary : 712px;
+    --width-images  : 140px;
+
+}
+
+
+/*  OVERRIDES */
+/* ----------------------------------------------------------------------------- */
+#header-subtitle {
+    display : none;
+}
+.tiles.grid.xxl .tile-title {
+    font-size   : 20px;
+    line-height : 36px;
+}
+.tiles.grid.xxl .tile-subtitle {
+    height          : 112px;
+    max-height      : 112px;
+    min-height      : 112px;
+    overflow-y      : auto;
+    text-overflow   : ellipsis;
+    white-space     : wrap;
+}
+.panel-sections {
+    gap : 26px;
+}
+.panel-header-toggle {
+    padding-left : 0px;
+}
+#item-section-images {
+    background : none;
+}
+#item-section-images-content {
+    justify-content: flex-start;
+    overflow-y : hidden;
+}
+.grid { width : 100%; }
+.grid th {
+    border     : none !important; 
+    background : var(--color-surface-level-2) !important; 
+}
+.grid td { 
+    background   : var(--color-surface-level-1) !important; 
+    border-color : var(--color-surface-level-2) !important; 
+}
+#item-section-images-content { 
+    background : var(--color-surface-level-2); 
+    gap        : 2px;
+}
+#item-section-images-content > .content-item {
+    max-height  : var(--width-images);
+    min-height  : var(--width-images);
+    height      : var(--width-images);
+    line-height : var(--width-images);
+    max-width   : var(--width-images);
+    min-width   : var(--width-images);
+    width       : var(--width-images);
+}
+.attachment-graphic { background : var(--color-surface-level-1) !important; }
+.attachment-version { background : var(--color-surface-level-3) !important; }
+#item-section-bom-actions { 
+    background      : var(--color-surface-level-1);
+    padding         : 8px;
+    justify-content : right;
+    position        : unset; 
+}
+#item-section-bom-search-input {
+    padding : 8px;
+}
+
+
+/*  MAIN LAYOUT */
+/* ----------------------------------------------------------------------------- */
+.viewer {
+    top     : 0px;
+    right   : calc(var(--width-summary) + 60px);
+    bottom  : 0px;
+    left    : 0px;
+}
+#summary {
+    border-width    : 32px 48px; 
+    top             : 0px;
+    right           : 0px;
+    bottom          : 0px;
+    width           : var(--width-summary);
+}
+
+
+/*  COMMON */
+/* ----------------------------------------------------------------------------- */
+.screen {
+    display : none;
+}
+.screen-panel {
+    border-width : 60px;
+    border-top-width: 100px;
+    overflow-y: auto;
+    width: 350px;
+    position: absolute;
+    top: 0px;
+    bottom: 0px;
+    left: 0px;
+    padding: 0px;
+}
+.screen-images {
+    display     : flex;
+    gap         : 5px;
+    margin-top  : 5px;
+}
+.screen-images > div {
+    background : var(--color-surface-level-3);
+    border-radius : 10px;
+    color : #fff;
+    flex-grow : 1;
+    font-size : 24px;
+    height : 60px;
+    line-height : 60px;
+    text-align : center;
+}
+.screen-image img, .screen-images img {
+    border-radius : 10px;
+    cursor : pointer;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.screen-title {
+    font-size : 18px;
+    font-weight : 800;
+    line-height : 18px;
+    padding : 25px 0px 0px 0px;
+    white-space : nowrap;
+}
+.screen-header {
+    border-bottom   : 2px solid var(--color-surface-level-5);
+    font-size       : 30px;
+    font-weight     : 800;
+    line-height     : 30px;
+    padding         : 35px 25px 25px;
+    text-align      : center;
+    position        : absolute;
+    top             : 0px;
+    right           : 80px;
+    left            : 80px;
+}
+.screen-tiles {
+    position    : absolute;
+    top         : 110px;
+    right       : 80px;
+    bottom      : 40px;
+    left        : 80px;
+}
+.screen.with-panel .screen-header,
+.screen.with-panel .screen-tiles {
+    left : 550px;
+}
+.screen-back {
+    display : flex;
+    margin-left : 0px !important;
+    top : 30px;
+    left : 60px;
+    z-index : 1;
+}
+.screen-back::before {
+    content : '\e5e0';
+    font: normal normal normal 14px/1 'Material Symbols Sharp';
+    font-size : 18px;
+}
+
+.tiles {
+    justify-content : center;
+}
+
+.animation {
+    background: linear-gradient(270deg, var(--color-surface-level-2) 40%, var(--color-surface-level-3) 50%, var(--color-surface-level-2) 60%);
+    background-size: 200% 200%;
+
+    -webkit-animation: AnimationName 2s ease infinite;
+    -moz-animation: AnimationName 2s ease infinite;
+    animation: AnimationName 2s ease infinite;
+}
+@-webkit-keyframes AnimationName {
+    1000%{background-position:0% 50%}
+    0%{background-position:100% 50%}
+}
+@-moz-keyframes AnimationName {
+    100%{background-position:0% 50%}
+    0%{background-position:100% 50%}
+}
+@keyframes AnimationName { 
+    100%{background-position:0% 50%}
+    0%{background-position:100% 50%}
+}
+
+
+/*  LANDING */
+/* ----------------------------------------------------------------------------- */
+#landing {
+    display : block;
+}
+.nav {
+    display : none;
+}
+.nav.selected {
+    display : block;
+}
+.nav-title {
+    border-bottom   : 2px solid var(--color-surface-level-5);
+    font-size       : 30px;
+    font-weight     : 900;
+    line-height     : 30px;
+    overflow        : hidden;
+    padding-bottom  : 15px;
+    text-align      : center;
+    text-overflow   : ellipsis;
+    white-space     : nowrap;
+    position        : absolute;
+    top             : 100px;
+    right           : 150px;
+    left            : 150px;
+}
+.nav-tiles {
+    padding         : 10px;
+    position        : absolute;
+    top             : 160px;
+    right           : 150px;
+    bottom          : 80px;
+    left            : 150px;
+}
+.nav-tiles .tile-image {
+    height      : 200px;
+    text-align  : center;
+}
+
+
+#landing-prev, #landing-next {
+    font-size : 50px;
+    height : 50px;
+    line-height : 50px;
+    min-width: auto;
+    padding : 0px;
+    text-align : center;
+    width : 50px;
+    position : absolute;
+    top : calc(50% - 25px);
+}
+#landing-prev {
+    left : 50px;
+}
+#landing-next {
+    right : 50px;
+}
+#landing-dots {
+    display     : flex;
+    height      : 22px;
+    position    : absolute;
+    bottom      : 30px;
+    left        : calc(50% - 36px);
+}
+#landing-dots > div {
+    color       : var(--color-surface-level-5);
+    cursor      : pointer;
+    font-size   : 24px;
+}
+#landing-dots > div:hover {
+    color : var(--color-blue-500);
+} 
+.dot::before { content: '\e836'; }
+.dot.selected::before { 
+    content: '\e837'; 
+}
+#landing .tile-subtitle td {
+    background      : transparent;
+    border-color    : transparent;
+    line-height     : 15px;
+    padding         : 0px;
+}
+#landing-tiles-recents .tile,
+#landing-lines-tiles-content .tile,
+#landing-tiles-pinned .tile,
+#products-tiles-content .tile {
+    height : 456px;
+}
+
+
+/*  LINES */
+/* ----------------------------------------------------------------------------- */
+#lines-tiles .tile-details {
+    margin-top : 10px;
+}
+#lines-tiles .tile-title {
+    line-height : 36px !important;
+    font-weight : 800 !important;
+}
+#lines-tiles .tile-subtitle {
+    max-height  : 36px;
+    overflow-y  : auto;
+    white-space : wrap;
+}
+
+
+/*  PRODUCTS */
+/* ----------------------------------------------------------------------------- */
+#products-processing {
+    left : calc(50% - 38px + 225px);
+}
+#products-line {
+    font-size : 16px;
+    font-weight:  normal;
+}
+#products-title {
+    padding-top : 8px;
+}
+.icon-image {
+    font-weight : 200;
+    font-size   : 48px;
+    line-height : inherit;
+}
+#products-tiles > .tile {
+    flex-direction  : row;
+    height          : 200px;
+    min-width       : 640px;
+    text-align      : left;
+    width           : 640px;
+}
+#products-tiles .tile-counter {
+    line-height : 200px;
+}
+#products-tiles .tile-details {
+    margin : 20px 30px;
+}
+#products-tiles .tile-details > div {
+    text-align : left;
+}
+
+
+/*  PRODUCT */
+/* ----------------------------------------------------------------------------- */
+#product {
+    z-index: 3;
+}
+#summary-header {
+    height  : 58px;
+    padding : 0px;
+}
+#summary-title {
+    padding-left : 0px;
+}
+.product-category {
+    padding-right : 12px;
+}
+.product-line {
+    padding-left : 12px;
+}
+#summary-descriptor {
+    font-size   : 24px;
+    font-weight : 800;
+    height      : 28px;
+    line-height : 24px;
+}
+#summary-content {
+    top : 60px;
+}
+#summary-content .panel-controls {
+    display : none;
+}
+
+/*  SEARCH */
+/* ----------------------------------------------------------------------------- */
+#search {
+    z-index : 2;
+}
+#search-close {
+    position    : absolute;
+    top         : 40px;
+    right       : 100px;
+}

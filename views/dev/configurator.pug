@@ -1,0 +1,49 @@
+extends ../framework/layout
+
+block head
+
+    link(rel='stylesheet', href='/stylesheets/dev/configurator.css')
+    script(src='/javascripts/dev/configurator.js')
+    script.
+        config = !{JSON.stringify(config)};
+
+block body
+
+    body.surface-level-1.text-selection-off.mode-features.no-variants.no-feature-comparison.no-details
+
+        #header.dark
+            #header-logo
+            #header-title= title
+            #header-subtitle
+                #header-descriptor
+                #header-description
+            #header-toolbar
+                .button#save.default(title='Save your changes to PLM') Save
+                .button#save-image.with-icon.icon-save(title='Upload default variant images to PLM') Image
+                .button#save-views.with-icon.icon-save(title='Upload default variant images to PLM') Views
+                .button.with-icon#open-in-plm.icon-open(title='Open this variant in PLM') Go There
+                .button.with-icon#toggle-details.icon-toggle-off(title='Toggle configuration details panel on / off') Details
+                .button.with-icon#toggle-bom.icon-toggle-on.filled(title='Toggle BOM pann on / off') BOM
+                .button.with-icon#close.icon-close(title='Select another product in landing page') Close
+                #header-avatar
+        
+        #create
+
+        .screen#landing 
+
+            #list.surface-level-1
+            #variants.surface-level-2
+
+        .screen#editor
+
+            #details.surface-level-2
+
+            #bom.surface-level-1
+
+            #viewer
+
+            #features.surface-level-2
+                .panel-header 
+                    .panel-title Features &amp; Options 
+                    .panel-toolbar 
+                .panel-content#features-list.surface-level-2

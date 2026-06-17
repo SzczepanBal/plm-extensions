@@ -1,0 +1,159 @@
+.tile(data-name='PLM Portal' data-id='portal')
+    .tile-image(style="background: url('images/app-portal.jpg') no-repeat;background-size:contain;")
+    .tile-details
+        .tile-title PLM Portal
+        .tile-subtitle Provide quick access to latest product data in PLM using a very basic frontend for casual users, working well on tablets
+        .tile-access 
+            .tile-endpoint /portal
+            .tile-button.button.default(href="portal" target="_blank") Open
+            .tile-button.button.icon.icon-start.default(href="https://youtu.be/tM8why6ybAU" target="_blank")
+    .instructions
+        h1 Features
+        p In this easy to use application, users can quickly search for any design or access most recent items to continue where they left. 
+            br
+            |Once a design is selected, the following features are available:
+        ul
+            li 3D Viewer with exploded view
+            li Item Details
+            li Item Attachments
+            li BOM with cross-highlight
+            li Bulk BOM Files Download
+        h1 Define Startup Item 
+        p You can pass the parameters dmsId and wsId in your URL to skip the search and let the portal open the given item direclty.
+            br
+            |Searches are still possible by using the toggle button in the main toolbar.
+        img(src='images/apps/portal-1.png' style='width:100%;max-width:1280px;margin:10px 0px 30px;')
+        h1 Application Configuration Settings
+        p The following application specific settings can be adjusted in your custom settings file in 
+            span.code exports.applications.portal 
+            br
+            |In order to change any of these settings, copy the standard value from settings.js to your custom settings file in folder settings.
+        table.row-hovering 
+            tr 
+                th Setting 
+                th Default Value
+                th Description 
+            tr 
+                td autoClick
+                td true
+                td When set to true and the search returns one result only, the given item will be selected automatically
+            tr 
+                td openMostRecent
+                td true
+                td When set to true the first item of the Recent Items list will be opened automatically
+            tr 
+                td searchInputText
+                td 'Enter part number'
+                td Placeholder text to be displayed in search input field at startup
+            tr 
+                td searchTileImages
+                td true
+                td When set to true, tile images will be displayed for search results. Disable this feature to improve response times.
+            tr 
+                td workspacesIn
+                td ['Items', 'Items and BOMs']
+                td Defines the list of workspaces to search in. In addition, only recently viewed items of the defined workspaces will be displayed in the panel Recent Items.
+            tr 
+                td bomLevels
+                td 10
+                td Restrict the BOM expansion to the defined number of levels
+            tr 
+                td downloadFiles
+                td true
+                td Adds file downlaod capability to BOM tree
+            tr 
+                td downloadRequests
+                td 5
+                td Maximum number of concurrent download requests when downloading BOM files
+            tr 
+                td downloadFormats
+                td [..]
+                td Default filters for BOM file downloads
+            tr 
+                td expandSections
+                td ['Basic']
+                td Defines sections to be expanded per default in the item details panel. All other sections will be collapsed.
+            tr 
+                td sectionsExcluded
+                td ['AML Summary', 'Quality Inspection', 'Sustainability', 'Compliance', 'Others']
+                td Provide list of sections (by name) that should be excluded from the Details display
+            tr 
+                td sectionsIncluded
+                td []
+                td Restrict the Details display to a defined list of sections (defined by name) 
+            tr 
+                td sectionsOrder
+                td ['Basic', 'Technical Details', 'PDM Data']
+                td Defines the order of the sections being shown, defined by an array with list of section names 
+            tr 
+                td fieldsExcluded
+                td ['CLASS_DATA', 'ESTIMATED_COST', 'PENDING_PACKAGES']
+                td Provide list of fields (by field ID) that should be excluded from the Details display
+            tr 
+                td fieldsIncluded
+                td []
+                td Restrict the Details display to a defined list of fields (defined by field ID) 
+            tr 
+                td viewingFormats
+                td ['dwf', 'dwfx']
+                td Define list of viewable format to take into account 
+            tr 
+                td suppressLinks
+                td []
+                td When set to false, the details pages will not contain the links to open related PLM data 
+        h1 Common Configuration Settings
+        p This utility uses the following common configuration settings
+        table(style='margin:10px 0px 30px')
+            tr
+                th Setting
+                th Default Value 
+                th Description
+            tr  
+                td exports.common.workspaces.items.defaultBOMView
+                td 'Tree Navigator'
+                td The default BOM view to be used for the BOM display. 
+                    br
+                    |If the defined view does not exist, the default BOM view will be used instead.
+                    br
+                    |For best performance, it is recommended to use a BOM view containing only the columns Descriptor, Number and Quantity.
+        h1 Viewer Configuration Settings
+        include ../framework/viewer.pug
+    .log 
+        h1 PLM Portal Change Log 
+        table 
+            tr 
+                td 12. January 2026
+                td Enhancement
+                td New settings downloadFiles enables BOM files download
+            tr 
+                td 
+                td Documentation
+                td Documentation has been updated to match the new custom settings and environments management
+            tr 
+                td 5. December 2025
+                td Enhancement
+                td New settings help improving performance (searchTileImages, bomLevels, viewingFormats)
+            tr 
+                td 9. Oktober 2025
+                td Enhancement
+                td Added setting 'openMostRecent' to optionally open the most recently viewed item automatically at startup
+            tr 
+                td 
+                td Quality
+                td Various quality of life improvements (styling, labels, ...)
+            tr 
+                td 23. September 2025
+                td Enhancement
+                td Added setting 'searchInputText' configuring the placeholder text in the search input field
+            tr 
+                td 
+                td Enhancement
+                td Added setting 'suppressLinks' to enable / disable item details pages links
+            tr 
+                td September 23, 2024
+                td Enhancement
+                td Added settings 'settionsOrder' that optionally allows for alternate orders of sections in the Item Details display
+            tr 
+                td September 20, 2024
+                td Initial Release
+                td Addition of this utility to the UX Extensions

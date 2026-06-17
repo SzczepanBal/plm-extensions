@@ -1,0 +1,96 @@
+extends ../framework/layout
+
+block head
+    
+    link(rel='stylesheet', href='/stylesheets/apps/navigator.css')
+    link(rel='stylesheet', href='/stylesheets/custom/navigator.css')
+    
+    script(src='/javascripts/apps/navigator.js')
+    script(src='/javascripts/custom/navigator.js')
+
+block body
+
+    body.surface-level-1
+
+        #header.dark
+            #header-logo
+            #header-title= title
+            #header-subtitle
+            #header-toolbar
+                #button-toggle-create.button.with-icon.icon-create(title='Click to create new record') 
+                #button-change-workspace.button.with-icon.icon-tiles.filled(title='Switch to another workspace') Select Workspace
+                #header-avatar
+
+        #main.screen
+
+            .panel-top#tableau.surface-level-1
+                .panel-header 
+                    .panel-title#tableau-title
+                        .panel-title-main
+                            select#tableau-selector.button
+                                option#option-bookmarks(value='bookmarks', name='bookmarks') Your Bookmarks
+                                option#option-recents(value='recents', name='recents') Your Recent Data
+                                option#option-mow(value='mow', name='mow') Your Outstanding Work
+                    .panel-controls
+                        .button.with-icon.icon-delete#archive Archive
+                        .button.with-icon.icon-workflow.workflow-actions.hidden#perform-workflow-actions Workflow
+                        .button.with-icon.icon-list-edit#edit-selected Edit
+                        .button.default#save Save Changes
+                        .panel-controls-spacer
+                        .button.icon.icon-deselect-all#deselect-all(title='Clear selection of items')
+                        .button.icon.icon-select-all#select-all(title='Select all visible items')
+                        .button.with-icon.icon-filter#filter
+                            input(placeholder='Filter')
+                        .button.icon.icon-hide.disabled#hide-items(title='Hide selected items from this view')
+                        .button.icon.icon-show.disabled#show-items(title='Unhide selected items')
+                        .button.icon.icon-layers.toggle-layer#show-hidden-layer(title='Switch layer to only show hidden items instead')
+                        .button.icon.icon-layers.toggle-layer#hide-hidden-layer(title='Switch layer to only show visible items')
+                #tableau-empty 
+                    .icon.icon-info 
+                    p No data for this view
+                .panel-spacer.surface-level-1
+                .panel-content.surface-level-1
+                    table#tableau-table
+                        thead#tableau-header
+                        tbody#tableau-body
+
+            .panel.surface-level-1#summary
+
+            .panel.surface-level-2#edit
+                .panel-header
+                    .panel-title 
+                        .panel-title-main Edit Selected Records
+                    .panel-controls
+                        .button#apply-edits(title='Apply given changes to selected items') Apply
+                        .button#clear-edits.icon.icon-clear(title='Clear all the inputs in this form') 
+                        .button#close-edits.icon.icon-close(title='Close this panel')
+                .panel-content#edit-fields.surface-level-2.section-fields.m
+
+        #workspaces.screen 
+            .panel-top#workspaces-panel.surface-level-1 
+                .panel-header   
+                    .panel-title 
+                        .panel-title-main Select Workspace
+                    .panel-controls  
+                        .button.with-icon.icon-filter
+                            input#filter-workspaces(placeholder='Filter Workspaces')
+                        .button.icon.icon-close#workspaces-close
+                .panel-content#workspaces-list.tiles.grid.m
+
+
+        .dialog#create-dialog
+        
+        .dialog#clone-dialog
+
+        .dialog#transitions
+            .dialog-header Perform Workflow Actions
+            .dialog-content
+                .col-left 
+                    .col-header Workflow Comments
+                    textarea#transitions-comment
+                .col-right
+                    .col-header Selected Workflow Actions
+                    #transitions-list
+            .dialog-footer
+                #transitions-submit.button.default Submit
+                #transitions-cancel.button Cancel

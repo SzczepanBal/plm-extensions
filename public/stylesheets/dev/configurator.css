@@ -1,0 +1,188 @@
+/* VARIABLES */
+/* ----------------------------------------------------------------------------- */
+:root {
+
+    /* Landing */
+    --padding-list-h    : 50px;
+    --padding-list-v    : 30px;
+    --height-variants   : 412px;
+
+    /* Editor */
+    --padding-editor-h  : 36px;
+    --padding-editor-v  : 24px;
+    --width-details     : 300px;
+    --width-bom         : 500px;
+    --width-features    : 400px;
+
+}
+
+
+/* MASTER LAYOUT */
+/* ----------------------------------------------------------------------------- */
+#list {
+    border-width    : var(--padding-list-v) var(--padding-list-h);
+    top             : 0px;
+    right           : 0px;
+    bottom          : calc(var(--height-variants) + (2 * var(--padding-list-v)));
+    left            : 0px;
+}
+#variants {
+    border-width    : var(--padding-list-v) var(--padding-list-h);
+    right           : 0px;
+    bottom          : 0px;
+    left            : 0px;
+    height          : var(--height-variants);
+}
+
+body.no-variants #list { bottom : 0px; }
+body.no-variants #variants { bottom : calc(0px - var(--height-variants) - (2 *  var(--padding-list-v))); }
+
+
+#editor {
+    display : none;
+}
+#details {
+    border-width    : var(--padding-editor-v) var(--padding-editor-h);
+    top             : 0px;
+    bottom          : 0px;
+    left            : 0px;
+    width           : var(--width-details);
+    z-index         : 1;
+}
+#bom {
+    border-width    : var(--padding-editor-v) var(--padding-editor-h);
+    top             : 0px;
+    bottom          : 0px;
+    left            : calc(var(--width-details) + (2 *  var(--padding-editor-h)));
+    width           : var(--width-bom);
+}
+#viewer {
+    border-width    : var(--padding-editor-v) var(--padding-editor-h);
+    top             : 0px;
+    right           : calc(var(--width-features) +  (2 *  var(--padding-editor-h)));
+    bottom          : 0px;
+    left            : calc(var(--width-details) + var(--width-bom) + (4 *  var(--padding-editor-h)));
+}
+#features {
+    border-width    : var(--padding-editor-v) var(--padding-editor-h);
+    top             : 0px;
+    right           : 0px;
+    bottom          : 0px;
+    width           : var(--width-features);
+}
+
+#header-subtitle,
+#header-toolbar > .button { display : none; }
+
+body.editor-mode #landing { display : none; }
+body.editor-mode #editor { display : block; }
+body.editor-mode #header-subtitle { display : block; }
+body.editor-mode #header-toolbar > .button { display : flex; }
+
+
+body.no-details #details { left : calc(0px - var(--width-details) - (2 *  var(--padding-editor-h))); }
+body.no-details #bom { left : 0px; }
+body.no-details #viewer { left : calc(var(--width-bom) + (2 *  var(--padding-editor-h))); }
+
+body.no-bom #bom { left : calc(var(--width-details) - var(--width-bom));}
+body.no-bom #viewer { left : calc(var(--width-details) + (2 *  var(--padding-editor-h)));}
+
+body.no-details.no-bom #bom { left : calc(0px - var(--width-bom)) - (2 *  var(--padding-editor-h)); }
+body.no-details.no-bom #viewer { left : 0px; }
+
+
+#variants-list { display : none; margin-top : 10px; }
+body.no-feature-comparison #variants-list { display : flex; }
+body.no-feature-comparison #variants-comparison { display : none; }
+body.feature-comparison-max #variants { height : unset; top : 0px; }
+
+
+
+#viewer-markup-image {
+    height :  800px;
+    width  : 1200px;
+}
+#bom-processing { display : none !important; }
+#list-list {
+    justify-content: center;
+    margin-top : 10px;
+}
+
+/* HEADER TOOLBAR */
+/* ----------------------------------------------------------------------------- */
+#save {
+    justify-content: center;
+}
+#open-in-plm {
+    margin-right : 20px;
+}
+
+
+
+/* VARIANTS COMPARISON */
+/* ----------------------------------------------------------------------------- */
+#variants-comparison th,
+#variants-comparison td {
+    border-left : 2px solid var(--color-surface-level-2);
+}
+th.variants-comparison-head {
+    cursor : pointer;
+}
+th.variants-comparison-head:hover {
+    color : var(--color-blue-500);
+}
+.variants-comparison-subtitle {
+    font-size : 10px;
+    line-height : 12px;
+}
+td.variants-comparison-feature {
+    background : none;
+}
+td.not-selected {
+    background : var(--color-surface-level-1);
+}
+td.selected {
+    background : var(--color-status-yellow-brighter);
+    color : var(--color-status-yellow);
+    padding : 0px;
+    text-align : center;
+}
+
+
+
+/* BOM */
+/* ----------------------------------------------------------------------------- */
+.bom-item.feature {
+    color : var(--color-status-yellow);
+    font-weight : bold;
+}
+.bom-item.option {
+    color : var(--color-status-yellow);
+}
+
+
+/* FEATURES & OPTIONS */
+/* ----------------------------------------------------------------------------- */
+.feature-header {
+    /* background : var(--color-surface-level-3); */
+    font-weight : bold;
+    cursor : pointer;
+    margin : 24px 0px 12px;
+    padding : 0px 6px;
+}
+.feature-header::before {
+    font-size : 24px;
+}
+/* .feature-header:hover {
+    background : var(--color-surface-level-4);
+} */
+.feature-list {
+    margin-bottom : 20px;
+    margin-top : 4px;
+}
+.feature-list-alternatives > .tile.active .icon.icon-radio-unchecked::before {
+    content : '\e837';
+}
+.feature-list-options > .tile.active .icon.icon-check-box::before {
+    content : '\e834';
+}

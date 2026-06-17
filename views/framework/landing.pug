@@ -1,0 +1,343 @@
+extends layout
+
+block head
+
+    link(rel='stylesheet', href='/stylesheets/framework/landing.css')
+    script(src='/javascripts/framework/landing.js') 
+
+block body
+
+    body
+        #side.surface-level-2.no-scrollbar
+            #side-title Custom PLM 
+                br
+                |User Experiences
+            p Unleash the power of Fusion Manage by utilizing its REST API to provide custom built frontends based on Autodesk Platform Services. All solutions manage data in PLM only and take into account the given user's access permission in PLM.
+            #side-toolbar.side-toolbar
+                .button#version Review changes by 
+                    span#version-name 12. March 2026
+                .button#tenant Open related tenant
+                    span#tenant-name
+                .button#chrome Learn about the
+                    span#chrome-extension Chrome Extension
+                .button#chrome-download Download the
+                    span Chrome Extension
+            p#themes 
+                span Select Theme:
+                select#theme-selector.button 
+                    option(value='light') Light Theme
+                    option(value='dark') Dark Theme
+                    option(value='black') Black Theme                        
+            p#disclaimer These solutions are provided by Autodesk Technical Sales without warranty and support. There should be no assumption that updates, patches, bug fixes and / or new features will be delivered to you. There will also be no support available either through Autodesk Support channels or by the Autodesk Pre-sales Technical Team. Please feel free to take the source code and ideas from this tool to develop your own production ready tool and products. Change and reuse the source code as you like.
+            p Reuse this framework and its examples to build your own custom solutions. The Developer Guide provides documentation for key library functionality, the main framework asset and includes tutorials to get started quickly:
+            div.side-toolbar
+                .button#docs Explore the    
+                    span#docs-name Developer Guide
+                .button#troubleshooting Having issues? Use the    
+                    span#troubleshooting-name Troubleshooting 
+                    |Guide
+
+        #toggle.button.icon.icon-chevron-left(title="Hide / unhide side panel")
+        #layout.button.icon.icon-tiles(title="Toggle tiles display")
+        #start.button.icon.icon-start(title="Open the application start menu")
+
+        #main.surface-level-1.no-scrollbar
+            .log#framework-changes 
+                h1 Framework Changes
+                table 
+                    tr  
+                        td 24. February 2026
+                        td Enhancement
+                        td New button in Landing Page can be used to download the Chrome Extension installer. This download will automatically update the manifest.json file for you and include the UX server's address in the list of permitted hosts.
+                    tr  
+                        td 9. February 2026
+                        td Update
+                        td The definition of available services has been simplified by changing the logic of 
+                            span.code exports.server.servicesEnabled 
+                            |and removing the property 
+                            span.code exports.server.servicesDisabled
+                            |. 
+                            br
+                            |When users try accessing a disabled service, the default 404 error message will be displayed now. The disabled services also will be removed from the start menu now.
+                    tr  
+                        td 27. January 2026
+                        td Enhancement
+                        td The start menu configuration now uses the property 
+                            span.code adminsOnly 
+                            |to recognize menu entries that should only be shown for Administrators. This property can be set on column level and also on command level. See the given menu configuration in the settings file for an example configuration. Users are considered as Administrator if they are assigned to group 
+                            span.code 'Administration [SYSTEM]'
+                            |). This can only be validated after logging in, so the default start menu accessible via 
+                            span.code /start 
+                            |will always show all menu entries as it only requires a login once an appliation is started from within this menu.
+                    tr  
+                        td 22. January 2026
+                        td New Setting
+                        td The new setting 
+                            span.code exports.server.landingPage 
+                            |now can be used to set the landing page being opened when accessing /. 
+                            br
+                            |If you set this value to /portal for example, the PLM Portal will be opened automatically when users do not define an application endpoint in the URL. The landing page with all applications and instructions still can be accessed using /landing.
+                    tr  
+                        td 
+                        td New Setting
+                        td The new setting 
+                            span.code exports.server.servicesEnabled 
+                            |now can be used to control the available applications. Only application endpoints contained in this array will be accessible (i.e. servicesEnabled = ['portal', 'service', 'reviews']). If this settings does not match an empty array, all applications NOT contained in this array will not be accesible any longer and a 'page not found' message will be displayed instead.
+                    tr  
+                        td 
+                        td New Setting
+                        td The new setting 
+                            span.code exports.server.servicesDisabled 
+                            |now can be used to control the available applications. 
+                            br
+                            |Application endpoints contained in this array will not be accessible any longer and a 'page not found' message will be shown instead.
+                            br
+                            |Example : servicesDisabled = ['insights', 'projects', 'users']
+                            br
+                            |This setting will be ignored if servicesEnabled is not an empty array.
+                    tr  
+                        td 12. January 2026
+                        td Framework Change
+                        td The definition of custom settings and usage with multiple environments has been improved. Connection data now is defined in specific environment files and dedicated settings files will only contain the custom settings.
+                    tr  
+                        td 
+                        td Framework Enhancement
+                        td BOM panels now support bulk file downloads. This feature is enabled in the Service Portal and may be added to furher applications in future.
+                    tr  
+                        td 
+                        td Quality Improvement
+                        td The viewer now provides enhanced configuration settings, reliability and usability
+                    tr  
+                        td 5. December 2025
+                        td *NEW* Asset BOM Editor
+                        td This new application creates a unique copy of an existing BOM to create an individual representation of an Asset
+                    tr  
+                        td 4. December 2025
+                        td *NEW* BOM Instances Editor
+                        td This new application enables management of properties specific for each instance of an item in a BOM (i.e. Serial Numbers)
+                    tr  
+                        td 2. December 2025
+                        td Major Enhancement
+                        td The Service Portal now supports Service BOMs and Asset with given Asset Services. This requires an update of your settings.js file. See the updated documentation of the Service Portal for details.
+                    tr  
+                        td 27. October 2025
+                        td New Feature
+                        td Initial release of the Chrome Extensions reducing implementation efforts and improving accessibiliy of the UX extensions both for Administrators and End Users
+                    tr  
+                        td 10. October 2025
+                        td Enhancement
+                        td Improved controls in create/edit forms
+                    tr  
+                        td 
+                        td Enhancement
+                        td Full support of single and multi picklists in forms and grid
+                    tr  
+                        td 
+                        td Enhancement
+                        td Edit capabilities in grid views were added
+                    tr  
+                        td 19. August 2025
+                        td Enhancements
+                        td User names now can be hidden in the Insights Dashboard by using parameter 
+                            br
+                            span.code hideUserNames
+                            br
+                            |in the settings file
+                    tr  
+                        td 29. July 2025
+                        td *NEW* Administration Shortcuts
+                        td This new page for administrators provides quick access to key tenant administration utilities
+                    tr  
+                        td June 21, 2025
+                        td *NEW* Start Page
+                        td The utilities now are better discoverable with the new start page accessible via /start endpoint, reusing the main menu configuration
+                    tr  
+                        td June 1, 2025
+                        td *NEW* Outstanding Work Report
+                        td This utility made for administrators provides access to the Outstanding Work List of selected users to update the given processes if given users are not available.
+                    tr  
+                        td May 28, 2025
+                        td *NEW* Main Menu
+                        td Applications that do not require a specific dmsId in the URL now can be accessed with a new menu button in top left corner. This makes it easier to switch between the UX extensions. This menu can be configured and disbled with the new variable  
+                            br
+                            span.code exports.menu = []
+                            br
+                            |in the settings file.
+                    tr  
+                        td May 26, 2025
+                        td *NEW* Service BOM Editor
+                        td With this new editor, users can easily derive a Service BOM from an existing EBOM / MBOM and also define dedicated service offerings.
+                    tr  
+                        td April 16, 2025
+                        td *NEW* Addins
+                        td New addin pages enable seamless access to PDM &amp; PLM data from within external applications. Using Chrome Webview technology, these addins even may interact with the host application.
+                    tr  
+                        td April 2nd, 2025
+                        td Framework
+                        td Additional information is shown in the server console when starting the server
+                    tr  
+                        td March 7, 2025
+                        td Framework
+                        td The new Data Manager utility helps administrators in cleaning up the data in PLM. This is especially helpful when changing existing workspaces or importing data. The utility can be used immediately without any configuration changes.
+                    tr  
+                        td February 4, 2025
+                        td Framework
+                        td A key update to all files, libraries, configuration files and settings has been applied. The applications now share much more common code and make use of extended &amp; standardised configuration parameters for table views, list views and tab contents. See the gallery in the developer guide for examples. In addition, optional caching and Vault connectivity were added.
+                    tr  
+                        td October 1, 2024
+                        td Framework
+                        td Added parameter 
+                            span.code filters 
+                            |to 
+                            span.code insertMOW() 
+                            |enabling type and due date filtering
+                    tr  
+                        td September 26, 2024
+                        td New Utility 
+                        td The new utility User Settings Manager enables definition of standards for new and existing users. This includes setting the theme, sharing workspace views and selection of dashboard charts. See the utility's documentation for additional installation steps required for this utility specifically.
+                    tr  
+                        td September 20, 2024
+                        td New Utility 
+                        td The new utility PLM Portal provides quick access to PLM data for the shopfloor
+                    tr  
+                        td September 17, 2024
+                        td New Utility 
+                        td The new utility Workspace Comparison helps keeping workspaces (in different tenants) in sync
+                    tr  
+                        td 
+                        td Framework 
+                        td Moved files files of Tenant Insights Dashboard to new admin subfolders
+                    tr 
+                        td 10. September 2024
+                        td Enhancement 
+                        td When components get hidden in the viewer, advanced controls now enable to unhide selected components or the last one
+                    tr 
+                        td 16. July 2024
+                        td Major Update 
+                        td The UX server now uses PKCE for authentication instead of the former mechanism involving the Client Secret. 
+                            br 
+                            |This now requries an APS application of type "Desktop, Mobile, Single-Page App" for successful authentication.
+                            br
+                            |If not done so yet, create such an app at aps.autodesk.com and provide the given Client ID in file settings.js as in previous releases. The Client Secret now can be omitted.
+                            br
+                            |This new app must use the same callback URL as your previous app and end with "/callback" (i.e. http://localhost:8080/callback).
+                            br
+                            |If your login to the UX solutions fails with an error code 401, you most likely are still using an APS of another type.  
+                            br
+                            |Do not forget to run npm install to download the additional module "crypto" if not doney yet after this update.
+                    tr 
+                        td 2. May 2024
+                        td Enhancement 
+                        td Users can now switch between 3D and 2D viewables within the viewer if given files exist in the item's attachment tab and if this feature has not been disabled for the given user with setting 
+                            span.code selectFile
+                    tr 
+                        td 29. April 2024
+                        td Enhancement 
+                        td Paramter 
+                            span.code path 
+                            |has been added to 
+                            span.code insertBOM() 
+                            |enabling quick navigation to currently selected component's parent(s). This feature now is available in the apps Design Review and Service Portal.
+                    tr 
+                        td 18. April 2024
+                        td Enhancement 
+                        td insertAttachments() now can display folders as well, depending on parameter folders (true / false)
+                    tr 
+                        td 
+                        td Enhancement 
+                        td insertBookmarks() and insertRecentItems() now can display tile images for given records by reetrieving the first image field having a value.
+                    tr 
+                        td 11. April 2024
+                        td Enhancement 
+                        td Default theme now can be defined in settings.js. Select from light, dark and black.
+                    tr 
+                        td 15. March 2024
+                        td Framework 
+                        td Most standard apps now can be extended easier thanks to dedicated css and js files in subfolders custom. 
+                            br
+                            |Override standard javascript code and css  by adding your custom contents to these empty files in /javascripts/custom as well as /stylesheets/custom. 
+                            br
+                            |For example, if the styling of the MBOM-Editor should be adjusted, add your custom css styling to /public/stylesheets/custom/mbom.css. 
+                    tr 
+                        td 29. February 2024
+                        td BOM Displays 
+                        td New options have been added to collapse the BOM at startup and to prevent expansion of defined items (parameter endItem)
+                    tr 
+                        td 
+                        td BOM Displays
+                        td If users do not have access to sub items, the parent item BOM will display a lock icon with tooltip
+                    tr 
+                        td 
+                        td Attachments
+                        td The attachments panels have been reworked and provide new configurable features like version information, various layouts and sizes. See the developer documentation for details.
+                    tr 
+                        td 15. February 2024
+                        td BOM Displays 
+                        td New options have been added to the BOM display (counters) and the Flat BOM display (filterEmpty)
+                    tr 
+                        td 10. January 2024
+                        td Theme Support
+                        td Use alternate color for this landing page and all the apps by passing the parameter 'theme' when accessing an application. You can choose from the following themes: dark,black and light. The latter one is default if no theme parameter is provided.
+                    tr 
+                        td 13. December 2023
+                        td File Management
+                        td To allow further additions, files in folders public and views have been moved to new folders. Some css and js files in folder public got renamed.
+                    tr 
+                        td 
+                        td Settings Files
+                        td Alternate settings files enabling to switch between multiple tenants now must be stored in folder settings. 
+                            br 
+                            | These files no longer need the prefix 'settings.' but must keep the suffix '.js'.
+            .tiles-group.first
+                .tiles-group-title Data Exploration &amp; Management
+                .tiles-group-subtitle Ready-To-Use applications that do neither require configurations settings nor demo data. They will work immediately and can be used to validate the server setup.
+                .tiles-group-list
+                    include ../docs/app-portal.pug
+                    include ../docs/app-product-portfolio-catalog.pug
+                    include ../docs/app-workspace-navigator.pug
+                    include ../docs/app-mobile-client.pug
+                    include ../docs/app-service-portal.pug
+            .tiles-group 
+                .tiles-group-title Dashboards
+                .tiles-group-subtitle Gain valuable insights using PLM data. These applications require demo data, but will work immediately when using the default demo tenant.
+                .tiles-group-list
+                    include ../docs/app-process-dashboard.pug
+                    include ../docs/app-product-data-explorer.pug
+                    include ../docs/app-reports-dashboard.pug
+                    include ../docs/app-projects-dashboard.pug
+            .tiles-group 
+                .tiles-group-title Item &amp; BOM Management
+                .tiles-group-subtitle Manage multiple Bill of Materials based on your initial Engineering BOM. These Applications require configuration changes using the Workspace Manager and/or even changes to scripts. 
+                .tiles-group-list
+                    include ../docs/app-mbom-editor.pug
+                    include ../docs/app-sbom-editor.pug
+                    include ../docs/app-variants-manager.pug
+                    include ../docs/app-instances.pug
+                    include ../docs/app-abom.pug
+                    include ../docs/app-class-browser.pug
+            .tiles-group 
+                .tiles-group-title Managing Change
+                .tiles-group-subtitle Establish collaborative processes based on engineering data to keep all stakeholders in sync. These Applications require configuration changes using the Workspace Manager and/or even changes to scripts. 
+                .tiles-group-list
+                    include ../docs/app-design-reviews.pug
+                    include ../docs/app-change-impact-analysis.pug                
+            .tiles-group
+                .tiles-group-title Administration Utilities
+                .tiles-group-subtitle Utilities made for Tenant Administrators only.
+                .tiles-group-list
+                    include ../docs/admin-data.pug
+                    include ../docs/admin-insights.pug
+                    include ../docs/admin-comparison.pug
+                    include ../docs/admin-shortcuts.pug
+            .tiles-group.first
+                .tiles-group-title Advanced Administration Utilities
+                .tiles-group-subtitle Utilities made for Tenant Administrators only and requiring system admin privileges based on 2-legged authentication
+                .tiles-group-list
+                    include ../docs/admin-outstanding-work.pug
+                    include ../docs/admin-users.pug
+            .tiles-group 
+                .tiles-group-title Addins
+                .tiles-group-subtitle Access PDM &amp; PLM data with these applications using a narrow display and enabling host application interactions
+                .tiles-group-list
+                    include ../docs/addins-plm.pug
+                    include ../docs/addins-pdm.pug

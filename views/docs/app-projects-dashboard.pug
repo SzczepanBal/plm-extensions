@@ -1,0 +1,53 @@
+.tile(data-name='Projects Dashboard' data-id='projects')
+    .tile-image(style="background: url('images/app-projects-dashboard.png') no-repeat;background-size:contain;")
+    .tile-details
+        .tile-title Projects Dashboard
+        .tile-subtitle (Project) Managers can track progression of all projects in a single, predefined dashboard
+        .tile-access 
+            .tile-endpoint /projects
+            .tile-button.button.default(href="projects" target="_blank") Open
+    .instructions
+        h1 Prerequisites
+        p Your tenant must have the latest NPI solution installed (providing the workspaces Projects, Project Tasks, Teams and so on).
+        h1 Features
+        p The dashboard will provide insights in all projects that are accessible to the current user and display the following reports:
+        ul
+            li The timeline of each projects by showing all Gates' target dates
+            li The Status Reports of each projects
+            li Current progress, project budget and progress of current phase of each project
+            li The planned effort for each project's phase
+            li Deviations of project end dates
+        h1 Application Configuration Settings
+        p The following settings can be adjusted in your custom settings file within 
+            span.code exports.applications 
+            |to adjust the application's behavior. In order to change any of these settings, copy the standard value from settings.js to your custom settings file in folder settings.               
+        p 
+            table 
+                tr 
+                    th Setting 
+                    th Description 
+                    th Default Value
+                tr 
+                    td projects.workspaceId
+                    td The Projects workspace ID. If this parameter is not defined, the default Projects workspace ID will be used based on 
+                        span.code exports.common.workspaceIds.projects
+                    td null
+                tr 
+                    td projects.query
+                    td Filter the list of projects by defining a query string. If this parameter is not defined, all projects accessible to the user will be displayed.
+                    td '*'               
+    .log 
+        h1 Projects Dashboard Change Log 
+        table 
+            tr 
+                td 12. January 2026
+                td Documentation
+                td Documentation has been updated to match the new custom settings and environments management 
+            tr 
+                td 21. November 2023
+                td Enhancement
+                td Add configuration setting config.projects.query to settings file, enabling to filter of projects
+            tr 
+                td 7. July 2023
+                td -
+                td No changes in this release

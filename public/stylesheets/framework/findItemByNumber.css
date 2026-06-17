@@ -1,0 +1,57 @@
+.addin #startup-logo {
+    background-size : 200px;
+    height : 140px;
+    width  : 200px;
+    top    : calc(50% - 164px);
+    left   : calc(50% - 100px);
+}
+.addin #search-processing { top : calc(50% - 30px); }
+.addin #search-message    { top : calc(50% + 20px); }
+
+
+.screen {
+    top : 0px;
+}
+#search-screen > * {
+    transition : none;
+}
+#create-screen {
+    display : none;
+}
+
+#search-processing {
+    top : calc(50% + 60px);
+}
+.processing > div {
+    background : var(--color-blue-500) !important
+}
+.message {
+    left       : calc(50% - 150px);
+    margin     : auto;
+    position   : absolute;
+    text-align : center;
+    width      : 300px;
+}
+#search-message {
+    display : flex;
+    gap     : 6px;
+    top     : calc(50% + 110px);
+    justify-content : center;
+}
+.number {
+    font-weight : 800;
+}
+#create-message {
+    display : none;
+    top     : 100px;
+}
+#create-action {
+    float      : unset;
+    margin-top : 24px;
+}
+#create {
+    top    : 60px;
+    right  : calc(50% - 300px);
+    bottom : 60px;
+    left   : calc(50% - 300px);
+}

@@ -1,0 +1,229 @@
+/*  EXTRAS */
+/* ----------------------------------------------------------------------------- */
+#header-subtitle {
+    display : none;
+}
+#dialog {
+    height   : 350px;
+    left     : calc(50% - 225px);
+    position : absolute;
+    top      : calc(50% - 175px);
+    width    : 450px;
+}
+textarea:focus {
+    border-color : none !important;
+    box-shadow   : none !important;
+}
+.section-fields {
+    margin-bottom : 10px;
+    padding       : 0px;
+}
+.section-fields > .field {
+    order : 2;
+}
+
+
+/*  MAIN LAYOUT */
+/* ----------------------------------------------------------------------------- */
+:root {
+    --width-panel   : 600px;
+    --padding-panel : 40px;
+}
+#main-tabs {
+    border-bottom   : none;
+    padding         : 0px 300px 0px 50px;
+    top             : 22px;
+    right           : 0px;
+    left            : 0px;
+}
+#main-tabs > div { 
+    height    : 30px;
+    max-width : 350px;
+}
+#review {
+    display : none;
+}
+#panel {
+    top     : var(--padding-panel);
+    bottom  : var(--padding-panel);
+    left    : var(--padding-panel);
+    width   : var(--width-panel);
+}
+.viewer {
+    top     : 0px;
+    right   : 0px;
+    bottom  : 0px;
+    left    : calc(var(--width-panel) + (2 * var(--padding-panel)));
+}
+#viewer-process {
+    left : calc(50% + (var(--width-panel) / 2) + (var(--padding-panel)) - 33px);
+}
+
+
+.no-panel #panel  { left : calc(0px - var(--width-panel) - (2 * var(--padding-panel))); }
+.no-panel .viewer { left : 0px; }
+
+
+/*  TILES */
+/* ----------------------------------------------------------------------------- */
+#list .tiles { 
+    padding : 40px; 
+}
+#list .tile {
+    max-height  : 424px;
+    min-height  : 424px;
+    height      : 424px;
+}
+#list .tile-data {
+    width : 100%;
+}
+#list .tile-data > div {
+    line-height     : 16px;
+    margin          : auto;
+    overflow        : hidden;
+    text-overflow   : ellipsis;
+    white-space     : nowrap;
+}
+#empty {
+    display     : none;
+    font-style  : italic;
+    position    : relative;
+    text-align  : center;
+    top         : calc(50% - 100px);
+}
+#empty i {
+    font-size : 48px;
+}
+
+
+
+/*  TILES FILTER */
+/* ----------------------------------------------------------------------------- */
+#main-actions {
+    position    : absolute;
+    top         : 10px;
+    right       : 30px;
+    z-index     : 2;
+}
+
+
+
+/*  REVIEW PANEL */
+/* ----------------------------------------------------------------------------- */
+#panel > .panel-header {
+    border  : none;
+    gap     : var(--spacer-xxs);
+}
+#panel > .panel-header > .panel-subtitle {
+    padding : 0px;
+}
+#panel > .panel-header > .panel-title {
+    font-size : 20px;
+    padding   : 0px 0px 24px 0px;
+}
+#comments input,
+#comments textarea {
+    background : var(--color-surface-level-2);
+}
+#comments .panel-content-toolbar {
+    position : absolute;
+    right    : 0px;
+    bottom   : 0px;
+    bottom   : 0px;
+}
+#panel textarea {
+    font-family : sans-serif;
+    padding     : 18px;
+    resize      : vertical;
+    width       : calc(100% - 36px);
+}
+.panel-data {
+    overflow-y  : auto;
+    position    : absolute;
+    top         : 0px;
+    right       : 0px;
+    bottom      : 72px;
+    left        : 0px;
+    transition  : all ease 0.25s;
+}
+.form-header {
+    background  : var(--color-surface-level-3);
+    font-size   : 18px;
+    font-weight : bold;
+    margin-top  : 6px;
+    padding     : 18px 18px 0px 18px;
+}
+.form-hint {
+    background  : var(--color-surface-level-3);
+    color       : var(--color-font);
+    font-size   : 12px;
+    padding     : 2px 18px 10px 18px;
+}
+.form-message {
+    color           : var(--color-yellow-500);
+    padding         : 18px;
+    margin-bottom   : 18px;
+}
+
+
+/*  ATTACHMENTS */
+/* ----------------------------------------------------------------------------- */
+#files-header {
+    border : none;
+}
+#files-controls {
+    top : 8px;
+}
+#files-content {
+    top : 60px;
+}
+
+
+
+/*  BOM */
+/* ----------------------------------------------------------------------------- */
+#bom-header {
+    border : none;
+}
+#bom-controls {
+    top : 8px;
+}
+#bom-content {
+    top : 60px;
+}
+
+
+
+/*  ACTIONS */
+/* ----------------------------------------------------------------------------- */
+#actions-header {
+    border : none;
+}
+#actions-controls {
+    top : 8px;
+}
+#actions-content {
+    top : 60px;
+}
+#actions .tile-details {
+    gap : 4px;
+    margin-top : 8px;
+}
+#actions-controls {
+    top : 8px;
+    z-index : 1;
+}
+#field-MARKUP {
+    max-height : 300px;
+    order      : 1;
+}
+
+
+@keyframes highlight {
+ 	  0% { background : var(--color-yellow-600); }
+     80% { background : var(--color-yellow-300); }
+ 	100% { background : var(--color-yellow-600); }
+}
+.highlight {
+    animation: highlight 2s ease;
+}

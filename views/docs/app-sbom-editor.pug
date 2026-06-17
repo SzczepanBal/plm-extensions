@@ -1,0 +1,338 @@
+.tile(data-name='Service BOM Editor' data-id='sbom')
+    .tile-image(style="background: url('images/app-sbom-editor.png') no-repeat;background-size:contain;")
+    .tile-details
+        .tile-title Service BOM Editor
+        .tile-subtitle Users can define Spare Parts and Service Kits easily based on an Engineering BOM and define dedicated Service Offerings on top
+        .tile-access 
+            .tile-endpoint /sbom
+            .tile-button.button.default(href="sbom?wsid=95&dmsid=14444" target="_blank") Open
+            .tile-button.button.icon.icon-start.default(href="https://youtu.be/zVnsrQyO-1o" target="_blank")
+    .instructions
+        h1 Features 
+        ul 
+            li Creates a new Service BOM when needed during editor startup
+            li Reuses EBOM items with dedicated property as Spare Parts 
+            li Manages Service Kits to define parts which can only/also be ordered as part of kits 
+            li Users can change item sequence using drag &amp; drop 
+            li When pressing the [Shift] during drag &amp; drop, items will get copied and not moved
+            li Viewer can be used to review Service BOM item selection
+            li Items can be selected in viewer to be highlighted in BOM
+            li Users can add non-EBOM items to the Service BOM using Bookmarks, Searches and further tabs
+            li The SBOM Editor can be launched from a Product of the Product Portfolio Management
+            li Details panel can be toggled to explore details of selected items
+        p Important: This editor is not compliant with the 
+            strong Service Portal 
+            |yet. The portal will not use the Service BOM created by this editor.
+        h1 Configuration Changes for Items Workspace
+        h2 Extend Picklist Item Types
+        p This editor uses the existing 
+            strong Items 
+            |workspace to store the Service BOM. It uses the field 
+            strong Type 
+            |in item details to distinguish between the various item types used by the Service BOM. The picklist of this property 
+            strong Type 
+            |must be adjusted to inlcude the required options as shown below. If your tenant does not contain the picklist 
+            strong Item Types 
+            |and the matching field in Item Details, you must add this list and field - or use the configuration settings described further below to use another list and field that might exist in your tenant already.
+        p Open the 
+            strong Picklist Manager 
+            |from within  
+            strong Administration | System Configuration 
+            |and locate the list 
+            strong Item Types
+            |. Click the 
+            strong Edit 
+            |command to the very right to open this list's editor.
+        img.border(src='images/apps/sbom-editor-1.png' style='width:100%;max-width:735px')
+        p Add the following types to this list and click Save: 
+            ul 
+                li Service BOM
+                li Service Kit
+                li Service Offering
+                li Service Operation
+                li Spare Parts List
+        img.border(src='images/apps/sbom-editor-2.png' style='width:100%;max-width:960px')    
+        p With this change, you should now be able to select from these types when creating an item: 
+        img.border(src='images/apps/sbom-editor-3.png' style='width:100%;max-width:621px') 
+        h2 Adjust Icon Field Formula (Optional)
+        p To let users esily recognize Service BOM items, it is recommended (but not required) to adjust the computed field formula of the field 
+            strong Icon
+            |. Add when-conditions for the new types as shown below. Note that the new IDs used below (100-103) will not match your tenant. You will have to determine the IDs for your tenant specifically. To do so, you can print the value of 
+            strong TYPE 
+            |in another temporary computed field to determine the right values for the new possible property values.
+        p.code 
+            span '&lt;div style="width:48px;line-height:18px;height:18px;border-radius:3px;text-align:center;font-weight:600;font-size:10px;color:#FFF;background-color:'||
+            span CASE
+            span.indent WHEN (TYPE =  1) THEN '#AD4E7E"&gt;SW&lt;/div&gt;'
+            span.indent WHEN (TYPE =  2) THEN '#8c714d"&gt;PKG&lt;/div&gt;'
+            span.indent WHEN (TYPE =  3) THEN '#299BA6"&gt;E/E&lt;/div&gt;'
+            span.indent WHEN (TYPE =  4) THEN '#A68932"&gt;OTH&lt;/div&gt;'
+            span.indent WHEN (TYPE =  5) THEN '#8256BF"&gt;MCAD&lt;/div&gt;'
+            span.indent WHEN (TYPE = 34) THEN '#6a9728"&gt;MBOM&lt;/div&gt;'
+            span.indent WHEN (TYPE = 67) THEN '#222222"&gt;TLA&lt;/div&gt;'
+            span.indent(style='font-weight:bold') WHEN (TYPE = 101) THEN '#0696D7"&gt;KIT&lt;/div&gt;'
+            span.indent(style='font-weight:bold') WHEN (TYPE = 103) THEN '#BFA34D"&gt;SBOM&lt;/div&gt;'
+            span.indent(style='font-weight:bold') WHEN (TYPE = 100) THEN '#BFA34D"&gt;sOFFER&lt;/div&gt;'
+            span.indent(style='font-weight:bold') WHEN (TYPE = 102) THEN '#BFA34D"&gt;sOPER&lt;/div&gt;'
+            span.indent(style='font-weight:bold') WHEN (TYPE = 104) THEN '#BFA34D"&gt;SPL&lt;/div&gt;'
+            span.indent ELSE '#c2cdd3"&gt;?&lt;/div&gt;'
+            span END
+        h2 BOM View 
+        p The Service BOM editor requires a BOM view in workspace  
+            strong Items 
+            |with at least the following columns: 
+            ul  
+                li Descriptor 
+                li Number
+                li Title
+                li Type 
+                li Quantity
+                li Spare / Wear Part (This field provided by standard tenants can be used by engineering to predefine spare parts within the EBOM)
+        p You may add the column Icon as well as this helps users to better understand the structure, but this is not required.
+        p Your tenant may contain the view 
+            strong Service 
+            |with these columns already, which will be used automatically. If not, please create this view or provide the name of an existing BOM view to reuse in the configuration settings (see given chapter further below).
+        h1 Schema Changes for Products Workspace
+        p Techincally, the editor can be opened from any context record that has a reference to both an Engineering BOM and a Service BOM. The following steps explain how to configure the editor for the 
+            strong Products 
+            |workspace, but you can also adapt this setup to your workspace of preference.
+        p The Products requires two fields for the editor to work: One field containing the EBOM reference and another one referring to the matching Service BOM. Please create these two fields as shown in the screenshot below and place them anywhere in the details page. Please note that the standard Products workspace already contains the given field for the Engineering BOM so you can clone it to create the matching field for the Service BOM easily.
+        p Both fields must be of type 
+            stonrg Single Pick List 
+            |with reference to the Items workspace.
+        img.border(src='images/apps/sbom-editor-4.png' style='width:100%;max-width:1200px')
+        p Place these field anywhere in the details page of your Products workspace:
+        img.border(src='images/apps/sbom-editor-5.png' style='width:100%;max-width:662px')
+        h1 Starting the application
+        p Opening the application from a Product in PLM can be achieved in two ways: 
+        ol
+            li By using the framework's Chrome Extension that adds a given button in the Product's header toolbar. 
+                br
+                |This option is recommneded and does not require any further configuration.
+            li If the Chrome Extension cannot be used, a computed field must be added to the details page to render the given button for launching the application. 
+                br
+                |See the required configuration steps below only if this option is needed.
+        a(href='chrome-extension' target='_blank') Learn about the Chrome Extension
+        h2 Adding application button to Product details
+        p If the field 
+            strong DMS_ID 
+            | does not exist yet in your Products workspace, add it as 
+            strong Single Line Text 
+            | (length 20, not visible) to the item details tab 
+            |. 
+            br
+            |Let this field be set upon creation using the following script code in your product creation script or the initial workflow transition: 
+        p.code item.DMS_ID = dmsID;
+        p Pro Tipp: If you have existing Products in your tenant already and want to store the dmsID in this new field for the existing products as well, you can use the 
+            strong Data Manager 
+            |. This utility provides a matching batch processing action and can be used immediately without any further setup.
+        a(href='data' target='_blank') Open Data Manager in new window
+        p In order to launch the Service BOM editor from a Product, a computed field can be used to render the matching link as button: 
+        p.code CASE 
+            span WHEN (ENGINEERING_BOM is not null) THEN '&lt;a style="margin-right:10px;border: 1px solid #bec8d2;border-radius:3px;color: #0a131c;font-weight:600;line-height:32px;padding:4px 20px;text-align:center;text-decoration:none !important;white-space:nowrap;" target="_blank" href ="LOCATIONsbom?wsId=95&dmsId='||DMS_ID||'"&gt;Edit Service BOM&lt;/a&gt;'
+            span ELSE ''
+            span END  
+        p You can either create a new field for this button specifically or add it to the standard 
+            strong Actions 
+            |field provided with the standard Product workspace. In the latter case, append the formula to the existing field using the pipe symbol twice:
+        img.border(src='images/apps/sbom-editor-7.png' style='width:100%;max-width:662px')
+        p Now you're ready to use the editor with default settings
+        h1 Application Configuration Settings
+        p The following application specific settings can be adjusted in your custom settings file in 
+            span.code exports.applications.sbom 
+            br
+            |In order to change any of these settings, copy the standard value from settings.js to your custom settings file in folder settings.
+        p If you followed the setup instructions above, there is no need to change any of these settings. Anyway, you may want to change labels, fieldIds or BOM views using the settings listed below. However, you can also even apply the editor's capabilities to other type of BOMs if needed. Using the bomTypes property, it is not only possible to adjust the tabs being displayed in the editor, but also the matching filters and type values to use.
+        table   
+            tr 
+                th Setting 
+                th Default Value    
+                th Description
+            tr 
+                td appTitle 
+                td 'Service BOM Editor'
+                td Sets the applications title shown in the main toolbar. This overrides the setting defined in /routes/landing.js to provide more flexibility.
+            tr 
+                td sourceBOM.fieldId 
+                td 'ENGINEERING_BOM'
+                td The fieldID of the context record containing the Source / Engineering BOM. This given BOM will be displayed as base BOM of the editor and its viewable will be used for the viewer.
+            tr 
+                td sourceBOM.bomViewName
+                td 'Service'
+                td The BOM of workspace 
+                    strong Items 
+                    |with the required fields to display the base BOM tree
+            tr 
+                td sourceBOM.headerLabel
+                td 'Engineering BOM',
+                td The label to display above the base BOM
+            tr 
+                td targetBOM.fieldId 
+                td 'SERVICE_BOM'
+                td The fieldID of the context record to use in order to retrieve the matching Service BOM root node
+            tr 
+                td targetBOM.bomViewName
+                td 'Service'
+                td The BOM of workspace 
+                    strong Items 
+                    |with the required fields to display the Sourcing BOM
+            tr 
+                td targetBOM.itemTypeValue
+                td 'Service BOM'
+                td The value of field Type to set for the Target BOM root node if it will be created by the Service BOM Editor
+            tr 
+                td targetBOM.filterLabelIn
+                td 'Show items contained in Service BOM only'
+                td Provide a name for the filter option above the BOM tree enabling users to filter for items contained in the target BOM (optional)
+            tr 
+                td targetBOM.filterLabelEx
+                td 'Hide items contained in Service BOM'
+                td Provide a name for the filter option above the BOM tree enabling users to filter for items NOT  contained in the target BOM (optional)
+            tr 
+                td targetBOM.defaults
+                td {..}
+                td This property defines default values for the creation of the new target BOM root node which will be created automatically if it does not exist yet. The Number, Title and Description can be copied from the context product or the related BOM item and be extended by a prefix and/or suffix. Leave the properties copyFrom blank to disable this capability.
+            tr 
+                td itemsFieldIds.number
+                td 'NUMBER',
+                td The Item's workspace fieldID for the item Number
+            tr 
+                td itemsFieldIds.title
+                td 'TITLE',
+                td The Item's workspace fieldID for the item Title. This field must be included in the BOM view defined by targetBOM.bomViewName.
+            tr 
+                td itemsFieldIds.description
+                td 'DESCRIPTION',
+                td The Item's workspace fieldID for the item Description
+            tr 
+                td itemsFieldIds.type
+                td 'TYPE',
+                td The Item's workspace fieldID to use for determining the type of items. This field must be included in the BOM view defined by targetBOM.bomViewName.
+            tr 
+                td picklistIdItemType
+                td 'CUSTOM_LOOKUP_ITEM_TYPES'
+                td The Item's workspace picklistID related to the type field
+            tr 
+                td itemHighlight.fieldId
+                td 'SPARE_WEAR_PART'
+                td If source BOM entries should be highlighted in a dedicated BOM column, provide the fieldID which determines if an item should be highlighted
+            tr 
+                td itemHighlight.fieldValues
+                td ['spare', 'spare part', 'yes', 'x', 'y', 'true']
+                td If source BOM entries should be highlighted in a dedicated BOM column, provide the values of the defined field to recognize items to highlight
+            tr 
+                td itemHighlight.bomColumnTitle
+                td 'Spare/Wear'
+                td Sets the highlight BOM column's title
+            tr 
+                td itemHighlight.filterLabelIn
+                td 'Show Recommended Spare Parts Only'
+                td Provide a name for the filter option above the BOM tree enabling users to filter for items being highlighted in the source BOM (optional)
+            tr 
+                td itemHighlight.filterLabelEx
+                td 'Hide Recommended Spare Parts'
+                td Provide a name for the filter option above the BOM tree enabling users to filter for items NOT being highlighted in the source BOM (optional)
+            tr 
+                td enableBOMPin
+                td false
+                td When set to true, all new BOM relationships will be created with the BOM revision pin enabled
+                
+        p The standard configuration of this utility enables users to define the Service BOM consisting of 
+            ul 
+                li Spare Parts List 
+                li Maintenance Kits 
+                li and Service Offerings 
+        p This is achieved by providing the matching list of bomTypes in the settings file. These settings can be adjusted to change / remove existing tabs, but also to adopt the capabilities of this editor to other use cases. Below, you can find the default settings being used by the 3 standnard tabs as reference.
+            table   
+                tr 
+                    th Setting 
+                    th Description              
+                    th Values for Spare Parts List
+                    th Values for Maintenance Kits 
+                    th Values for Service Offerings
+                tr 
+                    td mode
+                    td Enables management of a 2-level BOM, 1-level BOM or just a flat list
+                    td 'list'
+                    td '1-level-bom'
+                    td '2-levels-bom'
+                tr 
+                    td tabLabel
+                    td The name of the tab being displayed in the UI's panel on the right hand side of the screen,
+                    td 'Spare Parts'
+                    td 'Maintenance Kits'
+                    td 'Services'
+                tr 
+                    td icon
+                    td The icon to use in the BOM display to indicated usage of given items to this type of BOM
+                    td 'icon-details'
+                    td 'icon-product'
+                    td 'icon-service'
+                tr 
+                    td color
+                    td The background color to use for the icons defined before
+                    td colors.red
+                    td colors.green
+                    td colors.yellow
+                tr 
+                    td buttonLabels
+                    td Array of labels for the various create buttons on the various levels of this tab
+                    td ['Add all recommended']
+                    td ['New Kit']
+                    td ['New Service', 'New Operation']
+                tr 
+                    td bomItemTypes
+                    td The matching value of the Type property to identify the right Service BOM items for the given tab
+                    td ['Spare Parts List']
+                    td ['Service Kit']
+                    td ['Service Offering', 'Service Operation']
+                tr 
+                    td filterLabelIn
+                    td If a label is provided, users can filter the BOM for items contained in the matching panel using the label in the drop down
+                    td 'Show Spare Parts List Items Only'
+                    td 'Show Maintenance Kit Items Only'
+                    td 'Show Services Items Only'
+                tr 
+                    td filterLabelEx
+                    td If a label is provided, users can filter the BOM for items NOT contained in the matching panel using the label in the drop down
+                    td 'Hide Spare Parts List Items'
+                    td 'Hide Maintenance Items'
+                    td 'Hide Services Items'
+                tr 
+                    td hideQuantity
+                    td When set to true, the quantity input will not be displayed in the given tab and all BOM quantities will be set to 1.0
+                    td true
+                    td -
+                    td -
+        h1 Common Configuration Settings
+        p This utility also uses the following common configuration settings
+        table(style='margin:10px 0px 30px')
+            tr
+                th Setting
+                th Default Value 
+                th Description
+            tr  
+                td exports.common.workspaceIds.items
+                td 57       
+                td ID of workspace Items
+        h1 Viewer Configuration Settings
+        include ../framework/viewer.pug
+    .log 
+        h1 Service BOM Editor Change Log 
+        table 
+            tr 
+                td 12. January 2026
+                td Documentation
+                td Documentation has been updated to match the new custom settings and environments management
+            tr 
+                td 6. August 2025
+                td Enhancement
+                td Rework of the configuration settings to enable adoption of this utility for other BOM types
+            tr 
+                td 
+                td Change
+                td The Spare Part List items will no longer be connected to the Service BOM root item directly. Instead, the editor will create and use a dedicated node in the Service BOM (identified by given type) to manage all generic Spare Parts.
+            tr 
+                td 26. May 2025
+                td Initial Release
+                td Addition of the first version to the UX Extensions

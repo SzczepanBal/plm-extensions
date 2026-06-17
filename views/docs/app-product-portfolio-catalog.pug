@@ -1,0 +1,101 @@
+.tile(data-name='Product Portfolio Catalog' data-id='portfolio') 
+    .tile-image(style='background: url("images/app-product-catalog.png") no-repeat;background-size:contain;')
+    .tile-details
+        .tile-title Product Portofolio Catalog
+        .tile-subtitle The sales team can browse the Product Portfolio by Product Categories and Product Lines and retrieve latest product data including technical specification, documentation and Bill of Materials
+        .tile-access 
+            .tile-endpoint /portfolio
+            .tile-button.button.default(href="portfolio" target="_blank") Open
+    .instructions
+        h1 Prerequisites
+        p Your tenant must have the 
+            strong Product Portfolio Management 
+            | app installed (providing the workspaces Product Categories, Product Lines and Products).
+            br
+            |If your tenant has been created after April 2021, changes are high that it meets this requirement.
+        h1 Features
+        p Users can navigate the various level of the portfolio from Product Categories down to Products in an easy manner. Once a product is selected, users can retrieve a couple of information: 
+        ul  
+            li The Marketing Text managed in section 'Product Catalog Definition' can be used to describe the product's features
+            li The images managed in section 'Product Catalog Images' can be opened 
+            li If Classification section is added to the Products workspace, the given technical specification can be seen 
+            li The product attachments can be downloaded 
+            li If an engineering BOM item is linked to the product, the given BOM can be accessed and the given root item's viewable will be rendered
+        h1 Adjust Workspace Products 
+        p If your tenant has been created in 2023 or later, the Products workspace should meet the following requirements already, so the following changes might not be required!
+        p Add the 
+            strong Classification 
+            | section to the 
+            strong Products 
+            | workspace. This enables the management of technical specification based on the product type. The given information will be displayed in the catalog as well.
+        img(src='images/apps/product-catalog-1.png' style='width:736px;')
+        p Set the field 
+            strong Engineering BOM 
+            | to be a pick list, enabling references to the workspace 
+            strong Items 
+            | (if existent, otherwise use 
+            strong Items and BOMs
+            | ). When using the app, only if an item is selected in this field, the product catalog will be able to render the 3D design of the product (as this will render the related item's dwf). Also, this given item will be used to retrieve the product 
+            strong Bill of Materials
+            | .
+        img(src='images/apps/product-catalog-2.png' style='max-width:736px;')
+        h1 Application Configuration Settings
+        p The following settings can be adjusted in your custom settings file within 
+            span.code exports.applications 
+            |to adjust the application's behavior. In order to change any of these settings, copy the standard value from settings.js to your custom settings file in folder settings.
+        p 
+            table 
+                tr 
+                    th Setting 
+                    th Description 
+                    th Default Value
+                tr 
+                    td portfolio.hierarchy
+                    td If you renamed the standard workspaces of 
+                        strong Product Portfolio Management
+                        |, you can provide the new names here
+                    td ['Product Categories', 'Product Lines', 'Products']
+                tr 
+                    td portfolio.bomLevels
+                    td Restrict the BOM expansion to the defined number of levels
+                    td 3
+        h1 Common Configuration Settings
+        p This utility also uses the following common configuration settings
+        table(style='margin:10px 0px 30px')
+            tr
+                th Setting
+                th Description
+                th Default Value 
+            tr  
+                td exports.common.workspaces.items.defaultBOMView
+                td The default BOM view to be used for the BOM display. 
+                    br
+                    |If the defined view does not exist, the default BOM view will be used instead.
+                    br
+                    |For best performance, it is recommended to use a BOM view containing only the columns Descriptor, Number and Quantity.
+                td 'Tree Navigator'  
+        h1 Viewer Configuration Settings
+        include ../framework/viewer.pug                
+    .log 
+        h1 Product Portfolio Catalog Change Log 
+        table 
+            tr 
+                td 12. January 2026
+                td Documentation
+                td Documentation has been updated to match the new custom settings and environments management
+            tr 
+                td 9. October 2025
+                td Enhancement
+                td Added search capability and tree toggles to the BOM display of a product
+            tr 
+                td 23. July 2025
+                td Enhancement
+                td The catalog now displays english Marketing Text / Marketing Name if there is no data in the fields matching the user's browser language 
+            tr 
+                td 26. September 2023
+                td Enhancement
+                td Once a product got selected, a new button in the toolbar enables to open the related Services Portal for this product
+            tr 
+                td 7. July 2023
+                td Enhancement
+                td Better demo datasets in the default tenant to match this app (i.e. Marketing Names and Marketing Texts on Product Lines and Product Categories)

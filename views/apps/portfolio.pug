@@ -1,0 +1,75 @@
+extends ../framework/layout
+
+block head
+    
+    link(rel='stylesheet', href='/stylesheets/apps/portfolio.css')
+    link(rel='stylesheet', href='/stylesheets/custom/portfolio.css')
+
+    script(src='../javascripts/apps/portfolio.js')
+    script(src='../javascripts/custom/portfolio.js')
+
+block body
+
+    body.text-selection-off.surface-level-1
+
+        #header.dark
+            #header-logo
+            #header-title=title
+            #header-subtitle
+                #header-descriptor
+                #header-description
+            #header-toolbar
+                #header-search-icon.icon.xs search
+                input#header-search
+                #header-avatar
+
+        #landing
+
+            #landing-recents.nav 
+                .nav-title Recently Viewed Products
+                #landing-tiles-recents.nav-tiles.tiles.grid.xxl.surface-level-1
+            #landing-lines.nav.selected 
+                #landing-title.nav-title
+                //- #landing-lines-tiles.nav-tiles.tiles.grid.xxl.surface-level-1
+                #landing-lines-tiles.nav-tiles.surface-level-1
+            #landing-pinned.nav 
+                .nav-title Pinned Products
+                #landing-tiles-pinned.nav-tiles.tiles.grid.xxl.surface-level-1
+
+            #landing-prev.button.icon arrow_left
+            #landing-next.button.icon arrow_right
+
+            #landing-dots 
+                .dot.icon#landing-dot-recents
+                .dot.icon#landing-dot-lines.selected
+                .dot.icon#landing-dot-pinned
+
+        #search.screen.surface-level-2
+            .screen-header Search Results
+            #search-results.screen-tiles.tiles.grid.xxl
+            #search-close.icon.l.hover close
+
+        #lines.screen.with-panel.surface-level-1 
+            .screen-panel.no-scrollbar.surface-level-2
+                #lines-image.screen-image
+                #lines-images.screen-images
+                #lines-title.screen-title
+                #lines-text.screen-text
+            #lines-back.button.screen-back
+            #lines-header.screen-header
+            #lines-tiles.screen-tiles.surface-level-1
+
+        #products.screen.with-panel.surface-level-1 
+            .screen-panel.no-scroolbar.surface-level-2
+                #products-image.screen-image
+                #products-images.screen-images
+                #products-line.screen-title
+                #products-title.screen-title
+                #products-text.screen-text
+            #products-back.button.screen-back
+            #products-header.screen-header
+            #products-tiles.screen-tiles.tiles.surface-level-1
+
+        #product.screen.panel.surface-level-1
+            #viewer.viewer.surface-level-1
+            #summary.surface-level-2

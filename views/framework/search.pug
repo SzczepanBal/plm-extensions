@@ -1,0 +1,45 @@
+extends layout
+
+block head
+    
+    link(rel='stylesheet', href='/stylesheets/framework/search.css')
+    script.
+        config = !{JSON.stringify(config)};
+    script(src='/javascripts/framework/search.js')
+
+block body
+    
+    body.surface-level-2
+
+        script.
+            partNumber="#{partNumber}"
+            title='#{title}'
+            tenant='#{tenant}'
+            revisionBias='#{revisionBias}' 
+            options='#{options}' 
+
+        .screen#search-screen
+
+            .processing
+                .bounce1
+                .bounce2
+                .bounce3
+            #search-message.message
+                #text Searching for item
+                #number.partNumber= partNumber
+            #create-message.message 
+                div The selected item 
+                    span.partNumber= partNumber 
+                    | does not exist in PLM yet. Please use the following button to create the matching record now.
+                #create-action.button.default Create 
+                    span= partNumber
+
+        .screen.panel#create-screen
+            .panel#create
+                .panel-header 
+                    .panel-title#create-title sdfds
+                    .panel-toolbar
+                        .button#create-cancel Cancel 
+                        .button.default Submit
+                .panel-content#create-sections
+

@@ -1,0 +1,70 @@
+body.mode-erp #viewer,
+body.mode-erp #ebom,
+body.mode-erp #add,
+body.mode-erp #operations {
+    display: none !important;
+}
+
+body.mode-erp #erp {
+    display: block !important;
+}
+
+#erp {
+    left: 0;
+    right: 0;
+    display: none;
+}
+
+.erp-panel {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    padding: 24px;
+    overflow: auto;
+}
+
+.erp-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.erp-description {
+    color: var(--color-gray-500);
+    margin-bottom: 16px;
+}
+
+#check-erp-status {
+    display: inline-flex;
+    margin-bottom: 16px;
+}
+
+#copy-erp-status {
+    display: inline-flex;
+    margin-bottom: 16px;
+    margin-left: 8px;
+}
+
+.erp-status-output {
+    background: var(--color-surface-level-3);
+    border: 1px solid var(--color-gray-300);
+    border-radius: 4px;
+    line-height: 1.5;
+    min-height: 220px;
+    overflow: auto;
+    padding: 16px;
+    user-select: text;
+    -webkit-user-select: text;
+    white-space: pre-wrap;
+}
+
+.erp-status-output.error {
+    border-color: var(--color-red-500);
+}
+
+.erp-status-output,
+.erp-status-output * {
+    cursor: text;
+}

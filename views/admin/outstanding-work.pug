@@ -1,0 +1,34 @@
+extends ../framework/layout
+
+block head
+
+    link(rel='stylesheet', href='/stylesheets/admin/outstanding-work.css')
+    
+    script(src='/javascripts/admin/outstanding-work.js') 
+
+block body
+
+    body
+        
+        #header.dark
+            #header-logo
+            #header-title=title
+            #header-subtitle Review &amp; manage Outstanding Work lists of all PLM users
+            #header-toolbar
+                #header-avatar
+        
+        .screen
+
+            #panel.surface-level-2
+                .text Select an active user account below to retrieve this user's outstanding work list
+                #users.surface-level-2
+
+            #mow.surface-level-1
+                .instructions
+                    .instructions-icon.icon.icon-info
+                    .instructions-text Select a user to the left to review its outstanding work list here 
+
+            #item.surface-level-2
+                .instructions
+                    .instructions-icon.icon.icon-info
+                    .instructions-text Select an outstanding work entry to see its details here

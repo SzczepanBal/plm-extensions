@@ -1,0 +1,297 @@
+.tile(data-name='Product Data Explorer' data-id='explorer') 
+    .tile-image(style='background: url("images/app-product-data-explorer.png") no-repeat;background-size:contain;')
+    .tile-details
+        .tile-title Product Data Explorer
+        .tile-subtitle Even Non-Engineers now can review the design using dynamic KPIs driving charts and visual filtering &amp; highlighting. In addition, product data can be enriched using (mass) edit capabilites.
+        .tile-access 
+            .tile-endpoint /explorer
+            .tile-button.button.default(href="explorer" target="_blank") Open
+            .tile-button.button.icon.icon-start.default(href="https://youtu.be/TA5JyBVw2Hw" target="_blank")
+    .instructions
+        h1 Prerequisites
+        p This app works best with the 
+            strong Items 
+            | workspace, but can also be used with the former 
+            strong Items and BOMs 
+            | workspaces. It is recommended to be used with a workspace where the items have viewable files (dwf) attached.
+        h1 Features
+        ul  
+            li Navigate and visualize BOM of a given item
+            li Browse to item of interest from a landing page
+            li Filter BOM and 3D view by text and dynamic KPIs
+            li Apply colours to BOM and viewer to visualise KPIs
+            li Toggle BOM structure and flat table mode
+            li Access and download attachments of a selected item 
+            li Review &amp; edit details of selected records
+            li Review Problem Reports related to a selected item
+            li Perform markups and initate new Problem Reports for given items
+            li Manage master data of single records 
+            li Manage master data of multiple records in flat BOM view
+        h1 Setup Instructions
+        h2 Configure Items Workspace BOM View 
+        p This application requires a BOM view that contains all fields required to determine the KPIs for the dashboard shown on the left hand side of the application. It is recommended to create a new BOM view named 
+            strong Details 
+            | for workspace 
+            strong Items 
+            | if it does not exist yet - with all the columns shown below. If you omit some of these columns (as they might not exist in your tenant), the given KPIs will be hidden automatically and the dashboard will still work. If you want to reuse an existing BOM view instead, you can change the view's name in the application configuration settings as described in the given chapter. 
+        p List of recommended columns to match the standard KPIs:
+        ul 
+            li Descriptor 
+            li Number
+            li Quantity (BOM Fields)
+            li Status (System Field)
+            li Lifecycle (System Field)
+            li Change Pending (System Field)
+            li Revision (System Field)
+            li Release Date (System Field)
+            li Type
+            li Class Name
+            li PDM Category
+            li PDM Location 
+            li PDM Last Modification Date
+            li Responsible Designer
+            li Spare / Wear Part
+            li Make or Buy
+            li Vendor
+            li Country 
+            li Long Lead Time
+            li Has Pending Packages
+            li Weight
+            li Material
+            li REACH
+            li RoHS
+            li Carbon Emissions
+            li Inspection Required
+            li Latest QI Result
+        h2 Configure Workspace Relationships  
+        p Make sure that  
+            strong Items  
+            | can be connected to 
+            strong Problem Reports 
+            |as affected items. The retrieval of related PRs and also creation of new PRs will fail otherwise.
+        h1 Starting the application
+        p Users can access this application standalone but also in context of a given item. It can be opened in context by passing either the item number or both the wsId and dmsId. The latter capability can be used to launch the application from PLM in context of an item.
+        p Opening the application from an item in PLM can be achieved in two ways: 
+        ol
+            li By using the framework's Chrome Extension that adds an Explorer button in the PLM item's header toolbar. 
+                br
+                |This option is recommneded and does not require any further configuration.
+            li If the Chrome Extension cannot be used, a computed field must be added to the details page to render a button opening the Explorer. 
+                br
+                |See the required configuration steps below only if this option is needed.
+        a(href='chrome-extension' target='_blank') Learn about the Chrome Extension
+        h2 Adding an Explorer button to Item Details page
+        p If the field 
+            strong DMS_ID 
+            | does not exist yet in your Items workspace, add it as 
+            strong Single Line Text 
+            | (length 20, not visible) in tab 
+            strong Item Details
+            |. 
+            br
+            |Let this field be set upon item creation using the following script code in your item creation script: 
+        p.code item.DMS_ID = dmsID;
+        p In addition, add a computed field 
+            strong Actions 
+            | to 
+            strong Item Details 
+            | that renders a button to open the explorer for the current record. Use the formula shown below. In this formula, adjust the workspace ID to match your environment if needed (57 matches the standard Items workspace).
+        p.code '&lt;a style="border: 1px solid #bec8d2;border-radius:3px;color: #0a131c;font-weight:600;line-height:32px;padding:4px 20px;text-align:center;text-decoration:none !important;white-space:nowrap;" target="_blank" href ="
+            span.url 
+            | explorer?wsId=57&amp;dmsId='||DMS_ID||'"&gt;Explorer&lt;/a&gt;'
+        h1 Application Configuration Settings
+        p Multiple settings can be adjusted in your custom settings file within 
+            span.code exports.applications.explorer 
+            |to adjust the application's behavior. In order to change any of these settings, copy the standard value from settings.js to your custom settings file in folder settings.
+        h2 Core Settings
+        p Review the following settings to enable startup of the explorer
+        table(style='margin:10px 0px 30px')
+            tr
+                th Setting
+                th Description
+                th Default Value 
+            tr  
+                td bomViewName
+                td The Item workspace's BOM view to use for expanding the BOM and getting the KPI values for the dashboard. See instructions above about columns required in this view.
+                td Details
+            tr  
+                td fieldIdPRImage
+                td Image field ID of PR workspace that will be used to store the viewer markup screenshot
+                td IMAGE_1
+            tr  
+                td fieldIdPRContext
+                td New PRs can be connected to the currently selected item with this property. Provide a field ID of a linking pick list that allows to select items. The given input in the create dialog then will automatically be set to the current item.
+                td AFFECTED_ITEM
+            //- tr  
+            //-     td rollupFields
+            //-     td Provide a list of BOM rollup field IDs being present in the given BOM view to enable rollup calculation for these fields. Supported field types are single line text, number, currency and date fields.
+            //-     td false
+            tr  
+                td problemReports.workspaceId
+                td The Problem Reports workspace ID. This optional parameter is required is users should be able to create and view PRs related to the selected item.
+                td null
+            tr  
+                td supplierPackages.workspaceId
+                td The Supplier Packages workspace ID. This optional parameter is required for sending selected data to suppliers using the given workspace (see the following screenshot).
+                td null
+        p This explorer also can be used to identify items to be shared with suppliers (i.e. new or changed components). Therefore, one can provide the Workspace ID of 
+            strong Supplier Packages 
+            |in setting 
+            span.code supplierPackages.workspaceId
+            |. If this setting is provided, users can click the given icon to create a new package for selected BOM components easily
+        img(src='images/apps/product-data-explorer-1.png' style='max-width:1280px;')
+        h2 Dashboard KPI Settings
+        p Parameter 
+            span.code exports.applications.explorer.kpis 
+            |defines the KPIs being displayed in the explorer's dashboard to the left. You may change these kpis, but keep in mind that all KPIs require you to include the given field as column to the BOM view of this application. The more fields you add, the lower the performance will be.
+        p Standard KPIs are preconfigured to match the standard 
+            strong Items 
+            | workspace. For example, the dasboard will display counters to reveal items undergoing a change, and also display bars to indicate the PDM category:
+        p.code  
+            span             {
+            span.indent 'id'        : 'change',
+            span.indent 'title'     : 'Pending Change',
+            span.indent 'fieldId'   : 'WORKING_CHANGE_ORDER',
+            span.indent 'urn'       : '',
+            span.indent 'type'      : 'non-empty',
+            span.indent 'style'     : 'counters',
+            span.indent 'data'      : [
+            span.indent-2 { 'value' : 'Yes', 'count' : 0, 'color' : colors.list[0], 'vector' : vectors.red },
+            span.indent-2 { 'value' : 'No' , 'count' : 0, 'color' : colors.list[4], 'vector' : vectors.green }
+            span.indent  ]
+            span },{
+            span.indent 'id'        : 'pdm-category',
+            span.indent 'title'     : 'PDM Category',
+            span.indent 'fieldId'   : 'PDM_CATEGORY',
+            span.indent 'urn'       : '',
+            span.indent 'type'      : 'value',
+            span.indent 'style'     : 'bars',
+            span.indent 'data'      : []
+            span }
+        p Each KPI is configured with the same set of parameters:  
+            table 
+                tr 
+                    td id 
+                    td Unique identifier for each KPI 
+                tr  
+                    td title 
+                    td The title being displayed for the given KPI in the dashboard
+                tr 
+                    td fieldId 
+                    td ID of the given item details field to retrieve the given value - or the id of the given BOM column 
+                tr 
+                    td sortBy 
+                    td Select value (KPI label value), label (text being displayed in the KPI's bar / element) or count (KPI item count). Default is count.
+                tr 
+                    td sortDirection
+                    td Select ascending or descending. Default is descending.
+                tr  
+                    td type 
+                    td Defines if the KPI should be based on the given value (value) or if it should just indiate if the given field is not empty (non-empty). Use 'days' when comparing date fields.
+                tr  
+                    td style 
+                    td Select if the KPI should be presented as counters or colored bars with value. No matter which style you choose, users will be able to filter using the given KPI anyway.
+                tr  
+                    td data 
+                    td Leave this array blank for a dynamic range of values. If you want to predefine the range of interest and given colors, define the given datapoints in this array as shown for the Pending Changes.
+        h1 Common Configuration Settings
+        p This utility also uses the following common configuration settings
+        table(style='margin:10px 0px 30px')
+            tr
+                th Setting
+                th Description
+                th Default Value 
+            tr  
+                td exports.common.workspaceIds.problemReports
+                td ID of Problem Reports workspace which will be used if problemReports.workspaceId is not defined
+                td 82  
+            tr  
+                td exports.common.workspaceIds.supplierPackages
+                td ID of Supplier Packages workspace which will be used if supplierPackages.workspaceId is not defined
+                td 147  
+            tr  
+                td exports.common.workspaceIds.items
+                td ID of Items workspace
+                td 57  
+            tr  
+                td exports.common.workspaces.items.fieldIdNumber
+                td Field ID of the Item Number field in Items workspace
+                td 'NUMBER'      
+        h1 Viewer Configuration Settings
+        include ../framework/viewer.pug
+        h1 Access the Explorer
+        p If your tenant contains the default demo datasets and once you have the BOM view configured as described above, you can open the explorer using the link below:
+        a(href='explorer?wsId=57&dmsId=14669' target='_blank')
+        p You can also open the explorer's landing page by omitting the dmsId parameter:
+        a(href='explorer' target='_blank')
+    .log 
+        h1 Product Data Explorer Change Log 
+        table 
+            tr 
+                td 11. March 2026
+                td Documentation
+                td For better application performance, the list of BOM view columns has been reduced in alignment with the updated KPI definition in the settings file
+            tr 
+                td 12. January 2026
+                td Documentation
+                td Documentation has been updated to match the new custom settings and environments management        
+            tr 
+                td April 3, 2025
+                td Enhancement 
+                td Added configuation setting rollupTotalCost to display a total cost bar in the BOM tree. This requires to have the BOM column 'Total Cost' of the sourcing tab in the given BOM view.
+            tr 
+                td 5. March 2025
+                td Enhancement 
+                td The definition of KPIs now also supports parameters sortBy and sortDirection. With these settings, KPIs can be sorted in ascending order (see Release Date in example configuration).
+            tr 
+                td 18. December 2024
+                td Enhancement 
+                td A new button in the header toolbar indicates the current revision of the item. By clicking this button, users can switch to another revision of the given item.
+            tr 
+                td 26. April 2024
+                td Enhancement 
+                td Added setting viewer.hide to support easy hiding of components in viewer
+            tr 
+                td 22. April 2024
+                td Enhancement 
+                td Added a search panel to the new landing page, enabling users to quickly access any item
+            tr 
+                td 18. April 2024
+                td Enhancement 
+                td The explorer now can be opened without providing a dmsId. In this case, the explorer will display a landing page where users can navigate to the item of interest using recently viewed items, bookmarked items and workspace views. If a dmsId is provided, users can click the Home button to access this landing page in order to switch to another design.
+            tr 
+                td 
+                td Enhancement 
+                td Viewer features now can be configured in settings.js, enabling to hide / show toolbar icons of interest. Documentation has been extended accordingly.
+            tr 
+                td 
+                td Enhancement 
+                td Landing page now display images for recent and bookmark items
+            tr 
+                td 12. April 2024
+                td Enhancement 
+                td The Affected Items field of new Problem Reports will link the currently selected item automatically.
+            tr 
+                td 28. November 2023
+                td Enhancement 
+                td Added RoHS to standard KPI configuration
+            tr 
+                td 15. September 2023
+                td Enhancement 
+                td Added further KPIs to standard configuration
+            tr 
+                td 3. August 2023
+                td Bugfix 
+                td Improved behavior of markup toolbar at lower resolutions
+            tr 
+                td 
+                td Bugfix 
+                td Width of markups and font size of markup text can now be set properly
+            tr 
+                td 7. July 2023
+                td New Feature
+                td When switching to the flat BOM view, users can modify properties for multiple records (given the fields in the defined BOM are editable)
+            tr 
+                td 
+                td Enhancement
+                td Enhanced KPI definition to match standard properties and BOM view of new default tenant

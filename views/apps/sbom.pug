@@ -1,0 +1,37 @@
+extends ../framework/layout
+
+block head
+
+    link(rel='stylesheet', href='/stylesheets/apps/sbom.css')
+    link(rel='stylesheet', href='/stylesheets/custom/sbom.css')
+
+    script(src='/javascripts/apps/sbom.js')
+    script(src='/javascripts/custom/sbom.js')
+        
+block body
+
+    body.surface-level-1.text-selection-off.no-details
+
+        #header.dark
+            #header-logo
+            #header-title
+            #header-subtitle
+            #header-toolbar
+                select#mode.button.main 
+                    option(value='ebom') Insert from BOM 
+                    option(value='lib') Insert from Library
+                .button#save.disabled Save Changes
+                .button#toggle-viewer.with-toggle.toggle-on Toggle Viewer
+                .button#toggle-details.with-toggle Toggle Details
+                #header-avatar
+        
+        .screen
+
+            #viewer.viewer.surface-level-1.mode-ebom
+            #bom.surface-level-1.mode-ebom
+            #browser.hidden.surface-level-1.mode-lib
+            #panel.surface-level-2
+
+                .tabs#tabs(data-tab-group="tab-group-main")
+
+            #details.surface-level-1

@@ -1,0 +1,127 @@
+.tile(data-name='Process Dashboard' data-id='processes')
+    .tile-image(style="background: url('images/app-process-dashboard.png') no-repeat;background-size:contain;")
+    .tile-details
+        .tile-title Process Dashboard
+        .tile-subtitle Manufacturing, Services, Suppliers and Customers can be involved in business processes easily with this application focussing on management of one defined business process only (i.e. to capture PRs)
+        .tile-access 
+            .tile-endpoint /dashboard
+            .tile-button.button.default(href="dashboard" target="_blank") Open
+    .instructions
+        h1 Features
+        p Users can track progression of processes, update existing processes and create new processes with ease using this dashboard. The dashboard provides access to a single workspace only to reduce complexity.
+        ul  
+            li Create new processes by providing basic data only (only if create permission is granted)
+            li Review history of selected processes 
+            li Update status of a given process 
+            li Download and upload process attachments
+            li Use 3D markups to document process
+            li Access bookmarked and recent processes 
+            li Track proces progression in Kanban 
+            li Review process updates in a chart
+            li Access defined dashboard directly (by providing valid wsId as parameter) or select from configured profiles
+        h1 Configuration Settings
+        p This dashboard can be used with any workspace, but requires the matching configuration profile. The configuration profiles are managed in the standard settings file and/or the custom settings file by using the array 
+            span.code exports.applications.dashboard
+            |.
+        p The default configuration provides profiles for the following workspaces:  
+            ul
+                li Change Requests
+                li Change Orders
+                li Change Tasks
+                li Non Conformances
+                li Problem Reports
+                li Project Tasks
+                li Supplier Packages
+            |Additional workspace configuration profiles can be added by copying one of the existing configurations shown below.
+        p Each profile requires the settings listed below.
+            table   
+                tr 
+                    th Setting 
+                    th Example Value    
+                    th Description
+                tr 
+                    td title 
+                    td 'Problem Reporting Dashboard'
+                    td Sets the application title shown in the main toolbar and tab name 
+                tr 
+                    td workspace 
+                    td 'problemReports'
+                    td References the workspace ID to be used for this dashboard profile, based on the list of workspaces defined in 
+                        span.code exports.common.workspaceIds
+                tr 
+                    td newHeader 
+                    td 'Create new Problem Report'
+                    td The header text shown in the create panel when opening the dashboard
+                tr 
+                    td newMessage 
+                    td 'You encountered an issue? Help ...'
+                    td The message shown in the create panel when opening the dashboard'
+                tr 
+                    td className 
+                    td 'problem-report'
+                    td This class name will be added to the item-element in the HTML page when opening the details of a selected process. This enables custom styling per process type.
+                tr 
+                    td icon 
+                    td 'icon-problem'
+                    td The icon to be used for the processe and the profile selector in the Dashboard Landing Page (which opens if no process profile is defined). See the developer guide for available icons.
+                tr 
+                    td fieldIdSubtitle 
+                    td 'DESCRIPTION'
+                    td The field ID of the field to be used as tile subtitle in the process list
+                tr 
+                    td contents 
+                    td [..]
+                    td Defines the panels being displayed when opening a selected process. See the developer guide about insertItemSummary for configuration options.
+                tr 
+                    td progress 
+                    td [..]
+                    td Maps the business process workflow states to a linear sequene of steps to provide a better overview of the process progression. Each entry of this array must contain a label that will be used in the applcation, a color code to use for this state as well as the list of workflow 'states' that match to this step.
+                
+        h1 Access the Dashboard
+        p You can access the process dashboard with the 
+            strong /dashboard
+            |  endpoint by providing the workspace profile to use. The value of parameter wsId has to match the wsId property value of the configuration profile to use. If you're connected to a default tenant of 2023 or later, you can use these links:
+        div(style='display:flex;gap:10px;') 
+            a(href='dashboard?wsId=82' target='_blank') Problem Reporting Dashboard (wsId 82)
+            a(href='dashboard?wsId=98' target='_blank') Non Conformances Dashboard (wsId 98)
+        p You can also omit the workspaceId and select from the list of configured profiles instead:
+        a(href='dashboard?' target='_blank') Process Dashboard Profiles
+    .log 
+        h1 Process Dashboard Change Log 
+        table 
+            tr 
+                td 12. January 2026
+                td Documentation
+                td Documentation has been updated to match the new custom settings and environments management
+            tr 
+                td 14. October 2025
+                td Enhancement
+                td Added new dashboard configuration for Change Orders enabling creation of Change Tasks with markups on the CO's Affected Item
+            tr 
+                td 30. July 2025
+                td Enhancement
+                td Users can open the dashboard of a defined process by providing the given dmsID together with the wsID parameter
+            tr 
+                td 
+                td Enhancement
+                td The browser URL will be updated when opening a process, allowing for a refresh of the process dashboard of the currently selected process
+            tr 
+                td 8. March 2024
+                td Extension
+                td Users now can access a landing page with all available dashboard configurations by omitting the wsId parameter
+            tr 
+                td 6. March 2024
+                td Extension
+                td The dashboard now validates the user's access permissions and only shows the create panel if the 'Add Items' permission is granted to the user in PLM
+            tr 
+                td 
+                td Extension
+                td Added a new configuration profile in settings.js to support the 'Supplier Deliverables' workspace of the 2023 default tenants
+            tr 
+                td 16. November 2023
+                td Extension
+                td Added configuration profile for management of Non Conformances (incl. given button in documentation)
+            tr 
+                td 6. October 2023
+                td Release
+                td Initial release of this new app

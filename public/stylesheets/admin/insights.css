@@ -1,0 +1,366 @@
+/*  ADDITIONS */
+/* ----------------------------------------------------------------------------- */
+.tabs {
+    border-top      : 6px solid var(--color-surface-level-2);
+    border-bottom   : none;
+    font-size       : 14px;
+    padding         : 0px;
+    right           : 0px;
+    bottom          : 0px;
+    left            : 0px;
+}
+.tabs > div {
+    border      : none;
+    height      : 46px;
+    line-height : 46px;
+}
+.tabs > div:hover {
+    background : var(--color-surface-level-4);
+}
+.tabs > div.selected {
+    background  : var(--color-surface-level-2);
+    font-weight : bold;
+}
+.panel-content { 
+    border-radius   : 4px;
+    margin          : 10px 40px;
+    padding         : 40px;
+    top             : 0px; 
+    bottom          : 64px;
+}
+.panel-chart {
+    position    : absolute;
+    top         : 40px;
+    right       : 40px;
+    bottom      : 80px;
+    left        : 40px;
+}
+.panel-chart-toolbar {
+    display     : flex;
+    gap         : 40px;
+    line-height : 38px;
+    position    : absolute;
+    right       : 40px;
+    bottom      : 20px;
+    left        : 40px;
+    justify-content: center;
+}
+.dashboard > div { 
+    padding : 25px; 
+}
+.section {
+    margin : 0px;
+}
+
+
+/*  OPTIONS */
+/* ----------------------------------------------------------------------------- */
+#options {
+    margin-right : 0px;
+}
+#options-dialog {
+    height  : 600px;
+    width   : 600px;
+    top     : calc(50% - 300px);
+    left    : calc(50% - 300px);
+}
+#options-dialog table {
+    margin-top : 16px;
+}
+#options-dialog td {
+    vertical-align : top;
+}
+
+
+
+/*  PROGRESS */
+/* ----------------------------------------------------------------------------- */
+#processing {
+    color       : white;
+    font-size   : 0.8em;
+    font-style  : italic;
+    line-height : 40px;
+    text-align  : right;
+    position    : absolute;
+    right       : 320px;
+    top         : 14px;
+}
+#circle-wrap {
+    background : var(--color-font);
+}
+#circle-wrap,
+#circle-wrap .circle .mask, 
+#circle-wrap .circle .fill {
+    border-radius : 50%;
+    width         : 40px;
+    height        : 40px;
+}
+#circle-wrap .circle .mask, 
+#circle-wrap .circle .fill {
+    position : absolute;
+}
+#circle-wrap .circle .mask {
+    clip: rect(0px, 40px, 40px, 20px);
+}
+#circle-wrap .circle .mask .fill {
+    clip: rect(0px, 20px, 40px, 0px);
+    background-color: #048BD1;
+}
+#circle-wrap .circle .mask.full,
+#circle-wrap .circle .fill {
+    transform: rotate(0deg);
+}
+#percent {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--color-surface-level-5);
+    color : var(--color-font);
+    font-size : 9px;
+    line-height: 30px;
+    text-align: center;
+    margin-top: 5px;
+    margin-left: 5px;
+    position: absolute;
+    z-index: 100;
+}
+
+#progress-bar-complete,
+#progress-bar-pending {
+    display  : flex;
+    position : absolute;
+    top      : 0px;
+    height   : 6px;
+    
+}
+#progress-bar-complete {
+    background : var(--color-blue-500);
+    left       : 0px;
+    width      : 0%;
+    z-index    : 1;
+}
+#progress-bar-pending {
+    left        : -15%;
+    right       : -15%;
+    background  : linear-gradient(270deg, var(--color-surface-level-3) 40%, var(--color-blue-500) 50%, var(--color-surface-level-3) 60%);
+    background-size: 200% 200%;
+
+    -webkit-animation: AnimationName 3s ease infinite;
+    -moz-animation: AnimationName 3s ease infinite;
+    animation: AnimationName 3s ease infinite;
+}
+@-webkit-keyframes AnimationName {
+    1000%{background-position:0% 50%}
+    0%{background-position:100% 50%}
+}
+@-moz-keyframes AnimationName {
+    100%{background-position:0% 50%}
+    0%{background-position:100% 50%}
+}
+@keyframes AnimationName { 
+    100%{background-position:0% 50%}
+    0%{background-position:100% 50%}
+}
+
+
+
+/*  SYSTEM */
+/* ----------------------------------------------------------------------------- */
+#system {
+    display     : flex;
+    flex-wrap   : wrap;
+    gap         : 20px;
+    overflow    : hidden;
+    padding     : 0px;
+}
+.counters {
+    display     : flex;
+    background  : none !important;
+    width       : 100%;
+    gap         : 20px;
+    padding     : 0px !important;
+}
+.counter {
+    background      : var(--color-surface-level-1);
+    border          : 25px solid var(--color-surface-level-1);
+    border-radius   : 4px;
+    text-align      : center;
+    width           : 100%;
+}
+.counter-number {
+    font-size   : 60px;
+    font-weight : 800;
+    line-height : 0.9em;
+}
+.counter-label {
+    font-size : 12px;
+}
+#system > .dashboard-chart {
+    height : calc(100% - 200px);
+    width  : calc(50% - 60px);
+}
+.chart {
+    height : calc(100% - 50px);
+}
+
+
+
+/*  LAST LOGINS */
+/* ----------------------------------------------------------------------------- */
+#timelineLastLoginsChart {
+    position    : absolute;
+    top         : 0px;
+    right       : 280px;
+    bottom      : 0px;
+    left        : 0px;
+    border-radius : 4px;
+}
+#timelineLastLoginsCounters {
+    display         : flex;
+    flex-direction  : column;
+    gap             : 20px;
+    width           : 260px;
+    position        : absolute;
+    top             : 0px;
+    right           : 0px;
+    bottom          : 0px;
+}
+#timelineLastLoginsCounters > div {
+    background      : var(--color-surface-level-1);
+    border-radius   : 4px;
+    flex-grow       : 1;
+}
+#timelineLastLoginsFilter {
+    height       : 38px;
+    margin-right : 200px;
+
+}
+.panel-counter {
+    border  : 1px solid transparent;
+    cursor  : pointer;
+    display : flex;
+    gap     : 12px;
+    padding : 14px;
+}
+.panel-counter-value {
+    border-right    : 4px solid;
+    display         : grid;
+	align-items     : center;
+    font-size       : 32px;
+    font-weight     : 800;
+    text-align      : right;
+    padding-right   : 20px;
+    width           : 70px;
+}
+.panel-counter-label {
+    display     : grid;
+	align-items : center;
+    font-size   : 12px;
+    line-height : 16px;
+    width       : 110px;
+}
+
+.panel-counter:hover {
+    border-color     : var(--color-hover-border) !important;
+}
+.panel-counter.selected {
+    background-color : var(--color-selected-background) !important;
+}
+
+#logins-today   { border-color : var(--color-blue-900); }
+#logins-week    { border-color : var(--color-blue-800); }
+#logins-month   { border-color : var(--color-blue-700); }
+#logins-year    { border-color : var(--color-blue-600); }
+#logins-days7   { border-color : var(--color-blue-500); }
+#logins-days30  { border-color : var(--color-blue-400); }
+#logins-days60  { border-color : var(--color-blue-300); }
+#logins-days180 { border-color : var(--color-blue-200); }
+#logins-days365 { border-color : var(--color-blue-100); }
+
+#timelineLastLoginsToolbar {
+    display : flex;
+    justify-content: space-between;
+}
+#timelineLastLoginsReset {
+    display : flex;
+    gap : 40px;
+}
+
+
+
+/*  LOGINS */
+/* ----------------------------------------------------------------------------- */
+#logins {
+    display         : flex;
+    flex-direction  : column;
+    flex-wrap       : nowrap;
+    gap             : 20px;
+    overflow        : hidden;
+    padding         : 0px;
+}
+#summary {
+    display : flex;
+    height  : 40px;
+}
+#summary-bar {
+    width : 50%;
+}
+#summary-bar-logins {
+    background  : #eee;
+    height      : 40px;
+    width       : 50%;
+}
+#summary-bar-nologin {
+    background  : #eee;
+    height      : 40px;
+    width       : 50%;
+}
+#summary-text {
+    line-height  : 40px;
+    padding-left : 20px;
+}
+#summary-chart {
+    position    : absolute;
+    top         : 110px;
+    left        : 0px;
+    bottom      : 0px;
+    right       : 0px;
+}
+#summary-chart > .panel-chart {
+    top : 60px;
+}
+.text-block {
+    margin : 0px 5px;
+}
+
+
+
+/*  EVENTS */
+/* ----------------------------------------------------------------------------- */
+#events {
+    width : 100%;
+}
+#events tr.hidden td {
+    display : none;
+}
+td p {
+    margin  : 0px;
+    padding : 0px;
+    width   : auto;
+}
+.toolbar {
+    display         : flex;
+    gap             : 20px;
+    justify-content : center;
+    height          : 40px;;
+    line-height     : 40px;;
+    padding-bottom  : 12px;
+    text-align      : center;
+}
+.wrapper {
+    height     : calc(100% - 60px);
+    overflow-y : auto;
+}
+#select-user {
+    height : 38px;
+}
