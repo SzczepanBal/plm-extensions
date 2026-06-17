@@ -1592,7 +1592,7 @@ const erpPropertyMappings = [
     ['MATERIAL'    , 'Materiał'],
     ['ITEM_WEIGHT' , 'Masa'],
     ['DESCRIPTION' , 'Opis'],
-    ['TITLE'       , 'Nazwa'],
+    ['DESCRIPTION'       , 'Nazwa'],
     ['TITLE'       , 'Tytuł'],
     ['TITLE'       , 'Tutuł'],
     ['GRUPA_PRODUKTOWA', 'Grupa produktowa'],
@@ -1628,7 +1628,7 @@ function buildERPSyncPayload(details, erpCallName) {
 
     payload = {
         indeks          : getERPFieldValue(sections, 'NUMBER'),
-        nazwa_czesci    : getERPFieldValue(sections, 'TITLE'),
+        nazwa_czesci    : getERPFieldValue(sections, 'DESCRIPTION'),
         id_grupy        : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
         jednostka_miary : 'szt',
         wlasnosci       : properties

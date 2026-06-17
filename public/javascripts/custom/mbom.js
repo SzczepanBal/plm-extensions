@@ -1977,6 +1977,19 @@
         return roots;
     }
 
+    function isERPTechnologyMainRootItem(elemItem) {
+        if(!elemItem || elemItem.length === 0) return false;
+
+        let mainLink = (typeof links !== 'undefined' && links && links.mbom) ? links.mbom : '';
+        let itemLink = getERPTechnologyElementLink(elemItem);
+
+        if(!isBlank(mainLink) && !isBlank(itemLink)) {
+            return normalizePLMLink(mainLink) === normalizePLMLink(itemLink);
+        }
+
+        return elemItem.closest('#mbom-tree').length > 0 && elemItem.parent().attr('id') === 'mbom-tree';
+    }
+
     function getERPTechnologyPartDetailsValue(part, candidateIds) {
         if(!part || !part.details || !Array.isArray(candidateIds)) return '';
 
@@ -2081,6 +2094,21 @@
         if(typeof status === 'string' && status.trim() !== '') return status.trim();
         if(detailsData && detailsData.lifecycle && detailsData.lifecycle.state && detailsData.lifecycle.state.label) return String(detailsData.lifecycle.state.label).trim();
         return '';
+    }
+
+    function buildERPTechnologyDescription(detailsData, part) {
+        let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
+        let description = getERPTechnologySectionValue(sections, ['DESCRIPTION'], '');
+        let technologyId = getERPTechnologySectionValue(sections, ['ID_TECHNOLOGI', 'id_technologi'], '');
+
+        if(isBlank(technologyId) && part && part.details) {
+            technologyId = getERPTechnologyPartDetailsValue(part, ['ID_TECHNOLOGI', 'id_technologi']);
+        }
+
+        if(isBlank(technologyId)) return description;
+        if(isBlank(description)) return technologyId;
+
+        return description + ' ' + technologyId;
     }
 
     function buildERPTechnologyProperties(detailsData) {
@@ -2271,7 +2299,7 @@
             let payload = {
                 indeks          : normalizeERPTechnologyIndex(getERPTechnologySectionValue(sections, ['NUMBER'], '')),
                 nazwa_czesci    : getERPTechnologySectionValue(sections, ['TITLE'], detailsData.title || ''),
-                opis            : getERPTechnologySectionValue(sections, ['DESCRIPTION'], ''),
+                opis            : buildERPTechnologyDescription(detailsData, itemPart),
                 rewizja         : getERPTechnologyRevision(detailsData),
                 czy_zatwierdzona: 'N',
                 id_wersji       : technologyVersionId,
@@ -2281,7 +2309,7 @@
                 zalaczniki      : []
             };
 
-            if(isBlank(technologyVersionId)) {
+            if(isBlank(technologyVersionId) || !alreadySynced) {
                 delete payload.id_wersji;
             }
 
@@ -2402,6 +2430,11 @@
             return Promise.all(technologyRoots.map(buildERPTechnologyPayload)).then(function(jobs) {
                 let filteredJobs = jobs.filter(function(job) {
                     return job !== null && job.payload && !isBlank(job.payload.indeks) && Array.isArray(job.payload.operacje) && job.payload.operacje.length > 0;
+                });
+
+                filteredJobs = filteredJobs.filter(function(job) {
+                    if(isERPTechnologyMainRootItem(job.elemItem)) return true;
+                    return !job.synced;
                 });
 
                 return orderERPTechnologyJobsBottomUp(filteredJobs);
