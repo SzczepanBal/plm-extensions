@@ -2927,6 +2927,46 @@
         return 1;
     }
 
+    function normalizeERPTechnologyUnitOfMeasure(value) {
+        let normalized = normalizeComparisonValue(value);
+
+        if(normalized === 'each' || normalized === 'szt' || normalized === 'szt.') return 'szt';
+        if(normalized === 'kilogram' || normalized === 'kilograms' || normalized === 'kg') return 'kg';
+        if(normalized === 'meter' || normalized === 'meters' || normalized === 'metre' || normalized === 'metres' || normalized === 'm') return 'm';
+
+        return isBlank(value) ? 'szt' : String(value).trim();
+    }
+
+    function getERPTechnologyComponentUnitOfMeasure(part, detailsData, elemItem) {
+        let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
+        let fieldIds = (typeof config !== 'undefined' && config.workspaceMBOM && config.workspaceMBOM.fieldIDs)
+            ? config.workspaceMBOM.fieldIDs
+            : {};
+
+        let candidateIds = [
+            fieldIds.unitOfMeasure,
+            fieldIds.uom,
+            'UNIT_OF_MEASURE',
+            'UOM',
+            'UNIT',
+            'BOM_UOM',
+            'ITEM_UOM'
+        ].filter(Boolean);
+
+        let value = getERPTechnologySectionValue(sections, candidateIds, '');
+        if(isBlank(value) && part) {
+            if(!isBlank(part.unitOfMeasure)) value = part.unitOfMeasure;
+            if(isBlank(value) && !isBlank(part.uom)) value = part.uom;
+            if(isBlank(value)) value = getERPTechnologyPartDetailsValue(part, candidateIds);
+        }
+
+        if(isBlank(value) && elemItem && elemItem.length > 0) {
+            value = elemItem.attr('data-unit-of-measure') || elemItem.attr('data-uom') || '';
+        }
+
+        return normalizeERPTechnologyUnitOfMeasure(value);
+    }
+
     function isERPTechnologyManufacturingPart(part, detailsData) {
         let typeValue = '';
 
@@ -3076,7 +3116,8 @@
                                 indeks_skladowy : getERPTechnologyComponentPartIndex(structurePart, structureDetailsData, elemStructure),
                                 rewizja         : isManufacturingPart ? getERPTechnologyRevision(structureDetailsData) : '',
                                 ilosc_stala     : 0,
-                                ilosc_jednostek : getERPTechnologyComponentQuantity(elemStructure, structurePart)
+                                ilosc_jednostek : getERPTechnologyComponentQuantity(elemStructure, structurePart),
+                                jednostka_miary : getERPTechnologyComponentUnitOfMeasure(structurePart, structureDetailsData, elemStructure)
                             };
 
                             if(!isBlank(structureVersionId)) {
