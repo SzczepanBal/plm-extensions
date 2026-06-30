@@ -1616,6 +1616,39 @@ const erpPropertyMappings = [
     ['TEMPERATURA' , 'Temperatura'],
     ['GSTO'        , 'Gęstość']
 ];
+function normalizeERPUnitOfMeasureValue(value) {
+
+    let normalized = '';
+
+    if(value !== null && typeof value !== 'undefined') {
+        normalized = String(value).trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+
+    if(normalized === 'each' || normalized === 'szt' || normalized === 'szt.') return 'szt';
+    if(normalized === 'kilogram' || normalized === 'kilograms' || normalized === 'kg') return 'kg';
+    if(normalized === 'meter' || normalized === 'meters' || normalized === 'metre' || normalized === 'metres' || normalized === 'm') return 'm';
+
+    return isBlank(value) ? 'szt' : String(value).trim();
+
+}
+function getERPUnitOfMeasure(sections) {
+
+    let candidateIds = [
+        'UNIT_OF_MEASURE',
+        'UOM',
+        'UNIT',
+        'BOM_UOM',
+        'ITEM_UOM'
+    ];
+
+    for(let fieldId of candidateIds) {
+        let value = getERPFieldValue(sections, fieldId);
+        if(!isBlank(value)) return normalizeERPUnitOfMeasureValue(value);
+    }
+
+    return 'szt';
+
+}
 function buildERPSyncPayload(details, erpCallName) {
 
     let sections   = (details && details.sections) ? details.sections : [];
@@ -1630,7 +1663,7 @@ function buildERPSyncPayload(details, erpCallName) {
         indeks          : getERPFieldValue(sections, 'NUMBER'),
         nazwa_czesci    : getERPFieldValue(sections, 'DESCRIPTION'),
         id_grupy        : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
-        jednostka_miary : 'szt',
+        jednostka_miary : getERPUnitOfMeasure(sections),
         wlasnosci       : properties
     };
 
@@ -1744,9 +1777,15 @@ function genUpdateRequests(responses) {
 
             let erpCallName = isERPSynced(response.data) ? 'modify-product' : 'add-product';
             let payload = buildERPSyncPayload(response.data, erpCallName);
+            let missingFields = [];
 
-            if(isBlank(payload.indeks) || isBlank(payload.nazwa_czesci) || isBlank(payload.id_grupy)) {
-                addLogEntry('Skipping ERP sync for ' + params.descriptor + ' because NUMBER, TITLE or GRUPA_PRODUKTOWA is empty', 'error');
+            if(isBlank(payload.indeks))       missingFields.push('NUMBER -> indeks');
+            if(isBlank(payload.nazwa_czesci)) missingFields.push('DESCRIPTION -> nazwa_czesci');
+            if(isBlank(payload.id_grupy))     missingFields.push('GRUPA_PRODUKTOWA -> id_grupy');
+
+            if(missingFields.length > 0) {
+                addLogEntry('Skipping ERP sync for ' + params.descriptor + ' because required ERP fields are empty: ' + missingFields.join(', '), 'error');
+                addLogEntry('Resolved payload values: indeks="' + payload.indeks + '", nazwa_czesci="' + payload.nazwa_czesci + '", id_grupy="' + payload.id_grupy + '", jednostka_miary="' + payload.jednostka_miary + '"', 'indent');
                 run.errors.push({
                     link       : params.link,
                     descriptor : params.descriptor
@@ -1755,7 +1794,8 @@ function genUpdateRequests(responses) {
             }
 
             if(erpCallName === 'modify-product' && isBlank(payload.indeks_czesci)) {
-                addLogEntry('Skipping ERP modify-product for ' + params.descriptor + ' because INDEKS_CZESCI and NUMBER are empty', 'error');
+                addLogEntry('Skipping ERP modify-product for ' + params.descriptor + ' because both INDEKS_CZESCI and NUMBER resolved to empty values', 'error');
+                addLogEntry('Resolved payload values: indeks="' + payload.indeks + '", indeks_czesci="' + payload.indeks_czesci + '"', 'indent');
                 run.errors.push({
                     link       : params.link,
                     descriptor : params.descriptor
