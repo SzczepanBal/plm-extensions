@@ -4456,27 +4456,27 @@ router.get('/workflow-history', function(req, res, next) {
 
 
 /* ----- PERFORM LIFECYCLE TRANSITION ----- */
-router.get('/lifecycle-transition', function(req, res, next) {
+router.post('/lifecycle-transition', function(req, res, next) {
     
     console.log(' ');
     console.log('  /lifecycle-transition');
     console.log(' --------------------------------------------');  
-    console.log('  req.query.wsId       = ' + req.query.wsId);
-    console.log('  req.query.dmsId      = ' + req.query.dmsId);
-    console.log('  req.query.link       = ' + req.query.link);
-    console.log('  req.query.transition = ' + req.query.transition);
-    console.log('  req.query.revision    = ' + req.query.revision);
+    console.log('  req.body.wsId       = ' + req.body.wsId);
+    console.log('  req.body.dmsId      = ' + req.body.dmsId);
+    console.log('  req.body.link       = ' + req.body.link);
+    console.log('  req.body.transition = ' + req.body.transition);
+    console.log('  req.body.revision   = ' + req.body.revision);
     console.log();
 
-    let wsId         = (typeof req.query.wsId !== 'undefined') ? req.query.wsId : req.query.link.split('/')[4];
-    let dmsId        = (typeof req.query.dmsId !== 'undefined') ? req.query.dmsId : req.query.link.split('/')[6];
-    let transitionId = req.query.transition.split('/').pop();
+    let wsId         = (typeof req.body.wsId !== 'undefined') ? req.body.wsId : req.body.link.split('/')[4];
+    let dmsId        = (typeof req.body.dmsId !== 'undefined') ? req.body.dmsId : req.body.link.split('/')[6];
+    let transitionId = req.body.transition.split('/').pop();
     let url          = req.app.locals.tenantLink + '/api/rest/v1/workspaces/' + wsId + '/items/' + dmsId + '/lifecycles/transitions/' + transitionId;
 
     let custHeaders = getCustomHeaders(req);
         custHeaders['Content-Type'] = 'application/xml';
 
-    let body = '<dmsVersionItem><release>' + req.query.revision + '</release></dmsVersionItem>';
+    let body = '<dmsVersionItem><release>' + req.body.revision + '</release></dmsVersionItem>';
 
     axios.put(url, body, {
         headers : custHeaders

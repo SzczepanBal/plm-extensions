@@ -465,6 +465,30 @@ function setLifecycleTransitionSelectors() {
     });
 
 }
+function getReleaseAsInVaultTransition(lifecycleState) {
+
+    let transitionName = 'Production Revision';
+
+    if(lifecycleState === 'Unreleased') transitionName = 'To Production';
+    else if(lifecycleState === 'Pre-Release') transitionName = 'Release to Production';
+
+    let transition = wsConfig.lifecycles.find(function(entry) {
+        let names = [entry.name, entry.customLabel, entry.title];
+        let matchesName = names.includes(transitionName);
+        let matchesState = isBlank(entry.fromState) || entry.fromState.title === lifecycleState;
+
+        return matchesName && matchesState;
+    });
+
+    if(typeof transition === 'undefined') {
+        transition = wsConfig.lifecycles.find(function(entry) {
+            return [entry.name, entry.customLabel, entry.title].includes(transitionName);
+        });
+    }
+
+    return (typeof transition === 'undefined') ? null : transition.__self__;
+
+}
 function setScriptSelectors() {
 
     let existing = [];
@@ -1500,7 +1524,11 @@ function genRequests(limit) {
                 let elemRevision = $('#input-perform-lifecycle-transition');
                 if(!elemRevision.hasClass('hidden')) params.revision = elemRevision.val();
 
-                requests.push($.get('/plm/lifecycle-transition', params));
+                requests.push($.post('/plm/lifecycle-transition', params));
+
+            } else if(run.actionId === 'release-as-in-vault') {
+
+                requests.push($.get('/plm/details', params));
 
             } else if(run.actionId === 'run-script') {
 
@@ -1554,6 +1582,32 @@ function genUpdateRequests(responses) {
             }); 
 
             requests.push($.post('/plm/edit', params));
+
+        } else if(run.actionId === 'release-as-in-vault') {
+
+            let fieldId = 'PDM_ITEM_REVISION';
+            let revision = getSectionFieldValue(response.data.sections, fieldId, '');
+            let lifecycleState = isBlank(response.data.lifecycle) ? '' : response.data.lifecycle.title;
+            let transition = getReleaseAsInVaultTransition(lifecycleState);
+
+            params.transition = transition;
+            params.revision   = (typeof revision === 'string') ? revision.trim() : revision;
+
+            if(isBlank(params.revision)) {
+                requests.push($.Deferred().resolve({
+                    error   : true,
+                    message : 'The Vault revision field (' + fieldId + ') is blank',
+                    params  : params
+                }).promise());
+            } else if(isBlank(params.transition)) {
+                requests.push($.Deferred().resolve({
+                    error   : true,
+                    message : 'No matching lifecycle action was found for state "' + lifecycleState + '"',
+                    params  : params
+                }).promise());
+            } else {
+                requests.push($.post('/plm/lifecycle-transition', params));
+            }
                 
         } else if(run.actionId === 'delete-attachments') {
 
