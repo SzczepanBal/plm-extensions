@@ -465,12 +465,27 @@ function setLifecycleTransitionSelectors() {
     });
 
 }
-function getReleaseAsInVaultTransition(lifecycleState) {
+function getReleaseAsInVaultTransition(lifecycleState, aesState, sameRevisionAsLastReleased) {
 
-    let transitionName = 'Production Revision';
+    let transitionName = '';
 
-    if(lifecycleState === 'Unreleased') transitionName = 'To Production';
-    else if(lifecycleState === 'Pre-Release') transitionName = 'Release to Production';
+    if(aesState === 'SAP Released') {
+
+        if(['Unreleased', 'Working', 'In Work'].includes(lifecycleState)) transitionName = 'To SAP Released';
+        else if(lifecycleState === 'SAP Released') transitionName = 'SAP Released Revision';
+        else if(lifecycleState === 'Production') transitionName = 'Revised SAP Released';
+        else if(lifecycleState === 'Obsolete') transitionName = 'Obsolete To SAP Released';
+
+    } else if(aesState === 'Obsolete') {
+
+        if(['Unreleased', 'Working', 'In Work', 'Production'].includes(lifecycleState)) transitionName = 'To Obsolete';
+        else if(lifecycleState === 'SAP Released') {
+            transitionName = sameRevisionAsLastReleased ? 'SAP Released To Obsolete' : 'In Work To Obsolete Revised';
+        } else if(lifecycleState === 'Obsolete') transitionName = 'Obsolete To SAP Released';
+
+    }
+
+    if(isBlank(transitionName)) return null;
 
     let transition = wsConfig.lifecycles.find(function(entry) {
         let names = [entry.name, entry.customLabel, entry.title];
@@ -1585,10 +1600,15 @@ function genUpdateRequests(responses) {
 
         } else if(run.actionId === 'release-as-in-vault') {
 
-            let fieldId = 'PDM_ITEM_REVISION';
+            let fieldId = 'AES_REVISION';
             let revision = getSectionFieldValue(response.data.sections, fieldId, '');
+            let aesState = getSectionFieldValue(response.data.sections, 'AES_STATE', '');
             let lifecycleState = isBlank(response.data.lifecycle) ? '' : response.data.lifecycle.title;
-            let transition = getReleaseAsInVaultTransition(lifecycleState);
+            let latestReleasedVersion = getSectionFieldValue(response.data.sections, 'LATEST_RELEASED_VERSION', null, 'object');
+            let latestReleasedRevision = isBlank(latestReleasedVersion) ? '' : latestReleasedVersion.AES_REVISION;
+            let sameRevisionAsLastReleased = !isBlank(latestReleasedRevision)
+                && String(latestReleasedRevision) === String(revision);
+            let transition = getReleaseAsInVaultTransition(lifecycleState, aesState, sameRevisionAsLastReleased);
 
             params.transition = transition;
             params.revision   = (typeof revision === 'string') ? revision.trim() : revision;
@@ -1599,10 +1619,16 @@ function genUpdateRequests(responses) {
                     message : 'The Vault revision field (' + fieldId + ') is blank',
                     params  : params
                 }).promise());
+            } else if(!['SAP Released', 'Obsolete'].includes(aesState)) {
+                requests.push($.Deferred().resolve({
+                    error   : true,
+                    message : 'AES_STATE must be "SAP Released" or "Obsolete", but is "' + aesState + '"',
+                    params  : params
+                }).promise());
             } else if(isBlank(params.transition)) {
                 requests.push($.Deferred().resolve({
                     error   : true,
-                    message : 'No matching lifecycle action was found for state "' + lifecycleState + '"',
+                    message : 'No matching lifecycle action was found for AES state "' + aesState + '" and lifecycle state "' + lifecycleState + '"',
                     params  : params
                 }).promise());
             } else {

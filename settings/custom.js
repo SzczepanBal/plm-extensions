@@ -27,7 +27,6 @@ exports.common = {
         changeOrders                 : 84,
         changeRequests               : 83,
         changeTasks                  : 80,
-        quickReleases                : 78,
         designReviews                : 76,
         designReviewTasks            : 77,
         engineeringProjects          : 213,
