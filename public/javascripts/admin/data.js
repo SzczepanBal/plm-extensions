@@ -1618,17 +1618,54 @@ const erpPropertyMappings = [
 ];
 function normalizeERPUnitOfMeasureValue(value) {
 
-    let normalized = '';
+    if(isBlank(value)) return 'szt';
 
-    if(value !== null && typeof value !== 'undefined') {
-        normalized = String(value).trim().toLowerCase().replace(/\s+/g, ' ');
-    }
+    let source = String(value).trim();
+    let normalized = source.toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ');
 
-    if(normalized === 'each' || normalized === 'szt' || normalized === 'szt.') return 'szt';
-    if(normalized === 'kilogram' || normalized === 'kilograms' || normalized === 'kg') return 'kg';
-    if(normalized === 'meter' || normalized === 'meters' || normalized === 'metre' || normalized === 'metres' || normalized === 'm') return 'm';
+    let mappings = {
+        'day' : 'db', 'days' : 'db', 'doba' : 'db', 'db' : 'db',
+        'watt' : 'W', 'watts' : 'W', 'w' : 'W',
+        'six-pack' : 'pk-06', 'six pack' : 'pk-06', 'szescio-pack' : 'pk-06', 'pk-06' : 'pk-06',
+        'four-pack' : 'pk-04', 'four pack' : 'pk-04', 'cztero-pack' : 'pk-04', 'pk-04' : 'pk-04',
+        'eight-pack' : 'pk-08', 'eight pack' : 'pk-08', 'osmio-pack' : 'pk-08', 'pk-08' : 'pk-08',
+        'linear meter' : 'mb', 'linear metre' : 'mb', 'metr biezacy' : 'mb', 'mb' : 'mb',
+        'kelvin' : '°K', 'degree kelvin' : '°K', 'stopnien kalvina' : '°K', '°k' : '°K',
+        'each' : 'szt', 'piece' : 'szt', 'pieces' : 'szt', 'sztuka' : 'szt', 'szt' : 'szt', 'szt.' : 'szt',
+        'package' : 'opak', 'packaging' : 'opak', 'opakowanie' : 'opak', 'opak' : 'opak',
+        'meter' : 'm', 'meters' : 'm', 'metre' : 'm', 'metres' : 'm', 'metr' : 'm', 'm' : 'm',
+        'kilogram' : 'kg', 'kilograms' : 'kg', 'kg' : 'kg',
+        'liter' : 'l', 'liters' : 'l', 'litre' : 'l', 'litres' : 'l', 'litr' : 'l', 'l' : 'l',
+        'millimeter' : 'mm', 'millimeters' : 'mm', 'millimetre' : 'mm', 'millimetres' : 'mm', 'milimetr' : 'mm', 'mm' : 'mm',
+        'cubic meter' : 'm3', 'cubic metre' : 'm3', 'metr szescienny' : 'm3', 'm³' : 'm3', 'm^3' : 'm3', 'm3' : 'm3',
+        'square meter' : 'm2', 'square metre' : 'm2', 'metr kwadratowy' : 'm2', 'm²' : 'm2', 'm^2' : 'm2', 'm2' : 'm2',
+        'cubic decimeter' : 'dm3', 'cubic decimetre' : 'dm3', 'decymetr szescienny' : 'dm3', 'dm³' : 'dm3', 'dm^3' : 'dm3', 'dm3' : 'dm3',
+        'kilowatt' : 'kW', 'kilowatts' : 'kW', 'kw' : 'kW',
+        'kilowatt hour' : 'kWh', 'kilowatt-hour' : 'kWh', 'kilowatogodzina' : 'kWh', 'kwh' : 'kWh',
+        'gram' : 'g', 'grams' : 'g', 'g' : 'g',
+        'tonne' : 't', 'tonnes' : 't', 'metric ton' : 't', 'metric tonne' : 't', 'tona' : 't', 't' : 't',
+        'milliliter' : 'ml', 'milliliters' : 'ml', 'millilitre' : 'ml', 'millilitres' : 'ml', 'mililitr' : 'ml', 'ml' : 'ml',
+        'set' : 'kpl', 'complete set' : 'kpl', 'komplet' : 'kpl', 'kpl' : 'kpl',
+        'celsius' : '°C', 'degree celsius' : '°C', 'stopien celsjusza' : '°C', '°c' : '°C',
+        'centimeter' : 'cm', 'centimeters' : 'cm', 'centimetre' : 'cm', 'centimetres' : 'cm', 'centymetr' : 'cm', 'cm' : 'cm',
+        'fahrenheit' : '°F', 'degree fahrenheit' : '°F', 'stopien fahreheita' : '°F', 'stopien fahrenheita' : '°F', '°f' : '°F',
+        'inch' : '"', 'inches' : '"', 'in' : '"', 'cal' : '"', '"' : '"',
+        'cubic centimeter' : 'cm3', 'cubic centimetre' : 'cm3', 'centymetr szescienny' : 'cm3', 'cm³' : 'cm3', 'cm^3' : 'cm3', 'cm3' : 'cm3',
+        'second' : '``', 'seconds' : '``', 'sekunda' : '``', 's' : '``', '``' : '``',
+        'minute' : "'", 'minutes' : "'", 'minuta' : "'", 'min' : "'", "'" : "'",
+        'square centimeter' : 'cm2', 'square centimetre' : 'cm2', 'centymetr kwadratowy' : 'cm2', 'cm²' : 'cm2', 'cm^2' : 'cm2', 'cm2' : 'cm2',
+        'decimeter' : 'dm', 'decimetre' : 'dm', 'decymetr' : 'dm', 'dm' : 'dm',
+        'square decimeter' : 'dm2', 'square decimetre' : 'dm2', 'decymetr kwadratowy' : 'dm2', 'dm²' : 'dm2', 'dm^2' : 'dm2', 'dm2' : 'dm2',
+        'square millimeter' : 'mm2', 'square millimetre' : 'mm2', 'milimetr kwadratowy' : 'mm2', 'mm²' : 'mm2', 'mm^2' : 'mm2', 'mm2' : 'mm2',
+        'cubic millimeter' : 'mm3', 'cubic millimetre' : 'mm3', 'milimetr szescienny' : 'mm3', 'mm³' : 'mm3', 'mm^3' : 'mm3', 'mm3' : 'mm3',
+        'ac volt' : 'V~', 'volt ac' : 'V~', 'volt pradu zmiennego' : 'V~', 'v~' : 'V~',
+        'radian' : '°R', 'radians' : '°R', 'degree radian' : '°R', 'stopien radiana' : '°R', '°r' : '°R'
+    };
 
-    return isBlank(value) ? 'szt' : String(value).trim();
+    return mappings[normalized] || source;
 
 }
 function getERPUnitOfMeasure(sections) {
