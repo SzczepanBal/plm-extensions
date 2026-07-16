@@ -1,0 +1,32 @@
+{
+  "indeks": "S000000054",
+  "nazwa_czesci": "BLA ZW DX51D+Z275 MAC 0,5mm",
+  "id_grupy": "MHU",
+  "jednostka_miary": "szt",
+  "wlasnosci": [
+    {
+      "Materiał": "test"
+    },
+    {
+      "Tytuł": "BLA ZW DX51D+Z275 MAC 0,5mm"
+    },
+    {
+      "Tutuł": "BLA ZW DX51D+Z275 MAC 0,5mm"
+    },
+    {
+      "Grupa produktowa": "MHU"
+    },
+    {
+      "Typ części": "S"
+    },
+    {
+      "Rodzaj": "Surowiec"
+    },
+    {
+      "Wariant": "Standard"
+    },
+    {
+      "Specyfikacja": "Surowiec"
+    }
+  ]
+}

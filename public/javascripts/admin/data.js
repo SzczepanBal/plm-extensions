@@ -1540,7 +1540,7 @@ function getRecordFieldValue(record, fieldId, value) {
 }
 function getERPFieldValue(sections, fieldId) {
 
-    let value = getSectionFieldValue(sections, fieldId, '', null);
+    let value = getSectionFieldValue(sections, fieldId, '', 'object');
 
     if(typeof value === 'object' && value !== null) {
         if(typeof value.title === 'string' && value.title !== '') return value.title.trim();
@@ -1691,6 +1691,8 @@ function buildERPSyncPayload(details, erpCallName) {
     let sections   = (details && details.sections) ? details.sections : [];
     let properties = [];
     let payload = {};
+    let itemType = getERPFieldValue(sections, 'RODZAJ');
+    let partNameFieldId = (String(itemType).trim().toUpperCase() === 'SUROWIEC') ? 'TITLE' : 'DESCRIPTION';
 
     for(let mapping of erpPropertyMappings) {
         addERPProperty(properties, sections, mapping[0], mapping[1]);
@@ -1698,7 +1700,7 @@ function buildERPSyncPayload(details, erpCallName) {
 
     payload = {
         indeks          : getERPFieldValue(sections, 'NUMBER'),
-        nazwa_czesci    : getERPFieldValue(sections, 'DESCRIPTION'),
+        nazwa_czesci    : getERPFieldValue(sections, partNameFieldId),
         id_grupy        : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
         jednostka_miary : getERPUnitOfMeasure(sections),
         wlasnosci       : properties
