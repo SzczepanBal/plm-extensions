@@ -4078,10 +4078,12 @@
                             number     : elemItem.attr('data-number'),
                             pinned     : (isEBOMItem && config.pinEBOMItemsInMBOM),
                             quantity   : edQty,
-                            fields     : [
-                                { link : bomViewLinksMBOM.isEBOMItem, value : isEBOMItem }
-                            ]
+                            fields     : []
                         };
+
+                        if(!isBlank(bomViewLinksMBOM.isEBOMItem)) {
+                            params.fields.push({ link : bomViewLinksMBOM.isEBOMItem, value : isEBOMItem });
+                        }
 
                         if(isBlank(linkParent)) {
                             console.warn('MBOM custom: missing MBOM parent link while saving added item', elemItem.attr('data-link'));
@@ -4095,7 +4097,9 @@
                             number     : params.number
                         });
 
-                        if(!isBlank(makeBuy)) params.fields.push({ link : bomViewLinksMBOM.makeBuy , value : { link : makeBuy} });
+                        if(!isBlank(makeBuy) && !isBlank(bomViewLinksMBOM.makeBuy)) {
+                            params.fields.push({ link : bomViewLinksMBOM.makeBuy, value : { link : makeBuy } });
+                        }
 
                         requests.push($.post('/plm/bom-add', params));
                         elemItem.attr('data-make-buy', makeBuy);
@@ -4342,8 +4346,24 @@
                 if(response.error) {
                     showErrorMessage('Error', 'Error while creating MBOM root item, the editor cannot be used at this time. Please review your server configuration.');
                 } else {
-                    links.mbom = response.data.__self__;
-                    setEBOMLinkToMBOM(syncDate, callback);
+                    let createdLink = (response.data && response.data.__self__)
+                        ? response.data.__self__
+                        : response.data;
+
+                    if(typeof createdLink === 'string') {
+                        createdLink = createdLink.replace(/^https?:\/\/[^/]+/i, '');
+                    }
+
+                    if(isBlank(createdLink)) {
+                        console.error('MBOM custom: create response did not contain an MBOM link', response);
+                        showErrorMessage('Error', 'The MBOM root was created, but its link was missing from the server response.');
+                        return;
+                    }
+
+                    links.mbom = createdLink;
+                    storeMBOMLink(ebomItemDetails.__self__);
+                    storeContextMBOMLink();
+                    if(typeof callback === 'function') callback(links.mbom);
                 }
             });
 

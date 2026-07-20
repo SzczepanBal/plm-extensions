@@ -1,0 +1,97 @@
+{
+  "indeks": "000000103",
+  "nazwa_czesci": "PCP_DHPi MONOTEC_008_Z_000000103",
+  "opis": "DHPiM 8 Kanał wentylatora - DHPiM8.06.00.00 Final Test",
+  "rewizja": "Working",
+  "czy_zatwierdzona": "N",
+  "id_wersji": "2154",
+  "operacje": [
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "NIT",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "20",
+      "kod_operacji": "MON",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    }
+  ],
+  "struktura": [
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1197",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1204",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "2173"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "210",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "8",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "285",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "2085"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "284",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "286",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "287",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "288",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt"
+    }
+  ],
+  "zalaczniki": [
+    {
+      "zrodlo": "https://trialdefro.autodeskplm360.net/plm/workspaces/57/items/attachments?view=full&tab=attachments&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60TRIALDEFRO,57,19424",
+      "opis": "Dokumenty w PLM"
+    }
+  ],
+  "zablokowana": "N"
+}
