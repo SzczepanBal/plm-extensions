@@ -1182,6 +1182,7 @@
         if(elemContainer.length === 0 || elemName.length === 0) return;
 
         $('#mbom-add-text').text('Dodaj operacje');
+        $('#mbom-add-button').text('Dodaj');
 
         if(!elemName.is('select')) {
             let elemSelect = $('<select></select>')
@@ -2509,7 +2510,7 @@
 
                 if(button.length) {
                     button.removeClass('disabled');
-                    button.html('Add Raw Materials');
+                    button.html('Dodaj Surowce');
                 }
             });
         }).catch(function(error) {
@@ -2517,7 +2518,7 @@
             completeRawMaterialsDialog(applyDone);
             if(button.length) {
                 button.removeClass('disabled');
-                button.html('Add Raw Materials');
+                button.html('Dodaj Surowce');
             }
         });
     }
@@ -2656,6 +2657,18 @@
     const erpTechnologyPropertyMappings = [
         ['Grupa Produktowa', ['GRUPA_PRODUKTOWA']],
         ['Typ czesci', ['TYP_CZESCI']]
+    ];
+    const erpAssemblyIndexProductGroupId = 'MZL';
+    const erpAssemblyIndexProductPropertyMappings = [
+        ['Opis', ['DESCRIPTION']],
+        ['Nazwa', ['DESCRIPTION', 'TITLE']],
+        ['Rewizja', ['REVISION']],
+        ['Materiał', ['MATERIAL']],
+        ['Specyfikacja', ['SPECYFIKACJA']],
+        ['Status', ['STATUS']],
+        ['Grupa produktowa', ['GRUPA_PRODUKTOWA']],
+        ['Typ części', ['TYP_CZESCI']],
+        ['Lifecycle', ['LIFECYCLE']]
     ];
     const erpTechnologyOperationCodeFieldId = 'KOD_OPERACJI';
     const erpTechnologyOperationCodeCandidates = [
@@ -2927,6 +2940,50 @@
         }
 
         return fallbackValue || '';
+    }
+
+    function truncateERPAssemblyIndexPropertyValue(value, maxBytes) {
+        if(typeof value !== 'string') return value;
+
+        let byteLimit = Number(maxBytes) || 40;
+        let truncated = '';
+
+        for(let char of value) {
+            let nextValue = truncated + char;
+            if(new TextEncoder().encode(nextValue).length > byteLimit) break;
+            truncated = nextValue;
+        }
+
+        return truncated.trim();
+    }
+
+    function buildERPAssemblyIndexProductPayload(elemItem, itemPart, detailsData) {
+        let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
+        let rawIndex = getERPTechnologySectionValue(sections, ['NUMBER'], '');
+        let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
+        let description = getERPTechnologySectionValue(sections, ['DESCRIPTION'], title);
+        let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], erpAssemblyIndexProductGroupId);
+        let properties = [];
+
+        erpAssemblyIndexProductPropertyMappings.forEach(function(mapping) {
+            let value = getERPTechnologySectionValue(sections, mapping[1], '');
+            if(mapping[0] === 'Grupa produktowa' && isBlank(value)) value = groupId;
+            if(mapping[0] === 'Nazwa' && isBlank(value)) value = title;
+            if(mapping[0] === 'Opis' && isBlank(value)) value = description;
+            if(isBlank(value)) return;
+
+            let property = {};
+            property[mapping[0]] = truncateERPAssemblyIndexPropertyValue(String(value), 40);
+            properties.push(property);
+        });
+
+        return {
+            indeks          : rawIndex,
+            nazwa_czesci    : description || title || rawIndex,
+            id_grupy        : groupId || erpAssemblyIndexProductGroupId,
+            jednostka_miary : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
+            wlasnosci       : properties
+        };
     }
 
     function getERPTechnologyItemDetails(link) {
@@ -3352,13 +3409,17 @@
                 sortERPTechnologyOperations(payload);
                 sortERPTechnologyStructure(payload);
 
+                let assemblyIndex = (elemItem && elemItem.hasClass('assembly-index')) || isAssemblyIndexNode(itemPart);
+
                 return {
-                    elemItem    : elemItem,
-                    link        : itemLink,
-                    descriptor  : getERPTechnologyDescriptor(elemItem),
-                    level       : getElementLevel(elemItem),
-                    synced      : alreadySynced,
-                    payload     : payload
+                    elemItem       : elemItem,
+                    link           : itemLink,
+                    descriptor     : getERPTechnologyDescriptor(elemItem),
+                    level          : getElementLevel(elemItem),
+                    synced         : alreadySynced,
+                    isAssemblyIndex: assemblyIndex,
+                    productPayload : assemblyIndex ? buildERPAssemblyIndexProductPayload(elemItem, itemPart, detailsData) : null,
+                    payload        : payload
                 };
             });
         });
@@ -3443,19 +3504,31 @@
                 return;
             }
 
-            let previewItems = jobs.map(function(job, index) {
-                return {
-                    order      : index + 1,
+            let previewItems = [];
+
+            jobs.forEach(function(job) {
+                if(job.isAssemblyIndex && !job.synced) {
+                    previewItems.push({
+                        order      : previewItems.length + 1,
+                        callName   : 'add-product',
+                        indeks     : job.productPayload ? job.productPayload.indeks : '',
+                        descriptor : job.descriptor,
+                        payload    : job.productPayload
+                    });
+                }
+
+                previewItems.push({
+                    order      : previewItems.length + 1,
                     callName   : job.synced ? 'modify-technology' : 'add-technology',
                     indeks     : job.payload.indeks,
                     descriptor : job.descriptor,
                     payload    : job.payload
-                };
+                });
             });
 
             setERPStatusOutput('ERP technology payload preview', {
-                requestCount : jobs.length,
-                message      : 'The currently opened MBOM will send ' + jobs.length + ' ERP request(s).',
+                requestCount : previewItems.length,
+                message      : 'The currently opened MBOM will send ' + previewItems.length + ' ERP request(s).',
                 requests     : previewItems
             }, false);
         }).catch(function(error) {
@@ -3606,6 +3679,104 @@
         });
     }
 
+    function getERPRequestFailureDetails(error) {
+        if(!error) return { status : null, message : 'Unknown ERP request error', requestDump : '', responseDump : '' };
+
+        let response = error.responseJSON || {};
+        let responseData = response && response.data ? response.data : {};
+        let responseBody = responseData.response || responseData.body || responseData;
+        let message = error.statusText || '';
+
+        if(response && !isBlank(response.message)) message = response.message;
+        if(responseBody && typeof responseBody === 'object') {
+            message = responseBody.message || responseBody.error || message;
+        } else if(!isBlank(responseBody)) {
+            message = String(responseBody);
+        }
+
+        return {
+            status       : Number(error.status) || Number(response.status) || null,
+            message      : message || 'ERP request failed',
+            requestDump  : responseData.requestDumpUrl || '',
+            responseDump : responseData.dumpUrl || ''
+        };
+    }
+
+    function ensureERPAssemblyIndexProduct(currentJob, testRun, results) {
+        if(!currentJob || !currentJob.isAssemblyIndex || currentJob.synced) {
+            return Promise.resolve(true);
+        }
+
+        let payload = currentJob.productPayload || {};
+        let missingFields = [];
+
+        if(isBlank(payload.indeks)) missingFields.push('NUMBER -> indeks');
+        if(isBlank(payload.nazwa_czesci)) missingFields.push('DESCRIPTION/TITLE -> nazwa_czesci');
+        if(isBlank(payload.id_grupy)) missingFields.push('GRUPA_PRODUKTOWA -> id_grupy');
+
+        if(missingFields.length > 0) {
+            results.push({
+                order      : results.length + 1,
+                callName   : 'add-product',
+                indeks     : payload.indeks || '',
+                descriptor : currentJob.descriptor,
+                testRun    : testRun,
+                success    : false,
+                error      : 'Assembly index product payload is incomplete: ' + missingFields.join(', ')
+            });
+            return Promise.resolve(false);
+        }
+
+        let callName = 'add-product';
+        let requestUrl = testRun
+            ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
+            : erpTechnologyProxyBaseUrl + callName;
+
+        console.log('MBOM custom: sending assembly index ERP product prerequisite', {
+            testRun    : testRun,
+            callName   : callName,
+            indeks     : payload.indeks,
+            descriptor : currentJob.descriptor
+        });
+
+        return $.post(requestUrl, payload, null, 'json').then(function(response) {
+            let status = Number(response && response.status);
+            let success = !!response && !response.error && status === 200;
+
+            results.push({
+                order       : results.length + 1,
+                callName    : callName,
+                indeks      : payload.indeks,
+                descriptor  : currentJob.descriptor,
+                testRun     : testRun,
+                status      : status,
+                success     : success,
+                requestDump : response && response.data ? response.data.requestDumpUrl : '',
+                responseDump: response && response.data ? response.data.dumpUrl : '',
+                error       : success ? '' : ((response && response.message) || 'ERP add-product did not return status 200.')
+            });
+
+            return success;
+        }).catch(function(error) {
+            let failure = getERPRequestFailureDetails(error);
+
+            results.push({
+                order       : results.length + 1,
+                callName    : callName,
+                indeks      : payload.indeks,
+                descriptor  : currentJob.descriptor,
+                testRun     : testRun,
+                status      : failure.status,
+                success     : false,
+                requestDump : failure.requestDump,
+                responseDump: failure.responseDump,
+                error       : failure.message
+            });
+
+            return false;
+        });
+    }
+
     function syncERPTechnologies() {
         let elemButton = $('#sync-erp-technologies');
         if(elemButton.hasClass('disabled')) return;
@@ -3635,7 +3806,7 @@
                     return buildERPTechnologyPayload(job.elemItem).then(function(currentJob) {
                         if(!currentJob || !currentJob.payload || isBlank(currentJob.payload.indeks) || !Array.isArray(currentJob.payload.operacje) || currentJob.payload.operacje.length === 0) {
                             results.push({
-                                order      : index + 1,
+                                order      : results.length + 1,
                                 callName   : 'skipped',
                                 indeks     : '',
                                 descriptor : getERPTechnologyDescriptor(job.elemItem),
@@ -3645,53 +3816,75 @@
                             return null;
                         }
 
-                        let callName = currentJob.synced ? 'modify-technology' : 'add-technology';
-                        let requestUrl = testRun
-                            ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
-                            : erpTechnologyProxyBaseUrl + callName;
-
-                        console.log('MBOM custom: sending ERP technology job', {
-                            order      : index + 1,
-                            testRun    : testRun,
-                            callName   : callName,
-                            indeks     : currentJob.payload.indeks,
-                            descriptor : currentJob.descriptor
-                        });
-
-                        return $.post(requestUrl, currentJob.payload, null, 'json').then(function(response) {
-                            let status = Number(response && response.status);
-                            let erpResponseBody = response && response.data ? response.data.body : null;
-                            console.log('MBOM custom: ERP technology raw response payload', {
-                                callName        : callName,
-                                status          : status,
-                                testRun         : testRun,
-                                rawResponse     : response,
-                                erpResponseBody : erpResponseBody
+                        if(!isERPTechnologyMainRootItem(currentJob.elemItem) && currentJob.synced) {
+                            console.log('MBOM custom: skipping ERP calls for already synced sub-MBOM item', {
+                                link       : currentJob.link,
+                                indeks     : currentJob.payload.indeks,
+                                descriptor : currentJob.descriptor,
+                                erpSent    : true
                             });
-                            let flagUpdatePromise = (!testRun && !response.error && status === 200)
-                                ? updateERPTechnologySyncFields(currentJob.link, erpResponseBody)
-                                : Promise.resolve(false);
+                            return null;
+                        }
 
-                            return flagUpdatePromise.then(function(flagUpdated) {
-                                if(flagUpdated) erpTechnologyDetailsCache = {};
+                        return ensureERPAssemblyIndexProduct(currentJob, testRun, results).then(function(productReady) {
+                            if(!productReady) {
+                                console.warn('MBOM custom: skipping ERP technology because assembly index product prerequisite failed', {
+                                    indeks     : currentJob.productPayload ? currentJob.productPayload.indeks : '',
+                                    descriptor : currentJob.descriptor
+                                });
+                                return null;
+                            }
 
-                                results.push({
-                                    order       : index + 1,
-                                    callName    : callName,
-                                    indeks      : currentJob.payload.indeks,
-                                    descriptor  : currentJob.descriptor,
-                                    testRun     : testRun,
-                                    status      : status,
-                                    success     : !response.error,
-                                    requestDump : response && response.data ? response.data.requestDumpUrl : '',
-                                    responseDump: response && response.data ? response.data.dumpUrl : '',
-                                    flagUpdated : flagUpdated
+                            let callName = currentJob.synced ? 'modify-technology' : 'add-technology';
+                            let requestUrl = testRun
+                                ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
+                                : erpTechnologyProxyBaseUrl + callName;
+
+                            console.log('MBOM custom: sending ERP technology job', {
+                                order      : results.length + 1,
+                                testRun    : testRun,
+                                callName   : callName,
+                                indeks     : currentJob.payload.indeks,
+                                descriptor : currentJob.descriptor
+                            });
+
+                            return $.post(requestUrl, currentJob.payload, null, 'json').then(function(response) {
+                                let status = Number(response && response.status);
+                                let success = !!response && !response.error && status === 200;
+                                let erpResponseBody = response && response.data ? response.data.body : null;
+                                console.log('MBOM custom: ERP technology raw response payload', {
+                                    callName        : callName,
+                                    status          : status,
+                                    testRun         : testRun,
+                                    rawResponse     : response,
+                                    erpResponseBody : erpResponseBody
+                                });
+                                let flagUpdatePromise = (!testRun && success)
+                                    ? updateERPTechnologySyncFields(currentJob.link, erpResponseBody)
+                                    : Promise.resolve(false);
+
+                                return flagUpdatePromise.then(function(flagUpdated) {
+                                    if(flagUpdated) erpTechnologyDetailsCache = {};
+
+                                    results.push({
+                                        order       : results.length + 1,
+                                        callName    : callName,
+                                        indeks      : currentJob.payload.indeks,
+                                        descriptor  : currentJob.descriptor,
+                                        testRun     : testRun,
+                                        status      : status,
+                                        success     : success,
+                                        requestDump : response && response.data ? response.data.requestDumpUrl : '',
+                                        responseDump: response && response.data ? response.data.dumpUrl : '',
+                                        flagUpdated : flagUpdated,
+                                        error       : success ? '' : ((response && response.message) || 'ERP technology request did not return status 200.')
+                                    });
                                 });
                             });
                         });
                     }).catch(function(error) {
                         results.push({
-                            order      : index + 1,
+                            order      : results.length + 1,
                             callName   : 'rebuild-or-sync',
                             indeks     : job.payload ? job.payload.indeks : '',
                             descriptor : job.descriptor,
@@ -3909,7 +4102,7 @@
             .attr('id', 'mode-erp')
             .addClass('panel-title-main')
             .attr('data-id', 'erp')
-            .text('ERP')
+            .text('Impuls')
             .insertAfter('#mode-operations');
 
         let elemERP = $('<div></div>')
@@ -4037,7 +4230,7 @@
             .attr('id', 'add-raw-materials')
             .addClass('button default')
             .attr('title', 'Add raw materials found by EBOM MATERIAL values')
-            .html('Add Raw Materials')
+            .html('Dodaj Surowce')
             .click(addRawMaterialsFromEBOM);
 
         if($('#header-toolbar').length) {
