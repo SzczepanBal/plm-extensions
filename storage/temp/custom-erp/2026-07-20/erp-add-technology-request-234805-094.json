@@ -1,0 +1,239 @@
+{
+  "indeks": "000000168",
+  "nazwa_czesci": "PCP_DHPi MONOTEC_008_Z_000000168",
+  "opis": "<p>DHPiM 8 Osłony - DHPiM8.02.00.00_Rev2</p> test_3006",
+  "rewizja": "Working",
+  "czy_zatwierdzona": "N",
+  "wlasnosci": [
+    {
+      "Grupa Produktowa": "PCP"
+    },
+    {
+      "Typ czesci": "Z"
+    }
+  ],
+  "operacje": [
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "MON",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    }
+  ],
+  "struktura": [
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "01-1940",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1009",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "5",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1061",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1077",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1152",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "8",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1158",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "2",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1172",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "8",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1188",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "3",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "210",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "3",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "211",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "251",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "252",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "253",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "255",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "256",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "259",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "260",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "262",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "263",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "264",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "265",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "266",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "267",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "5",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "271",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "273",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "13",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "274",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    }
+  ],
+  "zalaczniki": [
+    {
+      "zrodlo": "https://trialdefro.autodeskplm360.net/plm/workspaces/57/items/attachments?view=full&tab=attachments&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60TRIALDEFRO,57,19480",
+      "opis": "Dokumenty w PLM"
+    }
+  ]
+}

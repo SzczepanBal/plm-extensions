@@ -1,0 +1,77 @@
+{
+  "indeks": "000000124",
+  "nazwa_czesci": "PCP_DHPi MONOTEC_008_B_000000124",
+  "opis": "DHPiM 8 MS bl. góra III - DHPiM.MS.05.00_Rev1 test_3006",
+  "rewizja": "Working",
+  "czy_zatwierdzona": "N",
+  "wlasnosci": [
+    {
+      "Grupa Produktowa": "PCP"
+    },
+    {
+      "Typ czesci": "B"
+    }
+  ],
+  "operacje": [
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "CNC",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "CNC",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "20",
+      "kod_operacji": "GCE",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "20",
+      "kod_operacji": "GCE",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "30",
+      "kod_operacji": "LAK",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "30",
+      "kod_operacji": "LAK",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    }
+  ],
+  "struktura": [
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "435",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "kg"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "435",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "kg"
+    }
+  ],
+  "zalaczniki": [
+    {
+      "zrodlo": "https://trialdefro.autodeskplm360.net/plm/workspaces/57/items/attachments?view=full&tab=attachments&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60TRIALDEFRO,57,19297",
+      "opis": "Dokumenty w PLM"
+    }
+  ]
+}

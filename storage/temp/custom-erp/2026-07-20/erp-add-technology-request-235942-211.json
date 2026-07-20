@@ -1,0 +1,282 @@
+{
+  "indeks": "000000148",
+  "nazwa_czesci": "PCP_DHPi MONOTEC_008_Z_000000148",
+  "opis": "DHPiM 8 Stelaż pompy ciepła - DHPiM8.03.00.00_Rev3 test_3006",
+  "rewizja": "Working",
+  "czy_zatwierdzona": "N",
+  "wlasnosci": [
+    {
+      "Grupa Produktowa": "PCP"
+    },
+    {
+      "Typ czesci": "Z"
+    }
+  ],
+  "operacje": [
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "NIT",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "20",
+      "kod_operacji": "MON",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    }
+  ],
+  "struktura": [
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1132",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1944"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1188",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "50",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "1189",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "12",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "164",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1810"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "165",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1713"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "166",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1832"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "167",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1843"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "168",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1735"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "169",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "2",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1895"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "170",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1724"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "171",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "2",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1914"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "172",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1821"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "173",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "7",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "174",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1746"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "210",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "80",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "233",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1903"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "234",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1854"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "235",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1876"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "236",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1865"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "237",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1887"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "238",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1954"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "239",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1933"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "240",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1925"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "241",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "4",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "1192",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "8",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "14",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "30",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "174",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1746"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "224",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1554"
+    }
+  ],
+  "zalaczniki": [
+    {
+      "zrodlo": "https://trialdefro.autodeskplm360.net/plm/workspaces/57/items/attachments?view=full&tab=attachments&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60TRIALDEFRO,57,19466",
+      "opis": "Dokumenty w PLM"
+    }
+  ]
+}

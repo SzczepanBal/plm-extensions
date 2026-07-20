@@ -1,0 +1,73 @@
+{
+  "indeks": "000000097",
+  "nazwa_czesci": "PCP_DHPi MONOTEC_008_Z_000000097",
+  "opis": "DHPiM 8 Taca ociekowa - DHPiM8.TO.00.00_Rev1 test_3006",
+  "rewizja": "Working",
+  "czy_zatwierdzona": "N",
+  "wlasnosci": [
+    {
+      "Grupa Produktowa": "PCP"
+    },
+    {
+      "Typ czesci": "Z"
+    }
+  ],
+  "operacje": [
+    {
+      "numer_operacji": "20",
+      "kod_operacji": "MON",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    }
+  ],
+  "struktura": [
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "1160",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "226",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "6",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1546"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "228",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "6",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "230",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "szt"
+    },
+    {
+      "numer_operacji": "20",
+      "indeks_skladowy": "231",
+      "rewizja": "Working",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "6",
+      "jednostka_miary": "szt",
+      "id_wersji_skladowej": "1521"
+    }
+  ],
+  "zalaczniki": [
+    {
+      "zrodlo": "https://trialdefro.autodeskplm360.net/plm/workspaces/57/items/attachments?view=full&tab=attachments&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60TRIALDEFRO,57,19269",
+      "opis": "Dokumenty w PLM"
+    }
+  ]
+}

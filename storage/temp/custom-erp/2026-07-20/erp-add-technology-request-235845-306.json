@@ -1,0 +1,53 @@
+{
+  "indeks": "000000113",
+  "nazwa_czesci": "PCP_DHPi MONOTEC_008_B_000000113",
+  "opis": "DHPiM 8 MS Koryto kablowe 25x60 I - DHPiM8.MS.09.00 test_3006",
+  "rewizja": "Working",
+  "czy_zatwierdzona": "N",
+  "wlasnosci": [
+    {
+      "Grupa Produktowa": "PCP"
+    },
+    {
+      "Typ czesci": "B"
+    }
+  ],
+  "operacje": [
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "CNC",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "CNC",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    }
+  ],
+  "struktura": [
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "767",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "m"
+    },
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "767",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "1",
+      "jednostka_miary": "m"
+    }
+  ],
+  "zalaczniki": [
+    {
+      "zrodlo": "https://trialdefro.autodeskplm360.net/plm/workspaces/57/items/attachments?view=full&tab=attachments&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60TRIALDEFRO,57,19351",
+      "opis": "Dokumenty w PLM"
+    }
+  ]
+}

@@ -213,7 +213,8 @@
 
     function hasMBOMShortcut(elemItem) {
         if(!elemItem || elemItem.length === 0) return false;
-        return elemItem.children('.item-head').find('.mbom-shortcut.icon-factory').length > 0;
+        return elemItem.hasClass('assembly-index') ||
+            elemItem.children('.item-head').find('.mbom-shortcut.icon-factory').length > 0;
     }
 
     function getMBOMShortcutHeader(elemItem) {
@@ -386,6 +387,20 @@
             return elemProcessHeader;
         }
 
+        if(elemMBOMItem.hasClass('process')) {
+            let elemOwnHeader = elemMBOMItem.children('.item-head').first();
+            if(elemOwnHeader.length > 0) {
+                ensureInlineSubMBOMContainer(elemMBOMItem);
+                console.log('MBOM custom: using linked process node itself as raw material target', {
+                    ebomLink      : ebomLink,
+                    mbomLink      : mbomLink,
+                    material      : getMaterialValue(part),
+                    processTarget : describeMBOMItem(elemMBOMItem)
+                });
+                return elemOwnHeader;
+            }
+        }
+
         console.warn('MBOM custom: raw material skipped because linked MBOM item has no direct process child after expansion', {
             ebomLink   : ebomLink,
             mbomLink   : mbomLink,
@@ -495,7 +510,7 @@
             query  : query
         };
 
-        console.log('MBOM custom: raw material exact search started', {
+        console.log('MBOM custom: raw material title search started', {
             workspaceId : rawMaterialsWorkspaceId,
             material    : material,
             query       : query
@@ -506,16 +521,13 @@
                 .done(function(response) {
                     let items = (response && response.data && response.data.items) ? response.data.items : [];
                     let filteredItems = items.filter(function(item) {
-                        let title = getSearchItemFieldValue(item, 'TITLE') || (item.item && item.item.title) || '';
-                        let normalizedTitle = normalizeComparisonValue(title);
-                        let normalizedMaterial = normalizeComparisonValue(material);
-                        return normalizedTitle === normalizedMaterial;
+                        return itemLooksLikeMatchingRawMaterial(item, material);
                     });
 
-                    console.log('MBOM custom: raw material exact search finished', {
-                        material         : material,
-                        totalResults     : items.length,
-                        exactTitleMatches: filteredItems.length
+                    console.log('MBOM custom: raw material title search finished', {
+                        material    : material,
+                        totalResults: items.length,
+                        titleMatches: filteredItems.length
                     });
 
                     if(items.length > 0) {
@@ -531,7 +543,7 @@
                     resolve({ material: material, items: filteredItems, query: query });
                 })
                 .fail(function(jqXHR, textStatus, errorThrown) {
-                    console.warn('MBOM custom: raw material exact search failed', {
+                    console.warn('MBOM custom: raw material title search failed', {
                         material   : material,
                         query      : query,
                         status     : jqXHR ? jqXHR.status : null,
@@ -583,7 +595,15 @@
 
         let normalizedMaterial = normalizeComparisonValue(material);
         let title = getSearchItemFieldValue(item, 'TITLE') || (item.item && item.item.title) || '';
-        return normalizeComparisonValue(title) === normalizedMaterial;
+        let normalizedTitle = normalizeComparisonValue(title);
+
+        if(normalizedTitle === normalizedMaterial) return true;
+
+        let numberedTitlePrefix = normalizedMaterial + ' - ';
+        if(normalizedTitle.indexOf(numberedTitlePrefix) !== 0) return false;
+
+        let itemNumberSuffix = normalizedTitle.substring(numberedTitlePrefix.length).trim();
+        return /^s\d+$/.test(itemNumberSuffix);
     }
 
     function chooseRawMaterialItem(material, items) {
@@ -594,7 +614,7 @@
         });
 
         if(exactMatches.length > 1) {
-            console.warn('MBOM custom: multiple exact raw material TITLE matches found, using first result', {
+            console.warn('MBOM custom: multiple matching raw material TITLE values found, using first result', {
                 material : material,
                 matches  : exactMatches.map(function(item) {
                     return {
@@ -1106,11 +1126,25 @@
     }
 
     function updateAddProcessSelectionDetails() {
-        let item = getSelectedAddProcessItem();
         let elemCode = $('#mbom-add-code');
 
         if(elemCode.length === 0) return;
-        elemCode.val(item ? getAddProcessItemCode(item) : '');
+        elemCode.val(getNextProcessCode());
+    }
+
+    function getNextProcessCode() {
+        let highestCode = 0;
+        let elemRootBOM = $('#mbom-tree').children().first().children('.item-bom').first();
+
+        elemRootBOM.children('.item.process').each(function() {
+            let elemItem = $(this);
+            let value = elemItem.attr('data-code') || elemItem.find('.item-code').first().text() || '';
+            let numericValue = parseInt(String(value).trim(), 10);
+
+            if(!Number.isNaN(numericValue) && numericValue > highestCode) highestCode = numericValue;
+        });
+
+        return (Math.floor(highestCode / 10) + 1) * 10;
     }
 
     function renderAddProcessWorkspaceOptions(items) {
@@ -1147,6 +1181,8 @@
 
         if(elemContainer.length === 0 || elemName.length === 0) return;
 
+        $('#mbom-add-text').text('Dodaj operacje');
+
         if(!elemName.is('select')) {
             let elemSelect = $('<select></select>')
                 .attr('id', 'mbom-add-name')
@@ -1167,19 +1203,13 @@
             updateAddProcessSelectionDetails();
         });
 
-        $('#mbom-add-qty, #mbom-add-code')
-            .off('keypress.custom-add-process')
-            .on('keypress.custom-add-process', function(e) {
-                if(e.which === 13) {
-                    e.preventDefault();
-                    insertSelectedWorkspaceProcess();
-                }
-            });
-
         if(elemCode.length > 0) {
-            elemCode.removeAttr('readonly');
-            elemCode.attr('placeholder', 'Code');
+            elemCode.attr('readonly', 'readonly');
+            elemCode.attr('placeholder', 'Kod automatyczny');
+            elemCode.hide();
         }
+
+        $('#mbom-add-qty').hide();
 
         elemContainer.attr('title', 'Process list is loaded from workspace ' + addProcessWorkspaceId);
 
@@ -1191,6 +1221,138 @@
         }).catch(function() {
             showErrorMessage('Add Process', 'Could not load items from workspace ' + addProcessWorkspaceId + '.');
         });
+    }
+
+    function getContainingMBOMTitle() {
+        let elemRoot = $('#mbom-tree').children('.item').first();
+        let title = getERPTechnologyDescriptor(elemRoot);
+
+        if(!isBlank(title)) return Promise.resolve(title);
+
+        let rootLink = (typeof links !== 'undefined' && links) ? links.mbom : '';
+        if(isBlank(rootLink)) return Promise.resolve('');
+
+        return $.get('/plm/details', { link : rootLink }).then(function(response) {
+            let details = response && response.data ? response.data : {};
+            return getSectionFieldValue(details.sections || [], config.workspaceMBOM.fieldIDs.title, details.title || '');
+        }).catch(function() {
+            return '';
+        });
+    }
+
+    function promoteAssemblyIndexToMBOMBranch(elemItem) {
+        if(!elemItem || elemItem.length === 0) return;
+
+        elemItem
+            .removeClass('leaf')
+            .addClass('item-has-bom')
+            .addClass('assembly-index')
+            .attr('data-link-mbom', elemItem.attr('data-link'));
+
+        let elemHeader = elemItem.children('.item-head').first();
+        let elemToggle = elemHeader.children('.item-toggle').first();
+        let elemIcon = elemHeader.children('.item-icon').first();
+
+        elemIcon
+            .removeClass('icon-wrench')
+            .addClass('radio-process')
+            .attr('title', 'Indeks montażowy/złożeniowy');
+
+        ensureInlineSubMBOMContainer(elemItem);
+
+        if(elemToggle.length > 0 && !elemToggle.hasClass('icon-collapse') && !elemToggle.hasClass('icon-expand')) {
+            addBOMToggle(elemToggle);
+        }
+
+        elemItem.off('click.custom-assembly-index').on('click.custom-assembly-index', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            selectProcess($(this));
+        });
+
+        selectProcess(elemItem);
+    }
+
+    function createAssemblyIndex() {
+        let elemButton = $('#mbom-add-assembly-index');
+        if(elemButton.hasClass('disabled')) return;
+
+        elemButton.addClass('disabled').text('Tworzenie...');
+        $('#overlay').show();
+
+        getContainingMBOMTitle().then(function(containingTitle) {
+            if(isBlank(containingTitle)) throw new Error('Nie udało się odczytać nazwy nadrzędnego MBOM.');
+
+            let typeValue = (typeof config !== 'undefined' && config.mbomRoot)
+                ? config.mbomRoot.typeValue
+                : '';
+
+            if(isBlank(typeValue)) throw new Error('Brak konfiguracji typu Manufacturing (config.mbomRoot.typeValue).');
+
+            let params = {
+                wsId       : wsMBOM.wsId,
+                sections   : wsMBOM.sections,
+                getDetails : true,
+                fields     : [{
+                    fieldId : config.workspaceMBOM.fieldIDs.title,
+                    value   : 'indeks złożeniowy ' + containingTitle
+                }, {
+                    fieldId : config.workspaceMBOM.fieldIDs.type,
+                    value   : { link : typeValue }
+                }]
+            };
+
+            return $.post({
+                url         : '/plm/create',
+                contentType : 'application/json',
+                data        : JSON.stringify(params)
+            }).then(function(response) {
+                if(!response || response.error) {
+                    throw new Error(response && response.message ? response.message : 'PLM nie utworzył indeksu złożeniowego.');
+                }
+
+                let createdLink = response.data && response.data.__self__ ? response.data.__self__ : response.data;
+                if(typeof createdLink === 'string') createdLink = createdLink.replace(/^https?:\/\/[^/]+/i, '');
+                if(isBlank(createdLink)) throw new Error('Utworzony indeks nie zwrócił prawidłowego linku.');
+
+                let elemRootHeader = $('#mbom-tree').children('.item').first().children('.item-head').first();
+                if(elemRootHeader.length === 0) throw new Error('Nie znaleziono głównego elementu MBOM.');
+
+                return insertAdditionalItem(elemRootHeader, createdLink).then(function(elemInserted) {
+                    promoteAssemblyIndexToMBOMBranch(elemInserted);
+                    return elemInserted;
+                });
+            });
+        }).then(function() {
+            updateMBOMNumbers();
+        }).catch(function(error) {
+            console.warn('MBOM custom: failed to create assembly index', error);
+            showErrorMessage('Dodaj indeks montażowy/złożeniowy', String(error && error.message ? error.message : error));
+        }).finally(function() {
+            $('#overlay').hide();
+            elemButton.removeClass('disabled').text('Dodaj indeks złożeniowy');
+        });
+    }
+
+    function insertAddAssemblyIndexButton() {
+        if($('#mbom-add-assembly-index').length > 0) return;
+
+        let elemProcessContainer = $('#mbom-add-process');
+        if(elemProcessContainer.length === 0) return;
+
+        elemProcessContainer.css({ display : 'flex', flexWrap : 'wrap' });
+
+        let elemButtonRow = $('<div></div>')
+            .attr('id', 'mbom-add-assembly-index-row')
+            .css({ display : 'flex', flex : '0 0 100%', width : '100%', marginBottom : '6px' })
+            .prependTo(elemProcessContainer);
+
+        $('<div></div>')
+            .attr('id', 'mbom-add-assembly-index')
+            .addClass('button default')
+            .text('Dodaj indeks złożeniowy')
+            .click(createAssemblyIndex)
+            .appendTo(elemButtonRow);
     }
 
     function insertSelectedWorkspaceProcess() {
@@ -1207,8 +1369,7 @@
             return false;
         }
 
-        let quantity = parseFloat($('#mbom-add-qty').val());
-        if(Number.isNaN(quantity) || quantity <= 0) quantity = 1;
+        let processCode = getNextProcessCode();
 
         let node = {
             level       : 1,
@@ -1219,9 +1380,9 @@
             isProcess   : true,
             isLeaf      : false,
             icon        : 'radio-process',
-            code        : $('#mbom-add-code').val(),
+            code        : processCode,
             revision    : '-',
-            quantity    : quantity
+            quantity    : 1
         };
 
         let elemNew = insertBOMPartListNode('mbom', null, node);
@@ -1240,7 +1401,6 @@
 
         $('#mbom-add-name').val('');
         $('#mbom-add-code').val('');
-        $('#mbom-add-qty').val('');
         $('#mbom-add-name').focus();
 
         return true;
@@ -1605,6 +1765,15 @@
         return false;
     }
 
+    function isAssemblyIndexNode(node) {
+        if(!node || Number(node.level) === 0) return false;
+        if(node.isAssemblyIndex) return true;
+
+        let title = String(node.title || '').trim().toLowerCase();
+        return title.indexOf('indeks złożeniowy ') === 0 ||
+            title.indexOf('indeks zlozeniowy ') === 0;
+    }
+
     function prepareMBOMPartForCustomTree(mbomPart) {
         if(!mbomPart) return;
 
@@ -1615,6 +1784,7 @@
         mbomPart.code     = mbomPart.details[config.workspaceMBOM.fieldIDs.code] || '';
         mbomPart.ebomRoot = mbomPart.details[config.workspaceMBOM.fieldIDs.ebomRoot] || '';
         mbomPart.unitOfMeasure = getMBOMPartUnitOfMeasure(mbomPart);
+        mbomPart.isAssemblyIndex = isAssemblyIndexNode(mbomPart);
 
         getMatchingEBOMPartProperties(mbomPart);
 
@@ -1632,6 +1802,7 @@
             mbomPart.hasChildren = getBOMPartHasChildrenCustom(mbomPart, mbomPartsList);
             mbomPart.isProcess = isMBOMProcess(mbomPart);
             if(mbomPart.isProcess) mbomPart.hasChildren = true;
+            if(mbomPart.isAssemblyIndex) mbomPart.hasChildren = true;
             mbomPart.isLeaf = isMBOMLeaf(mbomPart);
             mbomPart.icon = getBOMPartIcon(mbomPart);
         });
@@ -2172,7 +2343,7 @@
 
                     let result = searchResultsByMaterial[material];
                     if(!result || !Array.isArray(result.items) || result.items.length === 0) {
-                        console.warn('MBOM custom: no exact WS57 TITLE match found for MATERIAL', {
+                        console.warn('MBOM custom: no matching WS57 TITLE found for MATERIAL', {
                             material : material
                         });
                         applyDone++;
@@ -2182,7 +2353,7 @@
 
                     let item = chooseRawMaterialItem(material, result.items);
                     if(!item) {
-                        console.warn('MBOM custom: exact TITLE match selection failed for MATERIAL', {
+                        console.warn('MBOM custom: TITLE match selection failed for MATERIAL', {
                             material : material
                         });
                         applyDone++;
@@ -2271,9 +2442,6 @@
                                     return null;
                                 }
 
-                                existingState.links.add(normalizedLink);
-                                totalAdded++;
-
                                 console.log('MBOM custom: inserting new raw material into MBOM', {
                                     material : material,
                                     link     : link,
@@ -2281,8 +2449,14 @@
                                     quantity : quantity
                                 });
 
-                                return insertAdditionalItem(elemHeader, link).then(function() {
+                                return insertAdditionalItem(elemHeader, link).then(function(elemInserted) {
+                                    if(!elemInserted || elemInserted.length === 0) {
+                                        throw new Error('Raw material item could not be inserted into the MBOM tree.');
+                                    }
+
+                                    existingState.links.add(normalizedLink);
                                     existingState.children.set(normalizedLink, { link : link, quantity : quantity });
+                                    totalAdded++;
 
                                     return waitForDirectChildItem(elemHeader, link).then(function(elemInserted) {
                                         if(elemInserted.length === 0) {
@@ -2328,7 +2502,7 @@
                 });
 
                 if(totalAdded === 0 && totalUpdated === 0) {
-                    console.info('MBOM custom: no raw materials were added or updated. Check MATERIAL values and exact TITLE matches in WS 57.');
+                    console.info('MBOM custom: no raw materials were added or updated. Check MATERIAL values and matching TITLE values in WS 57.');
                 }
 
                 completeRawMaterialsDialog(ebomMaterials.length);
@@ -3875,6 +4049,7 @@
 
     $(document).ready(function() {
         insertAddRawMaterialsButton();
+        insertAddAssemblyIndexButton();
         setupAddProcessPicker();
         insertERPTab();
         attachERPTabEvents();
@@ -3884,6 +4059,7 @@
     if(typeof isMBOMLeaf === 'function') {
         isMBOMLeaf = function(node) {
             if(node.level === 0) return false;
+            if(isAssemblyIndexNode(node)) return false;
             if(node.endItem) return true;
             if(node.matchesMBOM) return true;
             if(!(isBlank(node.ebom))) return true;
@@ -3901,6 +4077,8 @@
 
     if(typeof addMBOMShortcut === 'function') {
         addMBOMShortcut = function(elemParent) {
+            elemParent.addClass('has-mbom-shortcuts');
+
             $('<div></div>').appendTo(elemParent)
                 .addClass('icon')
                 .addClass('mbom-shortcut')
@@ -3942,12 +4120,32 @@
             }
 
             if(bomType === 'mbom' && resolvedNode) {
+                resolvedNode.isAssemblyIndex = isAssemblyIndexNode(resolvedNode);
+                if(resolvedNode.isAssemblyIndex) {
+                    resolvedNode.hasChildren = true;
+                    resolvedNode.isLeaf = false;
+                    resolvedNode.icon = 'radio-process';
+                }
+
                 if(isBlank(resolvedNode.unitOfMeasure)) {
                     resolvedNode.unitOfMeasure = getMBOMPartUnitOfMeasure(resolvedNode);
                 }
             }
 
             let elemNode = originalInsertBOMPartListNode.call(this, bomType, index, resolvedNode);
+
+            if(bomType === 'mbom' && resolvedNode && resolvedNode.isAssemblyIndex) {
+                elemNode
+                    .removeClass('leaf')
+                    .addClass('item-has-bom assembly-index')
+                    .attr('data-link-mbom', resolvedNode.link || elemNode.attr('data-link'));
+
+                elemNode.children('.item-head').children('.item-icon').first()
+                    .removeClass('icon-wrench')
+                    .addClass('radio-process')
+                    .attr('title', 'Indeks montażowy/złożeniowy');
+            }
+
             decorateMBOMQuantityWithUnit(elemNode, resolvedNode, bomType);
             return elemNode;
         };
@@ -4030,7 +4228,7 @@
                     link  : link,
                     error : error
                 });
-                return false;
+                throw error;
             });
 
         };
@@ -4271,6 +4469,7 @@
         initEditor = function() {
             refreshMBOMHierarchyFlags();
             originalInitEditor.apply(this, arguments);
+            insertAddAssemblyIndexButton();
             setupAddProcessPicker();
             $('#confirm-raw-materials').off('click').on('click', function() {
                 if($(this).hasClass('disabled')) return;

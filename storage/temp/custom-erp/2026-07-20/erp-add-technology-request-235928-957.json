@@ -1,0 +1,51 @@
+{
+  "indeks": "000000146",
+  "nazwa_czesci": "PCP_DHPi MONOTEC_008_B_000000146",
+  "opis": "DHPiM 12 S bl. uchwyt rury I - DHPiM12.03.14.00 test_3006",
+  "rewizja": "Working",
+  "czy_zatwierdzona": "N",
+  "wlasnosci": [
+    {
+      "Grupa Produktowa": "PCP"
+    },
+    {
+      "Typ czesci": "B"
+    }
+  ],
+  "operacje": [
+    {
+      "numer_operacji": "10",
+      "kod_operacji": "CNC",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "20",
+      "kod_operacji": "GCE",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    },
+    {
+      "numer_operacji": "30",
+      "kod_operacji": "LAK",
+      "gniazdo": "xxxx",
+      "stanowisko": "wirtualne"
+    }
+  ],
+  "struktura": [
+    {
+      "numer_operacji": "10",
+      "indeks_skladowy": "447",
+      "rewizja": "",
+      "ilosc_stala": "0",
+      "ilosc_jednostek": "2",
+      "jednostka_miary": "kg"
+    }
+  ],
+  "zalaczniki": [
+    {
+      "zrodlo": "https://trialdefro.autodeskplm360.net/plm/workspaces/57/items/attachments?view=full&tab=attachments&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60TRIALDEFRO,57,19288",
+      "opis": "Dokumenty w PLM"
+    }
+  ]
+}

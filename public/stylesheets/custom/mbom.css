@@ -68,3 +68,85 @@ body.mode-erp #erp {
 .erp-status-output * {
     cursor: text;
 }
+
+/* Custom MBOM layout: MBOM / EBOM / viewer = 40 / 30 / 30. */
+:root {
+    --custom-details-mbom-share: 240px;
+}
+
+#mbom {
+    width: calc(40% - (2 * var(--border-h)));
+}
+
+#tabs {
+    left: 40%;
+}
+
+.viewer {
+    left: calc(50% + (var(--border-h) / 2));
+}
+
+#ebom {
+    width: calc(50% - (var(--border-h) / 2));
+}
+
+/* Custom layout without viewer: MBOM / EBOM = 60 / 40. */
+body.mode-ebom.no-viewer #mbom {
+    right: 40%;
+    width: unset;
+}
+
+body.mode-ebom.no-viewer #tabs {
+    left: 60%;
+    width: unset;
+}
+
+body.details-on.no-viewer #mbom {
+    right: unset;
+    width: calc(60% - (2 * var(--border-h)) - var(--custom-details-mbom-share));
+}
+
+body.details-on.no-viewer #tabs {
+    left: calc(60% - var(--custom-details-mbom-share));
+}
+
+/* Operations & Suppliers is not used in the custom MBOM UI. */
+#mode-operations {
+    display: none !important;
+}
+
+@media only screen and (max-device-width: 1920px) {
+    :root {
+        --custom-details-mbom-share: 216px;
+    }
+}
+
+/* Keep both sub-MBOM actions inside their row instead of stacking vertically. */
+.item-toggle.has-mbom-shortcuts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+}
+
+.item-toggle.has-mbom-shortcuts > .mbom-shortcut {
+    box-sizing: border-box;
+    display: block;
+    font-size: 16px;
+    max-width: none;
+    min-width: 0;
+    width: auto;
+}
+
+.item-toggle.has-mbom-shortcuts > .mbom-shortcut:first-child {
+    border-radius: 2px 0 0 2px;
+}
+
+.item-toggle.has-mbom-shortcuts > .mbom-shortcut:last-child {
+    border-left: 0;
+    border-radius: 0 2px 2px 0;
+}
+
+/* Reserve space for both rows of the custom MBOM add panel. */
+#mbom-tree {
+    bottom: 96px;
+}
