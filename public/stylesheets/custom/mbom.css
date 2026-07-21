@@ -150,3 +150,8 @@ body.details-on.no-viewer #tabs {
 #mbom-tree {
     bottom: 96px;
 }
+
+/* Offer MBOM creation beside Add for unmatched EBOM Make items. */
+#ebom .additional.ebom-make-item > .item-head > .item-actions > .item-action-make-factory {
+    display: block;
+}

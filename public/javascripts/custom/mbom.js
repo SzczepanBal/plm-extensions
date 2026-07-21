@@ -6,6 +6,13 @@
     const rawMaterialTypeName = 'Surowiec';
     const rawMaterialTypeQueryValue = 'SUROWIEC';
     const erpStatusProxyUrl = '/plm/custom-erp-status';
+    const assemblyIndexPLMDefaults = {
+        productGroup : 'PCP',
+        partType     : 'Z',
+        kind         : 'Z',
+        variant      : 'Standard',
+        specification: 'Zozenie'
+    };
     let addProcessWorkspaceItemsPromise = null;
     let addProcessWorkspaceItemsCache = [];
 
@@ -215,6 +222,21 @@
         if(!elemItem || elemItem.length === 0) return false;
         return elemItem.hasClass('assembly-index') ||
             elemItem.children('.item-head').find('.mbom-shortcut.icon-factory').length > 0;
+    }
+
+    function ensureMBOMShortcutIcons(elemItem) {
+        if(!elemItem || elemItem.length === 0) return;
+
+        let elemToggle = elemItem.children('.item-head').children('.item-toggle').first();
+        if(elemToggle.length === 0) return;
+
+        if(elemToggle.children('.mbom-shortcut.icon-factory').length === 0) {
+            addMBOMShortcut(elemToggle);
+        }
+
+        // The collapse/expand pseudo-icon becomes a third grid item and hides
+        // the open-in-new-tab shortcut. The factory shortcut handles toggling.
+        elemToggle.removeClass('icon-collapse icon-expand');
     }
 
     function getMBOMShortcutHeader(elemItem) {
@@ -922,6 +944,15 @@
         return normalized.toLowerCase();
     }
 
+    function getPLMItemLevelLink(link) {
+        if(isBlank(link)) return '';
+
+        let normalized = String(link).trim().replace(/^https?:\/\/[^/]+/i, '');
+        let workspaceMatch = normalized.match(/\/api\/v3\/workspaces\/\d+\/items\/\d+/i);
+
+        return workspaceMatch ? workspaceMatch[0] : normalized;
+    }
+
     function getDirectChildItemByLink(elemHeader, link) {
         if(!elemHeader || elemHeader.length === 0 || isBlank(link)) return $();
 
@@ -1265,6 +1296,8 @@
             addBOMToggle(elemToggle);
         }
 
+        ensureMBOMShortcutIcons(elemItem);
+
         elemItem.off('click.custom-assembly-index').on('click.custom-assembly-index', function(e) {
             e.stopPropagation();
             e.preventDefault();
@@ -1284,6 +1317,8 @@
         getContainingMBOMTitle().then(function(containingTitle) {
             if(isBlank(containingTitle)) throw new Error('Nie udało się odczytać nazwy nadrzędnego MBOM.');
 
+            let assemblyIndexTitle = 'indeks złożeniowy ' + containingTitle;
+
             let typeValue = (typeof config !== 'undefined' && config.mbomRoot)
                 ? config.mbomRoot.typeValue
                 : '';
@@ -1296,10 +1331,28 @@
                 getDetails : true,
                 fields     : [{
                     fieldId : config.workspaceMBOM.fieldIDs.title,
-                    value   : 'indeks złożeniowy ' + containingTitle
+                    value   : assemblyIndexTitle
                 }, {
                     fieldId : config.workspaceMBOM.fieldIDs.type,
                     value   : { link : typeValue }
+                }, {
+                    fieldId : 'DESCRIPTION',
+                    value   : containingTitle
+                }, {
+                    fieldId : 'GRUPA_PRODUKTOWA',
+                    value   : assemblyIndexPLMDefaults.productGroup
+                }, {
+                    fieldId : 'TYP_CZESCI',
+                    value   : assemblyIndexPLMDefaults.partType
+                }, {
+                    fieldId : 'RODZAJ',
+                    value   : assemblyIndexPLMDefaults.kind
+                }, {
+                    fieldId : 'WARIANT',
+                    value   : assemblyIndexPLMDefaults.variant
+                }, {
+                    fieldId : 'SPECYFIKACJA',
+                    value   : assemblyIndexPLMDefaults.specification
                 }]
             };
 
@@ -1775,6 +1828,60 @@
             title.indexOf('indeks zlozeniowy ') === 0;
     }
 
+    function getBOMLinkedFieldLink(value) {
+        if(isBlank(value)) return '';
+        if(typeof value === 'string') {
+            return value.indexOf('/api/v3/workspaces/') >= 0
+                ? value.replace(/^https?:\/\/[^/]+/i, '')
+                : '';
+        }
+        if(typeof value !== 'object') return '';
+
+        if(!isBlank(value.link)) return String(value.link).replace(/^https?:\/\/[^/]+/i, '');
+        if(!isBlank(value.__self__)) return String(value.__self__).replace(/^https?:\/\/[^/]+/i, '');
+        if(value.value) return getBOMLinkedFieldLink(value.value);
+
+        return '';
+    }
+
+    function resolveMBOMEBOMRootLink(mbomPart) {
+        if(!mbomPart) return '';
+
+        let fieldId = config.workspaceMBOM.fieldIDs.ebomRoot;
+        let fieldLink = getBOMLinkedFieldLink(getBOMPartFieldValue(mbomPart, fieldId));
+        let linkedEBOM = getBOMLinkedFieldLink(mbomPart.ebom);
+
+        if(Array.isArray(ebomPartsList)) {
+            let normalizedFieldLink = normalizePLMLink(fieldLink);
+            let normalizedLinkedEBOM = normalizePLMLink(linkedEBOM);
+
+            for(let ebomPart of ebomPartsList) {
+                let normalizedRoot = normalizePLMLink(ebomPart.root);
+                let normalizedLink = normalizePLMLink(ebomPart.link);
+
+                if((!isBlank(normalizedFieldLink) &&
+                        (normalizedFieldLink === normalizedRoot || normalizedFieldLink === normalizedLink)) ||
+                    (!isBlank(normalizedLinkedEBOM) &&
+                        (normalizedLinkedEBOM === normalizedRoot || normalizedLinkedEBOM === normalizedLink))) {
+                    return ebomPart.root || fieldLink || linkedEBOM;
+                }
+            }
+        }
+
+        return fieldLink || linkedEBOM;
+    }
+
+    function getBOMBooleanValue(value) {
+        if(value === true || value === 1) return true;
+        if(value === false || value === 0 || value === null || typeof value === 'undefined') return false;
+        if(typeof value === 'string') return ['true', '1', 'yes', 'y'].includes(value.trim().toLowerCase());
+        if(typeof value === 'object') {
+            if(typeof value.value !== 'undefined') return getBOMBooleanValue(value.value);
+            if(typeof value.title !== 'undefined') return getBOMBooleanValue(value.title);
+        }
+        return false;
+    }
+
     function prepareMBOMPartForCustomTree(mbomPart) {
         if(!mbomPart) return;
 
@@ -1783,13 +1890,13 @@
         mbomPart.type     = mbomPart.details[config.workspaceMBOM.fieldIDs.type] || '';
         mbomPart.category = mbomPart.details[config.workspaceMBOM.fieldIDs.category] || '';
         mbomPart.code     = mbomPart.details[config.workspaceMBOM.fieldIDs.code] || '';
-        mbomPart.ebomRoot = mbomPart.details[config.workspaceMBOM.fieldIDs.ebomRoot] || '';
+        mbomPart.ebomRoot = resolveMBOMEBOMRootLink(mbomPart);
         mbomPart.unitOfMeasure = getMBOMPartUnitOfMeasure(mbomPart);
         mbomPart.isAssemblyIndex = isAssemblyIndexNode(mbomPart);
 
         getMatchingEBOMPartProperties(mbomPart);
 
-        mbomPart.isEBOMItem = (getBOMPartFieldValue(mbomPart, config.workspaceMBOM.bomFieldIDs.isEBOMItem) == 'true');
+        mbomPart.isEBOMItem = getBOMBooleanValue(getBOMPartFieldValue(mbomPart, config.workspaceMBOM.bomFieldIDs.isEBOMItem));
         mbomPart.makeBuy    = getBOMPartFieldValue(mbomPart, config.workspaceMBOM.bomFieldIDs.makeOrBuy);
 
         if(mbomPart.revision === 'WIP') mbomPart.revision = 'W';
@@ -1809,38 +1916,69 @@
         });
     }
 
-    function fetchInlineSubMBOMChildren(part, linkOverride) {
-        let params = {
-            link            : linkOverride || part.link,
-            viewId          : wsMBOM.viewId,
-            depth           : getCustomMBOMDepth(),
-            revisionBias    : 'working',
-            getBOMPartsList : true
-        };
+    function fetchInlineSubMBOMChildren(part, linkOverride, isAssemblyIndex) {
+        let primaryLink = linkOverride || part.link;
+        let linksToTry = [];
 
-        return $.get('/plm/bom', params).then(function(response) {
-            let parts = response && response.data && Array.isArray(response.data.bomPartsList) ? response.data.bomPartsList : [];
-            console.info('MBOM custom: inline sub-MBOM fetch result', {
-                link       : params.link,
-                partsCount : parts.length,
-                root       : response && response.data ? response.data.root : null
+        function addLinkCandidate(link) {
+            if(isBlank(link) || linksToTry.indexOf(link) >= 0) return;
+            linksToTry.push(link);
+        }
+
+        // Preserve the link that worked before as the primary request. An
+        // assembly-index edge can point at an older version, so retry the
+        // item-level working BOM only when the primary BOM has no children.
+        addLinkCandidate(primaryLink);
+        if(isAssemblyIndex || (part && part.isAssemblyIndex)) {
+            addLinkCandidate(part ? part.link : '');
+            addLinkCandidate(getPLMItemLevelLink(primaryLink));
+            addLinkCandidate(getPLMItemLevelLink(part ? part.link : ''));
+        }
+
+        function fetchCandidate(candidateIndex, previousError) {
+            if(candidateIndex >= linksToTry.length) {
+                if(previousError) throw previousError;
+                return [];
+            }
+
+            let params = {
+                link            : linksToTry[candidateIndex],
+                viewId          : wsMBOM.viewId,
+                depth           : getCustomMBOMDepth(),
+                revisionBias    : 'working',
+                getBOMPartsList : true
+            };
+
+            return $.get('/plm/bom', params).then(function(response) {
+                let parts = response && response.data && Array.isArray(response.data.bomPartsList) ? response.data.bomPartsList : [];
+                console.info('MBOM custom: inline sub-MBOM fetch result', {
+                    link       : params.link,
+                    attempt    : candidateIndex + 1,
+                    partsCount : parts.length,
+                    root       : response && response.data ? response.data.root : null
+                });
+
+                if(parts.length <= 1) {
+                    return fetchCandidate(candidateIndex + 1, previousError);
+                }
+
+                let children = parts.slice(1).map(function(childPart) {
+                    let childClone = $.extend(true, {}, childPart);
+                    childClone.level = part.level + childPart.level;
+                    childClone.__customInlineInjected = true;
+                    prepareMBOMPartForCustomTree(childClone);
+                    return childClone;
+                });
+
+                console.info('MBOM custom: expanded inline sub-MBOM for', params.link, 'with', children.length, 'child item(s).');
+                return children;
+            }, function(error) {
+                console.warn('MBOM custom: failed inline sub-MBOM link candidate', params.link, error);
+                return fetchCandidate(candidateIndex + 1, error);
             });
-            if(parts.length <= 1) return [];
+        }
 
-            let children = parts.slice(1).map(function(childPart) {
-                let childClone = $.extend(true, {}, childPart);
-                childClone.level = part.level + childPart.level;
-                childClone.__customInlineInjected = true;
-                prepareMBOMPartForCustomTree(childClone);
-                return childClone;
-            });
-
-            console.info('MBOM custom: expanded inline sub-MBOM for', params.link, 'with', children.length, 'child item(s).');
-            return children;
-        }).catch(function(error) {
-            console.warn('MBOM custom: failed to expand inline sub-MBOM for', params.link, error);
-            return [];
-        });
+        return fetchCandidate(0, null);
     }
 
     function getMBOMPartFromElement(elemItem) {
@@ -1940,7 +2078,8 @@
         elemItem.removeClass('leaf').addClass('item-has-bom');
 
         let elemToggle = elemItem.children('.item-head').children('.item-toggle').first();
-        if(elemToggle.length > 0 && !elemToggle.hasClass('icon-collapse') && !elemToggle.hasClass('icon-expand')) {
+        let hasShortcutIcons = elemToggle.children('.mbom-shortcut.icon-factory').length > 0;
+        if(elemToggle.length > 0 && !hasShortcutIcons && !elemToggle.hasClass('icon-collapse') && !elemToggle.hasClass('icon-expand')) {
             addBOMToggle(elemToggle);
         }
 
@@ -1995,6 +2134,7 @@
     function appendInlineSubMBOMChildren(elemItem, children) {
         let elemBOM = ensureInlineSubMBOMContainer(elemItem);
         elemBOM.children('.inline-submbom-status').remove();
+        elemBOM.removeClass('hidden');
 
         children.forEach(function(childPart) {
             childPart.hasChildren = getBOMPartHasChildrenCustom(childPart, children);
@@ -2041,10 +2181,13 @@
             return Promise.resolve(true);
         }
 
-        if(elemItem.attr('data-inline-submbom-loaded') === 'empty') {
+        if(elemItem.attr('data-inline-submbom-loaded') === 'loading') {
             return Promise.resolve(false);
         }
 
+        // An empty result may become stale when the linked MBOM is edited in
+        // another tab. Always retry it instead of caching "empty" forever.
+        elemItem.attr('data-inline-submbom-loaded', 'loading');
         setInlineSubMBOMStatus(elemItem, 'Loading sub-MBOM...', false);
         $('#overlay').show();
 
@@ -2054,6 +2197,7 @@
 
             if(!part || isBlank(part.link)) {
                 console.warn('MBOM custom: could not resolve MBOM part for inline expansion', elemItem.attr('data-link'));
+                elemItem.removeAttr('data-inline-submbom-loaded');
                 setInlineSubMBOMStatus(elemItem, 'Could not resolve MBOM part for inline expansion.', true);
                 $('#overlay').hide();
                 return false;
@@ -2061,6 +2205,7 @@
 
             if(isBlank(expansionLink)) {
                 console.warn('MBOM custom: no MBOM link available for inline expansion', elemItem.attr('data-link'));
+                elemItem.removeAttr('data-inline-submbom-loaded');
                 setInlineSubMBOMStatus(elemItem, 'No MBOM link available for inline expansion.', true);
                 $('#overlay').hide();
                 return false;
@@ -2073,7 +2218,7 @@
                 level           : part.level
             });
 
-            return fetchInlineSubMBOMChildren(part, expansionLink).then(function(children) {
+            return fetchInlineSubMBOMChildren(part, expansionLink, elemItem.hasClass('assembly-index')).then(function(children) {
                 $('#overlay').hide();
 
                 if(children.length === 0) {
@@ -2095,6 +2240,7 @@
             });
         }).catch(function(error) {
             $('#overlay').hide();
+            elemItem.removeAttr('data-inline-submbom-loaded');
             console.warn('MBOM custom: inline sub-MBOM expansion failed', error);
             setInlineSubMBOMStatus(elemItem, 'Sub-MBOM expansion failed. Check browser console.', true);
             return false;
@@ -2658,16 +2804,22 @@
         ['Grupa Produktowa', ['GRUPA_PRODUKTOWA']],
         ['Typ czesci', ['TYP_CZESCI']]
     ];
-    const erpAssemblyIndexProductGroupId = 'MZL';
+    const erpAssemblyIndexProductGroupId = assemblyIndexPLMDefaults.productGroup;
     const erpAssemblyIndexProductPropertyMappings = [
         ['Opis', ['DESCRIPTION']],
         ['Nazwa', ['DESCRIPTION', 'TITLE']],
+        ['Tytuł', ['TITLE']],
+        ['Tutuł', ['TITLE']],
         ['Rewizja', ['REVISION']],
         ['Materiał', ['MATERIAL']],
-        ['Specyfikacja', ['SPECYFIKACJA']],
+        ['Specyfikacja', ['SPECYFIKACJA'], assemblyIndexPLMDefaults.specification],
         ['Status', ['STATUS']],
-        ['Grupa produktowa', ['GRUPA_PRODUKTOWA']],
-        ['Typ części', ['TYP_CZESCI']],
+        ['Grupa produktowa', ['GRUPA_PRODUKTOWA'], assemblyIndexPLMDefaults.productGroup],
+        ['Nazwa urządzenia', ['NAZWA_URZDZENIA']],
+        ['Moc/Wielkość', ['MOC']],
+        ['Typ części', ['TYP_CZESCI'], assemblyIndexPLMDefaults.partType],
+        ['Rodzaj', ['RODZAJ'], assemblyIndexPLMDefaults.kind],
+        ['Wariant', ['WARIANT'], assemblyIndexPLMDefaults.variant],
         ['Lifecycle', ['LIFECYCLE']]
     ];
     const erpTechnologyOperationCodeFieldId = 'KOD_OPERACJI';
@@ -2719,7 +2871,11 @@
 
     function getERPTechnologyElementLink(elemItem) {
         if(!elemItem || elemItem.length === 0) return '';
-        return elemItem.attr('data-link-mbom') || elemItem.attr('data-link') || '';
+
+        let link = elemItem.attr('data-link-mbom') || elemItem.attr('data-link') || '';
+        if(elemItem.hasClass('assembly-index')) return getPLMItemLevelLink(link);
+
+        return link;
     }
 
     function getERPTechnologyDescriptor(elemItem) {
@@ -2770,6 +2926,18 @@
                     descriptor : getERPTechnologyDescriptor(elemItem)
                 });
                 return false;
+            }
+
+            // Assembly indices must be expanded even after their ERP flag is
+            // set. Their process children are required to build a subsequent
+            // modify-technology request.
+            if(elemItem.hasClass('assembly-index')) {
+                console.log('MBOM custom: expanding assembly index for ERP technology discovery', {
+                    itemLink      : getERPTechnologyElementLink(elemItem),
+                    expansionLink : expansionLink,
+                    descriptor    : getERPTechnologyDescriptor(elemItem)
+                });
+                return true;
             }
 
             return getERPTechnologyItemDetails(expansionLink).then(function(detailsData) {
@@ -2967,6 +3135,7 @@
 
         erpAssemblyIndexProductPropertyMappings.forEach(function(mapping) {
             let value = getERPTechnologySectionValue(sections, mapping[1], '');
+            if(isBlank(value) && mapping.length > 2) value = mapping[2];
             if(mapping[0] === 'Grupa produktowa' && isBlank(value)) value = groupId;
             if(mapping[0] === 'Nazwa' && isBlank(value)) value = title;
             if(mapping[0] === 'Opis' && isBlank(value)) value = description;
@@ -3058,6 +3227,13 @@
     function buildERPTechnologyDescription(detailsData, part) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
         let description = getERPTechnologySectionValue(sections, ['DESCRIPTION'], '');
+        if(isBlank(description)) {
+            description = getERPTechnologySectionValue(
+                sections,
+                ['TITLE'],
+                (detailsData && detailsData.title) ? detailsData.title : ''
+            );
+        }
         let technologyId = getERPTechnologySectionValue(sections, ['ID_TECHNOLOGI', 'id_technologi'], '');
 
         if(isBlank(technologyId) && part && part.details) {
@@ -3473,7 +3649,7 @@
             if(technologyRoots.length === 0) return [];
 
             return Promise.all(technologyRoots.map(function(elemItem) {
-                if(isERPTechnologyMainRootItem(elemItem)) {
+                if(isERPTechnologyMainRootItem(elemItem) || elemItem.hasClass('assembly-index')) {
                     return buildERPTechnologyPayload(elemItem);
                 }
 
@@ -3520,6 +3696,7 @@
 
                 filteredJobs = filteredJobs.filter(function(job) {
                     if(isERPTechnologyMainRootItem(job.elemItem)) return true;
+                    if(job.isAssemblyIndex) return true;
                     return !job.synced;
                 });
 
@@ -3857,7 +4034,7 @@
                             return null;
                         }
 
-                        if(!isERPTechnologyMainRootItem(currentJob.elemItem) && currentJob.synced) {
+                        if(!isERPTechnologyMainRootItem(currentJob.elemItem) && currentJob.synced && !currentJob.isAssemblyIndex) {
                             console.log('MBOM custom: skipping ERP calls for already synced sub-MBOM item', {
                                 link       : currentJob.link,
                                 indeks     : currentJob.payload.indeks,
@@ -4281,6 +4458,62 @@
         }
     }
 
+    function isEBOMMakeItem(node, elemNode) {
+        let makeBuyValues = [];
+
+        if(node && typeof node.makeBuy === 'string') {
+            makeBuyValues.push(node.makeBuy);
+        } else if(node && node.makeBuy) {
+            makeBuyValues.push(node.makeBuy.title);
+            makeBuyValues.push(node.makeBuy.name);
+            makeBuyValues.push(node.makeBuy.value);
+        }
+
+        if(elemNode && elemNode.length > 0) {
+            let elemMakeBuy = elemNode.children('.item-head').children('.item-make-buy').first();
+            if(elemMakeBuy.length > 0) {
+                makeBuyValues.push(elemMakeBuy.children('option:selected').text());
+            }
+        }
+
+        return makeBuyValues.some(function(value) {
+            return normalizeComparisonValue(value) === 'make';
+        });
+    }
+
+    function addEBOMMakeFactoryAction(elemNode, node) {
+        if(!elemNode || elemNode.length === 0 || !node) return;
+        if(Number(node.level) === 0 || !elemNode.hasClass('leaf')) return;
+        if(!isEBOMMakeItem(node, elemNode)) return;
+
+        let linkedMBOM = elemNode.attr('data-mbom') || ((node.mbom && node.mbom.link) ? node.mbom.link : '');
+        if(!isBlank(linkedMBOM)) return;
+
+        let elemActions = elemNode.children('.item-head').children('.item-actions').first();
+        if(elemActions.length === 0 || elemActions.children('.item-action-make-factory').length > 0) return;
+
+        elemNode.addClass('ebom-make-item');
+
+        addActionIcon('factory', elemActions)
+            .addClass('item-action-convert')
+            .addClass('item-action-make-factory')
+            .attr('title', 'Create a linked MBOM and add it to the selected MBOM node')
+            .click(function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+
+                $('#ebom').find('.item.to-convert').removeClass('to-convert');
+
+                let elemItem = $(this).closest('.item');
+                elemItem.addClass('to-convert');
+
+                let itemName = elemItem.find('.item-head-descriptor').first().html();
+                $('#convert-item-name').html(itemName);
+                $('#dialog-convert').show();
+                $('#overlay').show();
+            });
+    }
+
     $(document).ready(function() {
         insertAddRawMaterialsButton();
         insertAddAssemblyIndexButton();
@@ -4289,6 +4522,52 @@
         attachERPTabEvents();
         attachCustomModeResizeEvents();
     });
+
+    if(typeof setStatusBar === 'function') {
+        let originalSetStatusBar = setStatusBar;
+
+        setStatusBar = function() {
+            let restoredEBOMLinks = [];
+
+            // The standard comparison uses EBOM data-link directly. For a
+            // linked sub-MBOM, data-link is the EBOM item while data-mbom is
+            // the item that actually exists in the manufacturing structure.
+            $('#ebom').find('.item[data-mbom]').each(function() {
+                let elemEBOMItem = $(this);
+                let mappedMBOMLink = elemEBOMItem.attr('data-mbom') || '';
+                let normalizedMappedLink = normalizePLMLink(mappedMBOMLink);
+                if(isBlank(normalizedMappedLink)) return;
+
+                let comparisonLink = mappedMBOMLink;
+
+                $('#mbom').find('.item.is-ebom-item').each(function() {
+                    let elemMBOMItem = $(this);
+                    let mbomLink = elemMBOMItem.attr('data-link') || '';
+                    let linkedMBOM = elemMBOMItem.attr('data-link-mbom') || '';
+
+                    if(normalizePLMLink(mbomLink) === normalizedMappedLink ||
+                        normalizePLMLink(linkedMBOM) === normalizedMappedLink) {
+                        comparisonLink = mbomLink || linkedMBOM || mappedMBOMLink;
+                        return false;
+                    }
+                });
+
+                restoredEBOMLinks.push({
+                    elem : elemEBOMItem,
+                    link : elemEBOMItem.attr('data-link')
+                });
+                elemEBOMItem.attr('data-link', comparisonLink);
+            });
+
+            try {
+                return originalSetStatusBar.apply(this, arguments);
+            } finally {
+                restoredEBOMLinks.forEach(function(state) {
+                    state.elem.attr('data-link', state.link);
+                });
+            }
+        };
+    }
 
     if(typeof isMBOMLeaf === 'function') {
         isMBOMLeaf = function(node) {
@@ -4316,21 +4595,6 @@
             $('<div></div>').appendTo(elemParent)
                 .addClass('icon')
                 .addClass('mbom-shortcut')
-                .addClass('icon-factory')
-                .attr('title', 'Expand or collapse the linked sub-MBOM inline')
-                .click(function(e) {
-
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    let elemItem = $(this).closest('.item');
-                    expandInlineSubMBOMForElement(elemItem);
-
-                });
-
-            $('<div></div>').appendTo(elemParent)
-                .addClass('icon')
-                .addClass('mbom-shortcut')
                 .addClass('icon-open')
                 .attr('title', 'Open the linked MBOM in a new tab')
                 .click(function(e) {
@@ -4340,6 +4604,21 @@
 
                     let elemItem = $(this).closest('.item');
                     openMBOMEditorFromItem(elemItem);
+
+                });
+
+            $('<div></div>').appendTo(elemParent)
+                .addClass('icon')
+                .addClass('mbom-shortcut')
+                .addClass('icon-factory')
+                .attr('title', 'Expand or collapse the linked sub-MBOM inline')
+                .click(function(e) {
+
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    let elemItem = $(this).closest('.item');
+                    expandInlineSubMBOMForElement(elemItem);
 
                 });
         };
@@ -4368,6 +4647,10 @@
 
             let elemNode = originalInsertBOMPartListNode.call(this, bomType, index, resolvedNode);
 
+            if(bomType === 'ebom') {
+                addEBOMMakeFactoryAction(elemNode, resolvedNode);
+            }
+
             if(bomType === 'mbom' && resolvedNode && resolvedNode.isAssemblyIndex) {
                 elemNode
                     .removeClass('leaf')
@@ -4378,6 +4661,8 @@
                     .removeClass('icon-wrench')
                     .addClass('radio-process')
                     .attr('title', 'Indeks montażowy/złożeniowy');
+
+                ensureMBOMShortcutIcons(elemNode);
             }
 
             decorateMBOMQuantityWithUnit(elemNode, resolvedNode, bomType);
