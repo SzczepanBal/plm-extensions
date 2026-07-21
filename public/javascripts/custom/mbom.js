@@ -11,7 +11,9 @@
         partType     : 'Z',
         kind         : 'Z',
         variant      : 'Standard',
-        specification: 'Zozenie'
+        specification: 'Złożenie',
+        moc: 'Test',
+        nazwa_urzadzenia: 'Test'
     };
     let addProcessWorkspaceItemsPromise = null;
     let addProcessWorkspaceItemsCache = [];
@@ -1164,14 +1166,43 @@
         elemCode.val(getNextProcessCode());
     }
 
-    function getNextProcessCode() {
-        let highestCode = 0;
-        let elemRootBOM = $('#mbom-tree').children().first().children('.item-bom').first();
+    function getSelectedProcessParentItem() {
+        let elemTarget = $('#mbom .item.selected-target').first();
+        if(elemTarget.length === 0) {
+            elemTarget = $('#mbom-tree').children('.item').first();
+        }
 
-        elemRootBOM.children('.item.process').each(function() {
+        if(elemTarget.length > 0 && elemTarget.hasClass('process') && !elemTarget.hasClass('root')) {
+            let elemParent = elemTarget.parent().closest('.item');
+            if(elemParent.length > 0) elemTarget = elemParent;
+        }
+
+        return elemTarget;
+    }
+
+    function getProcessParentBOM(elemParentItem, createIfMissing) {
+        let elemTarget = elemParentItem && elemParentItem.length > 0
+            ? elemParentItem
+            : getSelectedProcessParentItem();
+
+        if(elemTarget.length === 0) return $();
+
+        let elemBOM = elemTarget.children('.item-bom').first();
+        if(elemBOM.length === 0 && createIfMissing) {
+            elemBOM = ensureInlineSubMBOMContainer(elemTarget);
+        }
+
+        return elemBOM;
+    }
+
+    function getNextProcessCode(elemBOM) {
+        let highestCode = 0;
+        let elemTargetBOM = elemBOM && elemBOM.length > 0 ? elemBOM : getProcessParentBOM();
+
+        elemTargetBOM.children('.item.process').each(function() {
             let elemItem = $(this);
             let value = elemItem.attr('data-code') || elemItem.find('.item-code').first().text() || '';
-            let numericValue = parseInt(String(value).trim(), 10);
+            let numericValue = parseProcessSequenceCode(value);
 
             if(!Number.isNaN(numericValue) && numericValue > highestCode) highestCode = numericValue;
         });
@@ -1305,6 +1336,7 @@
             selectProcess($(this));
         });
 
+        elemItem.addClass('selected');
         selectProcess(elemItem);
     }
 
@@ -1354,6 +1386,12 @@
                 }, {
                     fieldId : 'SPECYFIKACJA',
                     value   : assemblyIndexPLMDefaults.specification
+                }, {
+                    fieldId : 'NAZWA_URZDZENIA',
+                    value   : assemblyIndexPLMDefaults.nazwa_urzadzenia
+                }, {
+                    fieldId : 'MOC',
+                    value   : assemblyIndexPLMDefaults.moc
                 }]
             };
 
@@ -1424,10 +1462,19 @@
             return false;
         }
 
-        let processCode = getNextProcessCode();
+        let elemParentItem = getSelectedProcessParentItem();
+        let elemBOM = getProcessParentBOM(elemParentItem, true);
+
+        if(elemBOM.length === 0) {
+            showErrorMessage('Add Process', 'Could not find the selected MBOM target.');
+            return false;
+        }
+
+        let processCode = getNextProcessCode(elemBOM);
+        let parentLevel = getElementLevel(elemParentItem);
 
         let node = {
-            level       : 1,
+            level       : parentLevel + 1,
             bomType     : 'mbom',
             title       : title,
             hasChildren : true,
@@ -1441,18 +1488,13 @@
         };
 
         let elemNew = insertBOMPartListNode('mbom', null, node);
-        let elemBOM = $('#mbom-tree').children().first().children('.item-bom').first();
-
-        if(elemBOM.length === 0) {
-            showErrorMessage('Add Process', 'Could not find the MBOM root target.');
-            return false;
-        }
 
         if(disassembleMode) elemBOM.prepend(elemNew);
         else elemBOM.append(elemNew);
 
         updateMBOMNumbers();
-        selectProcess(elemNew);
+        elemParentItem.addClass('selected');
+        selectProcess(elemParentItem);
 
         $('#mbom-add-name').val('');
         $('#mbom-add-code').val('');
@@ -1724,6 +1766,255 @@
         });
     }
 
+    function getProcessCodeFromElement(elemProcess) {
+        if(!elemProcess || elemProcess.length === 0) return '';
+
+        let value = elemProcess.attr('data-code');
+        if(isBlank(value)) {
+            value = elemProcess.children('.item-head').children('.item-code').first().text();
+        }
+
+        return isBlank(value) ? '' : String(value).trim();
+    }
+
+    function parseProcessSequenceCode(value) {
+        if(typeof value === 'number') {
+            return Number.isFinite(value) && value > 0 ? Math.trunc(value) : NaN;
+        }
+
+        if(typeof value !== 'string') return NaN;
+
+        let normalized = value.trim();
+        if(!/^\d+(?:[\.,]0+)?$/.test(normalized)) return NaN;
+
+        let parsed = Number(normalized.replace(',', '.'));
+        return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : NaN;
+    }
+
+    function setProcessCodeDisplay(elemProcess, code, updateStoredValue) {
+        if(!elemProcess || elemProcess.length === 0) return;
+
+        let value = String(code);
+        elemProcess.children('.item-head').children('.item-code').first().text(value);
+        if(updateStoredValue) elemProcess.attr('data-code', value);
+    }
+
+    function collectProcessCodeUpdatesBeforeSave() {
+        let updatesByLink = new Map();
+        let assignedCodesByLink = new Map();
+        let conflicts = [];
+
+        $('#mbom .item-bom').each(function() {
+            let elemBOM = $(this);
+            let elemProcesses = elemBOM.children('.item.process');
+            if(elemProcesses.length === 0) return;
+
+            let reservedCodes = new Set();
+            let seenCodes = new Set();
+            let processedEdges = new Set();
+            let highestCode = 0;
+
+            elemProcesses.each(function() {
+                let code = parseProcessSequenceCode(getProcessCodeFromElement($(this)));
+                if(Number.isNaN(code)) return;
+
+                reservedCodes.add(code);
+                if(code > highestCode) highestCode = code;
+            });
+
+            let nextCode = (Math.floor(highestCode / 10) + 1) * 10;
+            if(nextCode < 10) nextCode = 10;
+
+            elemProcesses.each(function() {
+                let elemProcess = $(this);
+                let edgeId = elemProcess.attr('data-edge') || '';
+
+                // Ignore a duplicate DOM rendering of the same saved edge.
+                if(!isBlank(edgeId) && processedEdges.has(edgeId)) return;
+                if(!isBlank(edgeId)) processedEdges.add(edgeId);
+
+                let originalValue = getProcessCodeFromElement(elemProcess);
+                let parsedCode = parseProcessSequenceCode(originalValue);
+                let desiredCode = parsedCode;
+
+                if(Number.isNaN(parsedCode) || seenCodes.has(parsedCode)) {
+                    while(reservedCodes.has(nextCode)) nextCode += 10;
+                    desiredCode = nextCode;
+                    reservedCodes.add(desiredCode);
+                    nextCode += 10;
+                }
+
+                seenCodes.add(desiredCode);
+
+                let processLink = getPLMItemLevelLink(elemProcess.attr('data-link') || '');
+                let codeChanged = Number.isNaN(parsedCode) || desiredCode !== parsedCode;
+
+                if(!isBlank(processLink)) {
+                    let normalizedLink = normalizePLMLink(processLink);
+                    let assignedCode = assignedCodesByLink.get(normalizedLink);
+
+                    if(typeof assignedCode !== 'undefined' && assignedCode !== desiredCode) {
+                        conflicts.push({
+                            link        : processLink,
+                            firstCode   : assignedCode,
+                            secondCode  : desiredCode,
+                            description : getERPTechnologyDescriptor(elemProcess)
+                        });
+                        return;
+                    }
+
+                    assignedCodesByLink.set(normalizedLink, desiredCode);
+                }
+
+                if(!codeChanged) return;
+
+                setProcessCodeDisplay(elemProcess, desiredCode, isBlank(processLink));
+
+                if(isBlank(processLink)) return;
+
+                let normalizedLink = normalizePLMLink(processLink);
+                let existingUpdate = updatesByLink.get(normalizedLink);
+
+                if(existingUpdate && existingUpdate.code !== desiredCode) {
+                    conflicts.push({
+                        link        : processLink,
+                        firstCode   : existingUpdate.code,
+                        secondCode  : desiredCode,
+                        description : getERPTechnologyDescriptor(elemProcess)
+                    });
+                    return;
+                }
+
+                if(!existingUpdate) {
+                    updatesByLink.set(normalizedLink, {
+                        link    : processLink,
+                        code    : desiredCode,
+                        element : elemProcess
+                    });
+                }
+            });
+        });
+
+        return {
+            updates   : Array.from(updatesByLink.values()),
+            conflicts : conflicts
+        };
+    }
+
+    function normalizeProcessCodesBeforeSave() {
+        let result = collectProcessCodeUpdatesBeforeSave();
+
+        if(result.conflicts.length > 0) {
+            console.warn('MBOM custom: process code normalization found reused process items with conflicting local codes', result.conflicts);
+            return Promise.reject(new Error('The same process item is used with conflicting codes in multiple subassemblies.'));
+        }
+
+        if(result.updates.length === 0) {
+            console.log('MBOM custom: process code validation finished without PLM updates');
+            return Promise.resolve();
+        }
+
+        console.log('MBOM custom: updating normalized process codes before save', result.updates.map(function(update) {
+            return {
+                link : update.link,
+                code : update.code
+            };
+        }));
+
+        let requests = result.updates.map(function(update) {
+            return $.post('/plm/edit', {
+                link     : update.link,
+                sections : wsMBOM.sections,
+                fields   : [{
+                    fieldId : config.workspaceMBOM.fieldIDs.code,
+                    value   : update.code
+                }]
+            }).then(function(response) {
+                if(response && response.error) {
+                    throw new Error(response.message || ('PLM rejected process code ' + update.code + '.'));
+                }
+
+                $('#mbom .item.process').each(function() {
+                    let elemProcess = $(this);
+                    if(normalizePLMLink(elemProcess.attr('data-link')) === normalizePLMLink(update.link)) {
+                        setProcessCodeDisplay(elemProcess, update.code, true);
+                    }
+                });
+            });
+        });
+
+        return Promise.all(requests).then(function() {
+            erpTechnologyDetailsCache = {};
+            console.log('MBOM custom: process code normalization completed', {
+                updatedItems : result.updates.length
+            });
+        });
+    }
+
+    function getAssemblyIndexItemsForPropertySave() {
+        let itemsByLink = new Map();
+
+        $('#mbom .item').each(function() {
+            let elemItem = $(this);
+            let descriptor = getERPTechnologyDescriptor(elemItem);
+            let isAssemblyIndex = elemItem.hasClass('assembly-index') || hasAssemblyIndexTitle({ title : descriptor });
+            if(!isAssemblyIndex) return;
+
+            let itemLink = getPLMItemLevelLink(getMBOMSaveLink(elemItem));
+            let normalizedLink = normalizePLMLink(itemLink);
+            if(isBlank(normalizedLink) || itemsByLink.has(normalizedLink)) return;
+
+            itemsByLink.set(normalizedLink, {
+                link       : itemLink,
+                descriptor : descriptor
+            });
+        });
+
+        return Array.from(itemsByLink.values());
+    }
+
+    function saveAssemblyIndexPropertiesBeforeSave() {
+        let assemblyIndexItems = getAssemblyIndexItemsForPropertySave();
+        if(assemblyIndexItems.length === 0) return Promise.resolve();
+
+        console.log('MBOM custom: saving assembly index PLM properties before BOM save', assemblyIndexItems);
+
+        let requests = assemblyIndexItems.map(function(item) {
+            return $.post('/plm/edit', {
+                link     : item.link,
+                sections : wsMBOM.sections,
+                fields   : [{
+                    fieldId : 'GRUPA_PRODUKTOWA',
+                    value   : assemblyIndexPLMDefaults.productGroup
+                }, {
+                    fieldId : 'TYP_CZESCI',
+                    value   : assemblyIndexPLMDefaults.partType
+                }, {
+                    fieldId : 'RODZAJ',
+                    value   : assemblyIndexPLMDefaults.kind
+                }, {
+                    fieldId : 'WARIANT',
+                    value   : assemblyIndexPLMDefaults.variant
+                }, {
+                    fieldId : 'SPECYFIKACJA',
+                    value   : assemblyIndexPLMDefaults.specification
+                }]
+            }).then(function(response) {
+                if(response && response.error) {
+                    throw new Error(response.message || ('PLM rejected assembly index property update for ' + item.descriptor + '.'));
+                }
+            });
+        });
+
+        return Promise.all(requests).then(function() {
+            erpTechnologyDetailsCache = {};
+            console.log('MBOM custom: assembly index PLM properties saved', {
+                updatedItems : assemblyIndexItems.length,
+                specification: assemblyIndexPLMDefaults.specification
+            });
+        });
+    }
+
     function attachCustomSaveGuard() {
         let elemSave = $('#save');
         if(elemSave.length === 0) return;
@@ -1740,13 +2031,17 @@
             initSaveCheckDialog(headers.length);
 
             syncExistingBOMStateBeforeSave().then(function() {
+                return saveAssemblyIndexPropertiesBeforeSave();
+            }).then(function() {
+                return normalizeProcessCodesBeforeSave();
+            }).then(function() {
                 completeSaveCheckDialog(headers.length);
                 setSaveActions();
                 showSaveProcessingDialog();
                 createNewItems();
             }).catch(function(error) {
-                console.warn('MBOM custom: failed to synchronize existing BOM state before save', error);
-                showErrorMessage('Error while preparing save', 'Could not validate existing BOM entries before saving.');
+                console.warn('MBOM custom: failed to validate BOM state or process codes before save', error);
+                showErrorMessage('Error while preparing save', String(error && error.message ? error.message : 'Could not validate existing BOM entries before saving.'));
             }).finally(function() {
                 elemButton.removeClass('disabled');
             });
@@ -3007,11 +3302,11 @@
         ['Specyfikacja', ['SPECYFIKACJA'], assemblyIndexPLMDefaults.specification],
         ['Status', ['STATUS']],
         ['Grupa produktowa', ['GRUPA_PRODUKTOWA'], assemblyIndexPLMDefaults.productGroup],
-        ['Nazwa urządzenia', ['NAZWA_URZDZENIA']],
-        ['Moc/Wielkość', ['MOC']],
         ['Typ części', ['TYP_CZESCI'], assemblyIndexPLMDefaults.partType],
         ['Rodzaj', ['RODZAJ'], assemblyIndexPLMDefaults.kind],
         ['Wariant', ['WARIANT'], assemblyIndexPLMDefaults.variant],
+        ['Nazwa urządzenia', ['NAZWA_URZDZENIA'], '', true],
+        ['Moc/Wielkość', ['MOC'], '', true],
         ['Lifecycle', ['LIFECYCLE']]
     ];
     const erpTechnologyOperationCodeFieldId = 'KOD_OPERACJI';
@@ -3320,10 +3615,21 @@
             if(mapping[0] === 'Grupa produktowa' && isBlank(value)) value = groupId;
             if(mapping[0] === 'Nazwa' && isBlank(value)) value = title;
             if(mapping[0] === 'Opis' && isBlank(value)) value = description;
-            if(isBlank(value)) return;
+
+            if(mapping[0] === 'Specyfikacja') {
+                let normalizedSpecification = normalizeComparisonValue(value);
+                if(normalizedSpecification === 'zozenie' || normalizedSpecification === 'zlozenie') {
+                    value = assemblyIndexPLMDefaults.specification;
+                }
+            }
+
+            let includeWhenBlank = mapping[3] === true;
+            if(isBlank(value) && !includeWhenBlank) return;
 
             let property = {};
-            property[mapping[0]] = truncateERPAssemblyIndexPropertyValue(String(value), 40);
+            property[mapping[0]] = isBlank(value)
+                ? ''
+                : truncateERPAssemblyIndexPropertyValue(String(value), 40);
             properties.push(property);
         });
 
