@@ -4651,6 +4651,12 @@
                 addEBOMMakeFactoryAction(elemNode, resolvedNode);
             }
 
+            if(bomType === 'mbom' && resolvedNode && Number(resolvedNode.level) !== 0 && !getBOMBooleanValue(resolvedNode.isEBOMItem)) {
+                elemNode.addClass('mbom-only');
+                elemNode.children('.item-head').children('.item-head-status').first()
+                    .attr('title', 'Blue: MBOM-only item (not present in EBOM)');
+            }
+
             if(bomType === 'mbom' && resolvedNode && resolvedNode.isAssemblyIndex) {
                 elemNode
                     .removeClass('leaf')

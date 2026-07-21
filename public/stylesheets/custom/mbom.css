@@ -155,3 +155,8 @@ body.details-on.no-viewer #tabs {
 #ebom .additional.ebom-make-item > .item-head > .item-actions > .item-action-make-factory {
     display: block;
 }
+
+/* MBOM-only objects are intentionally outside the EBOM alignment. */
+#mbom .item.mbom-only > .item-head > .item-head-status {
+    background: var(--color-blue-500);
+}
