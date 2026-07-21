@@ -2774,12 +2774,12 @@
 
             return getERPTechnologyItemDetails(expansionLink).then(function(detailsData) {
                 if(!detailsData) {
-                    console.warn('MBOM custom: ERP technology discovery could not load linked sub-MBOM details, expanding as fallback', {
+                    console.warn('MBOM custom: ERP technology discovery could not load linked sub-MBOM details, skipping expansion', {
                         itemLink       : getERPTechnologyElementLink(elemItem),
                         expansionLink  : expansionLink,
                         descriptor     : getERPTechnologyDescriptor(elemItem)
                     });
-                    return true;
+                    return false;
                 }
 
                 let alreadySynced = isERPTechnologySynced(detailsData);
@@ -2792,20 +2792,20 @@
 
                 return !alreadySynced;
             }).catch(function(error) {
-                console.warn('MBOM custom: ERP technology discovery failed to inspect linked sub-MBOM, expanding as fallback', {
+                console.warn('MBOM custom: ERP technology discovery failed to inspect linked sub-MBOM, skipping expansion', {
                     itemLink      : getERPTechnologyElementLink(elemItem),
                     expansionLink : expansionLink,
                     error         : error
                 });
-                return true;
+                return false;
             });
         }).catch(function(error) {
-            console.warn('MBOM custom: ERP technology discovery failed to resolve inline sub-MBOM context, expanding as fallback', {
+            console.warn('MBOM custom: ERP technology discovery failed to resolve inline sub-MBOM context, skipping expansion', {
                 itemLink   : getERPTechnologyElementLink(elemItem),
                 descriptor : getERPTechnologyDescriptor(elemItem),
                 error      : error
             });
-            return true;
+            return false;
         });
     }
 
@@ -3472,7 +3472,48 @@
             let technologyRoots = getERPTechnologyRootItems();
             if(technologyRoots.length === 0) return [];
 
-            return Promise.all(technologyRoots.map(buildERPTechnologyPayload)).then(function(jobs) {
+            return Promise.all(technologyRoots.map(function(elemItem) {
+                if(isERPTechnologyMainRootItem(elemItem)) {
+                    return buildERPTechnologyPayload(elemItem);
+                }
+
+                let itemLink = getERPTechnologyElementLink(elemItem);
+                if(isBlank(itemLink)) {
+                    console.warn('MBOM custom: skipping sub-MBOM technology because its ERP sync state cannot be checked', {
+                        descriptor : getERPTechnologyDescriptor(elemItem),
+                        level      : getElementLevel(elemItem)
+                    });
+                    return Promise.resolve(null);
+                }
+
+                return getERPTechnologyItemDetails(itemLink).then(function(detailsData) {
+                    if(!detailsData) {
+                        console.warn('MBOM custom: skipping sub-MBOM technology because its details could not be loaded', {
+                            link       : itemLink,
+                            descriptor : getERPTechnologyDescriptor(elemItem)
+                        });
+                        return null;
+                    }
+
+                    if(isERPTechnologySynced(detailsData)) {
+                        console.log('MBOM custom: skipping already synced sub-MBOM before loading its technology structure', {
+                            link       : itemLink,
+                            descriptor : getERPTechnologyDescriptor(elemItem),
+                            level      : getElementLevel(elemItem)
+                        });
+                        return null;
+                    }
+
+                    return buildERPTechnologyPayload(elemItem);
+                }).catch(function(error) {
+                    console.warn('MBOM custom: skipping sub-MBOM technology because its ERP sync state could not be checked', {
+                        link       : itemLink,
+                        descriptor : getERPTechnologyDescriptor(elemItem),
+                        error      : error
+                    });
+                    return null;
+                });
+            })).then(function(jobs) {
                 let filteredJobs = jobs.filter(function(job) {
                     return job !== null && job.payload && !isBlank(job.payload.indeks) && Array.isArray(job.payload.operacje) && job.payload.operacje.length > 0;
                 });
