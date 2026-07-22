@@ -69,6 +69,17 @@ $(document).ready(function() {
         window.open(base);
     });
 
+    $('#architecture').click(function() {
+        let href = document.location.href.split('?');
+        let base = href[0].split('/landing')[0];
+
+        if(!base.endsWith('/')) base += '/';
+        base += 'architecture';
+        if(href.length > 1) base += '?' + href[1];
+
+        window.open(base);
+    });
+
     $('#toggle').click(function() {
         $(this).toggleClass('icon-chevron-left').toggleClass('icon-chevron-right');
         $('body').toggleClass('no-side-panel');

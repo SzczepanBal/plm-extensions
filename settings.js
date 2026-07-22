@@ -1471,6 +1471,7 @@ exports.server = {
 
         // Framework Services
         docs               : true,
+        architecture       : true,
         landing            : true,
         troubleshooting    : true,
         start              : true,

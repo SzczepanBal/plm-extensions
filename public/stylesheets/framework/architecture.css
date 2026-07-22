@@ -1,0 +1,78 @@
+body {
+    overflow-y : auto;
+}
+
+#architecture-content {
+    box-sizing : border-box;
+    margin     : 0 auto;
+    max-width  : 1200px;
+    padding    : 60px 80px 100px;
+}
+
+#architecture-content h1 {
+    border-bottom  : 1px solid var(--color-surface-level-5);
+    font-size      : 36px;
+    padding-bottom : 18px;
+}
+
+#architecture-content h2 {
+    font-size  : 26px;
+    margin-top : 48px;
+}
+
+#architecture-content h3 {
+    font-size  : 20px;
+    margin-top : 32px;
+}
+
+#architecture-content p,
+#architecture-content li {
+    font-size   : 15px;
+    line-height : 1.65;
+}
+
+#architecture-content table {
+    border-collapse : collapse;
+    margin          : 20px 0;
+    width           : 100%;
+}
+
+#architecture-content th,
+#architecture-content td {
+    border     : 1px solid var(--color-surface-level-5);
+    padding    : 10px 14px;
+    text-align : left;
+}
+
+#architecture-content th,
+#architecture-content pre {
+    background : var(--color-surface-level-2);
+}
+
+#architecture-content pre {
+    border-radius : 4px;
+    overflow-x    : auto;
+    padding       : 18px;
+}
+
+#architecture-content code {
+    font-family : monospace;
+}
+
+#architecture-content :not(pre) > code {
+    background    : var(--color-surface-level-2);
+    border-radius : 3px;
+    padding       : 2px 5px;
+}
+
+.mermaid {
+    background    : white;
+    border-radius : 4px;
+    margin        : 24px 0;
+    padding       : 24px;
+    text-align    : center;
+}
+
+@media only screen and (max-width: 800px) {
+    #architecture-content { padding : 30px 24px 60px; }
+}

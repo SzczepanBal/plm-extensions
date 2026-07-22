@@ -465,6 +465,9 @@ a:hover {
 #docs-name {
     color       : var(--color-blue-500);
 }
+#architecture-name {
+    color       : var(--color-blue-500);
+}
 
 
 
