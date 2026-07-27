@@ -1340,6 +1340,22 @@
         selectProcess(elemItem);
     }
 
+    function enableSubMBOMOperationTarget(elemItem) {
+        if(!elemItem || elemItem.length === 0) return;
+        if(elemItem.hasClass('process') || !hasMBOMShortcut(elemItem)) return;
+
+        ensureInlineSubMBOMContainer(elemItem);
+
+        elemItem
+            .addClass('submbom-operation-target')
+            .off('click.custom-submbom-target')
+            .on('click.custom-submbom-target', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                selectProcess($(this));
+            });
+    }
+
     function createAssemblyIndex() {
         let elemButton = $('#mbom-add-assembly-index');
         if(elemButton.hasClass('disabled')) return;
@@ -5156,6 +5172,10 @@
                     .attr('title', 'Indeks montażowy/złożeniowy');
 
                 ensureMBOMShortcutIcons(elemNode);
+            }
+
+            if(bomType === 'mbom') {
+                enableSubMBOMOperationTarget(elemNode);
             }
 
             decorateMBOMQuantityWithUnit(elemNode, resolvedNode, bomType);
