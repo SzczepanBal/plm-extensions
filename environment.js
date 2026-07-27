@@ -62,4 +62,5 @@ exports.vaultName    = '';
 //   - ADMIN_CLIENT_SECRET
 //   - VAULT_GATEWAY
 //   - VAULT_NAME
+//   - APS_TOKEN_REFRESH_TEST_SECONDS (optional; forces an early refresh for short-lived development tests)
 // ---------------------------------------------------------------------------------------------------------------------------

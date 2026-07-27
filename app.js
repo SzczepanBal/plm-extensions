@@ -34,6 +34,7 @@ if ((process.argv.length > 2) && (!fs.existsSync(pathEnvironment))) {
     const morgan      = require('morgan');
     const serveIndex  = require('serve-index');
     const bodyParser  = require('body-parser');
+    const apsAuth     = require('./lib/aps-auth');
     const landing     = require('./routes/landing');
     const plm         = require('./routes/plm');
     const vault       = require('./routes/pdm');
@@ -105,6 +106,8 @@ if ((process.argv.length > 2) && (!fs.existsSync(pathEnvironment))) {
     
     // ROUTING
     app.use('/', landing);
+    app.use('/plm', apsAuth.ensureFreshUserToken);
+    app.use('/vault', apsAuth.ensureFreshUserToken);
     app.use('/plm', plm);
     app.use('/vault', vault);
     app.use('/services', services);

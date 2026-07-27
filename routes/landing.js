@@ -1,6 +1,7 @@
 const express = require('express');
 const axios   = require('axios');
 const crypto  = require('node:crypto');
+const apsAuth = require('../lib/aps-auth');
 const router  = express.Router();
 
 
@@ -168,8 +169,9 @@ function launch(appURL, appSettings, appTitle, req, res) {
     let now      = new Date().getTime();
 
     if(req.session.hasOwnProperty('headers')) {
-        if(req.session.headers.hasOwnProperty('expires')) {
-            let expires = new Date(req.session.headers.expires).getTime();
+        let tokenState = apsAuth.getUserTokenState(req);
+        if(tokenState.hasOwnProperty('expires')) {
+            let expires = new Date(tokenState.expires).getTime();
             if(expires > now) {
                 refresh = true;
             } else {
@@ -410,18 +412,7 @@ function getToken(req, code, res, callback) {
             console.log('  Login to Autodesk Platform Services (APS) successful');
             console.log();
 
-            let expiration = new Date();
-                expiration.setSeconds(expiration.getSeconds() + (response.data.expires_in - 90));
-
-            req.session.headers = {
-                'Content-Type'  : 'application/json',
-                'Accept'        : 'application/json',
-                'X-Tenant'      : req.app.locals.tenant,
-                'token'         : response.data.access_token,
-                'Authorization' : 'Bearer ' + response.data.access_token,
-                'expires'       : expiration,
-                'refresh_token' : response.data.refresh_token
-            };
+            apsAuth.storeUserTokens(req, response.data);
             
             callback();
 
