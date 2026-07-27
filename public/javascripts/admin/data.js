@@ -1137,7 +1137,7 @@ function startProcessing() {
     options.testRun       = $('#test-run').hasClass('icon-toggle-on');
     options.requestsCount = Number($('#requestsCount').val()) || 5;
     options.autoTune      = $('#auto-tune').hasClass('icon-toggle-on');
-    options.maxErrors     = $('#maxErrors').val() || 10;
+    options.maxErrors     = Math.max(0, Number($('#maxErrors').val()) || 0);
     options.searchSize    = Number($('#pageSize').val()) || 100;
 
     if(options.requestsCount > maxRequestsCount) options.requestsCount = maxRequestsCount;
@@ -1217,7 +1217,11 @@ function getNextRecords() {
     run.params.pageNo = (options.mode === 'continue') ? (run.params.pageNo + 1) : 1;
     run.params.page   = run.params.pageNo;
 
-    if(run.errors.length === options.maxErrors) stopped = true;
+    if(hasReachedMaximumErrors()) {
+        addLogStoppedByErrors(run.errors);
+        endProcessing();
+        return;
+    }
 
     if(stopped) return;
 
@@ -1730,7 +1734,7 @@ function genCompletionRequests(limit, responses) {
 
         }
 
-        if(run.errors.length > options.maxErrors) {
+        if(hasReachedMaximumErrors()) {
             addLogStoppedByErrors(run.errors);
             endProcessing();
             return [];
@@ -1761,6 +1765,11 @@ function genCompletionRequests(limit, responses) {
     }
 
     return requests;
+
+}
+function hasReachedMaximumErrors() {
+
+    return (options.maxErrors > 0) && (run.errors.length >= options.maxErrors);
 
 }
 function getBOMRecords() {

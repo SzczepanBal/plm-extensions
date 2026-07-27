@@ -383,8 +383,8 @@ block body
                             .label Dynamic requests count
                             .button.icon.icon-toggle-on.filled.toggle#auto-tune
                         .option
-                            .label Maximum Errors
-                            input.button#maxErrors(type='number' value=5)     
+                            .label Maximum Errors (0 = unlimited)
+                            input.button#maxErrors(type='number' min=0 value=0)
                         .option
                             .label Search Size
                             input.button#pageSize(type='number' value=100)     
