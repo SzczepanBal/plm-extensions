@@ -1329,15 +1329,99 @@
         }
 
         ensureMBOMShortcutIcons(elemItem);
-
-        elemItem.off('click.custom-assembly-index').on('click.custom-assembly-index', function(e) {
-            e.stopPropagation();
-            e.preventDefault();
-            selectProcess($(this));
-        });
+        attachCustomMBOMItemSelection(elemItem);
 
         elemItem.addClass('selected');
         selectProcess(elemItem);
+    }
+
+    function findLinkedEBOMItemForMBOM(elemItem) {
+        if(!elemItem || elemItem.length === 0) return $();
+
+        let directEBOMLink = elemItem.attr('data-ebom') || elemItem.attr('data-link-ebom') || '';
+        let ebomRootLink = elemItem.attr('data-ebom-root') || '';
+        let mbomRootLink = elemItem.attr('data-root') || '';
+        let partNumber = elemItem.attr('data-part-number') || '';
+        let elemMatch = $();
+
+        $('#ebom .item').each(function() {
+            let elemEBOMItem = $(this);
+            let ebomItemLink = elemEBOMItem.attr('data-link') || '';
+            let ebomItemRoot = elemEBOMItem.attr('data-ebom-root') || elemEBOMItem.attr('data-root') || '';
+
+            if(!isBlank(directEBOMLink) &&
+                normalizePLMLink(directEBOMLink) === normalizePLMLink(ebomItemLink)) {
+                elemMatch = elemEBOMItem;
+                return false;
+            }
+
+            if(!isBlank(ebomRootLink) &&
+                normalizePLMLink(ebomRootLink) === normalizePLMLink(ebomItemRoot)) {
+                elemMatch = elemEBOMItem;
+                return false;
+            }
+
+            if(isBlank(ebomRootLink) &&
+                !isBlank(mbomRootLink) &&
+                normalizePLMLink(mbomRootLink) === normalizePLMLink(ebomItemRoot)) {
+                elemMatch = elemEBOMItem;
+                return false;
+            }
+        });
+
+        if(elemMatch.length > 0 || isBlank(partNumber)) return elemMatch;
+
+        $('#ebom .item').each(function() {
+            let elemEBOMItem = $(this);
+            if((elemEBOMItem.attr('data-part-number') || '') === partNumber) {
+                elemMatch = elemEBOMItem;
+                return false;
+            }
+        });
+
+        return elemMatch;
+    }
+
+    function selectCustomMBOMItem(elemItem) {
+        if(!elemItem || elemItem.length === 0) return;
+
+        if(elemItem.hasClass('process')) {
+            selectProcess(elemItem);
+            return;
+        }
+
+        let elemEBOMItem = findLinkedEBOMItemForMBOM(elemItem);
+        if(elemEBOMItem.length > 0) {
+            let wasSelected = elemEBOMItem.hasClass('selected');
+
+            $('.selected-target').removeClass('selected-target');
+            selectBOMItem(elemEBOMItem, false);
+
+            if(!wasSelected && elemItem.hasClass('selected')) {
+                elemItem.addClass('selected-target');
+            }
+            return;
+        }
+
+        if(elemItem.hasClass('leaf')) {
+            selectBOMItem(elemItem, false);
+            return;
+        }
+
+        selectProcess(elemItem);
+    }
+
+    function attachCustomMBOMItemSelection(elemItem) {
+        if(!elemItem || elemItem.length === 0) return;
+
+        // The stock renderer attaches both component and process handlers to
+        // non-leaf nodes. Keep a single handler so cross-selection is not
+        // immediately cleared by the process-selection handler.
+        elemItem.off('click').on('click.custom-mbom-selection', function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            selectCustomMBOMItem($(this));
+        });
     }
 
     function enableSubMBOMOperationTarget(elemItem) {
@@ -1347,13 +1431,7 @@
         ensureInlineSubMBOMContainer(elemItem);
 
         elemItem
-            .addClass('submbom-operation-target')
-            .off('click.custom-submbom-target')
-            .on('click.custom-submbom-target', function(e) {
-                e.stopPropagation();
-                e.preventDefault();
-                selectProcess($(this));
-            });
+            .addClass('submbom-operation-target');
     }
 
     function createAssemblyIndex() {
@@ -5478,6 +5556,7 @@
 
             if(bomType === 'mbom') {
                 enableSubMBOMOperationTarget(elemNode);
+                attachCustomMBOMItemSelection(elemNode);
             }
 
             decorateMBOMQuantityWithUnit(elemNode, resolvedNode, bomType);
