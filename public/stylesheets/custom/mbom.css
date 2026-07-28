@@ -69,6 +69,20 @@ body.mode-erp #erp {
     cursor: text;
 }
 
+#dialog-erp-sync {
+    bottom: auto;
+    height: 250px;
+    left: calc(50% - 330px);
+    right: auto;
+    top: calc(50% - 125px);
+    width: 660px;
+}
+
+#confirm-erp-sync {
+    float: unset;
+    margin: 0;
+}
+
 /* Custom MBOM layout: MBOM / EBOM / viewer = 40 / 30 / 30. */
 :root {
     --custom-details-mbom-share: 240px;

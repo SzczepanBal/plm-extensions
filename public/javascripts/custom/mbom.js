@@ -2140,8 +2140,10 @@
     }
 
     function isAssemblyIndexNode(node) {
-        if(!node || Number(node.level) === 0) return false;
+        if(!node) return false;
         if(node.isAssemblyIndex) return true;
+
+        // A directly opened assembly index is the MBOM root and has level 0.
         return hasAssemblyIndexTitle(node);
     }
 
@@ -3325,6 +3327,34 @@
         ['Moc/Wielkość', ['MOC'], '', true],
         ['Lifecycle', ['LIFECYCLE']]
     ];
+    const erpSubMBOMProductPropertyMappings = [
+        ['Materiał', ['MATERIAL']],
+        ['Masa', ['ITEM_WEIGHT']],
+        ['Opis', ['DESCRIPTION']],
+        ['Nazwa', ['DESCRIPTION', 'TITLE']],
+        ['Tytuł', ['TITLE']],
+        ['Tutuł', ['TITLE']],
+        ['Grupa produktowa', ['GRUPA_PRODUKTOWA']],
+        ['Nazwa urządzenia', ['NAZWA_URZDZENIA']],
+        ['Typ części', ['TYP_CZESCI']],
+        ['Rodzaj', ['RODZAJ']],
+        ['Wariant', ['WARIANT']],
+        ['Specyfikacja', ['SPECYFIKACJA']],
+        ['Producent', ['PRODUCENT']],
+        ['Szerokość', ['SZEROKOSC']],
+        ['Długość', ['DUGOSC']],
+        ['Wysokość/grubość', ['WYSOKOSC']],
+        ['Średnica', ['SREDNICA']],
+        ['Kolor', ['KOLOR']],
+        ['Powłoka', ['POWLOKA']],
+        ['Moc', ['MOC']],
+        ['Moc/Wielkość', ['MOC']],
+        ['Napięcie', ['NAPICIE']],
+        ['Prąd', ['PRD']],
+        ['Wydajność', ['WYDAJNO']],
+        ['Temperatura', ['TEMPERATURA']],
+        ['Gęstość', ['GSTO']]
+    ];
     const erpTechnologyOperationCodeFieldId = 'KOD_OPERACJI';
     const erpTechnologyOperationCodeCandidates = [
         erpTechnologyOperationCodeFieldId,
@@ -3443,14 +3473,20 @@
                 }
 
                 let alreadySynced = isERPTechnologySynced(detailsData);
+                let productRequired = needsERPSubMBOMProduct(
+                    elemItem,
+                    getMBOMPartFromElement(elemItem),
+                    detailsData
+                );
                 console.log('MBOM custom: ERP technology sub-MBOM sync state resolved', {
                     itemLink       : getERPTechnologyElementLink(elemItem),
                     expansionLink  : expansionLink,
                     descriptor     : getERPTechnologyDescriptor(elemItem),
-                    alreadySynced  : alreadySynced
+                    alreadySynced  : alreadySynced,
+                    productRequired: productRequired
                 });
 
-                return !alreadySynced;
+                return !alreadySynced || productRequired;
             }).catch(function(error) {
                 console.warn('MBOM custom: ERP technology discovery failed to inspect linked sub-MBOM, skipping expansion', {
                     itemLink      : getERPTechnologyElementLink(elemItem),
@@ -3653,6 +3689,120 @@
             indeks          : rawIndex,
             nazwa_czesci    : description || title || rawIndex,
             id_grupy        : groupId || erpAssemblyIndexProductGroupId,
+            jednostka_miary : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
+            wlasnosci       : properties
+        };
+    }
+
+    function getERPTechnologyLinkedValue(value) {
+        if(isBlank(value)) return '';
+        if(typeof value === 'string') return value.trim();
+        if(typeof value !== 'object') return '';
+
+        if(!isBlank(value.link)) return String(value.link).trim();
+        if(!isBlank(value.__self__)) return String(value.__self__).trim();
+        if(typeof value.value !== 'undefined') return getERPTechnologyLinkedValue(value.value);
+
+        return '';
+    }
+
+    function getERPTechnologyEBOMLink(elemItem, itemPart, detailsData) {
+        let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
+        let fieldIds = (typeof config !== 'undefined' && config.workspaceMBOM && config.workspaceMBOM.fieldIDs)
+            ? config.workspaceMBOM.fieldIDs
+            : {};
+        let candidateIds = [
+            fieldIds.ebom,
+            fieldIds.ebomRoot,
+            'EBOM',
+            'EBOM_ROOT'
+        ].filter(Boolean);
+
+        for(let fieldId of candidateIds) {
+            let sectionValue = getSectionFieldValue(sections, fieldId, '', 'link');
+            let linkedValue = getERPTechnologyLinkedValue(sectionValue);
+            if(!isBlank(linkedValue)) return linkedValue;
+
+            if(itemPart && itemPart.details && typeof itemPart.details[fieldId] !== 'undefined') {
+                linkedValue = getERPTechnologyLinkedValue(itemPart.details[fieldId]);
+                if(!isBlank(linkedValue)) return linkedValue;
+            }
+        }
+
+        if(itemPart) {
+            let partCandidates = [itemPart.ebom, itemPart.ebomRoot];
+            for(let partCandidate of partCandidates) {
+                let linkedValue = getERPTechnologyLinkedValue(partCandidate);
+                if(!isBlank(linkedValue)) return linkedValue;
+            }
+        }
+
+        if(elemItem && elemItem.length > 0) {
+            return elemItem.attr('data-ebom') ||
+                elemItem.attr('data-link-ebom') ||
+                elemItem.attr('data-ebom-root') ||
+                '';
+        }
+
+        return '';
+    }
+
+    function getERPTechnologyStoredPartIndex(itemPart, detailsData) {
+        let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
+        let fieldIds = (typeof config !== 'undefined' && config.workspaceMBOM && config.workspaceMBOM.fieldIDs)
+            ? config.workspaceMBOM.fieldIDs
+            : {};
+        let candidateIds = [
+            fieldIds.erpPartIndex || 'INDEKS_CZESCI',
+            'INDEKS_CZESCI',
+            'indeks_czesci'
+        ];
+        let partIndex = getERPTechnologySectionValue(sections, candidateIds, '');
+
+        if(isBlank(partIndex) && itemPart && itemPart.details) {
+            partIndex = getERPTechnologyPartDetailsValue(itemPart, candidateIds);
+        }
+
+        return isBlank(partIndex) ? '' : String(partIndex).trim();
+    }
+
+    function needsERPSubMBOMProduct(elemItem, itemPart, detailsData) {
+        if(!elemItem || elemItem.length === 0) return false;
+        if(isERPTechnologyMainRootItem(elemItem)) return false;
+
+        // Standalone sub-MBOMs cannot rely on an EBOM product having been
+        // synchronized first. A stored ERP part index proves it already exists.
+        return isBlank(getERPTechnologyEBOMLink(elemItem, itemPart, detailsData)) &&
+            isBlank(getERPTechnologyStoredPartIndex(itemPart, detailsData));
+    }
+
+    function buildERPSubMBOMProductPayload(elemItem, itemPart, detailsData) {
+        let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
+        let rawIndex = getERPTechnologySectionValue(sections, ['NUMBER'], '');
+        let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
+        let description = getERPTechnologySectionValue(sections, ['DESCRIPTION'], title);
+        let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], '');
+        let itemType = getERPTechnologySectionValue(sections, ['RODZAJ'], '');
+        let partName = String(itemType).trim().toUpperCase() === 'SUROWIEC'
+            ? title
+            : description;
+        let properties = [];
+
+        erpSubMBOMProductPropertyMappings.forEach(function(mapping) {
+            let value = getERPTechnologySectionValue(sections, mapping[1], '');
+            if(mapping[0] === 'Nazwa' && isBlank(value)) value = title;
+            if(mapping[0] === 'Opis' && isBlank(value)) value = description;
+            if(isBlank(value)) return;
+
+            let property = {};
+            property[mapping[0]] = truncateERPAssemblyIndexPropertyValue(String(value), 40);
+            properties.push(property);
+        });
+
+        return {
+            indeks          : rawIndex,
+            nazwa_czesci    : partName || title || rawIndex,
+            id_grupy        : groupId,
             jednostka_miary : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
             wlasnosci       : properties
         };
@@ -4089,6 +4239,15 @@
                 sortERPTechnologyStructure(payload);
 
                 let assemblyIndex = (elemItem && elemItem.hasClass('assembly-index')) || isAssemblyIndexNode(itemPart);
+                let subMBOMProductRequired = needsERPSubMBOMProduct(elemItem, itemPart, detailsData);
+                let productRequired = (assemblyIndex && !alreadySynced) || subMBOMProductRequired;
+                let productPayload = null;
+
+                if(productRequired) {
+                    productPayload = assemblyIndex
+                        ? buildERPAssemblyIndexProductPayload(elemItem, itemPart, detailsData)
+                        : buildERPSubMBOMProductPayload(elemItem, itemPart, detailsData);
+                }
 
                 return {
                     elemItem       : elemItem,
@@ -4097,7 +4256,8 @@
                     level          : getElementLevel(elemItem),
                     synced         : alreadySynced,
                     isAssemblyIndex: assemblyIndex,
-                    productPayload : assemblyIndex ? buildERPAssemblyIndexProductPayload(elemItem, itemPart, detailsData) : null,
+                    productRequired: productRequired,
+                    productPayload : productPayload,
                     payload        : payload
                 };
             });
@@ -4174,7 +4334,13 @@
                         return null;
                     }
 
-                    if(isERPTechnologySynced(detailsData)) {
+                    let productRequired = needsERPSubMBOMProduct(
+                        elemItem,
+                        getMBOMPartFromElement(elemItem),
+                        detailsData
+                    );
+
+                    if(isERPTechnologySynced(detailsData) && !productRequired) {
                         console.log('MBOM custom: skipping already synced sub-MBOM before loading its technology structure', {
                             link       : itemLink,
                             descriptor : getERPTechnologyDescriptor(elemItem),
@@ -4200,6 +4366,7 @@
                 filteredJobs = filteredJobs.filter(function(job) {
                     if(isERPTechnologyMainRootItem(job.elemItem)) return true;
                     if(job.isAssemblyIndex) return true;
+                    if(job.productRequired) return true;
                     return !job.synced;
                 });
 
@@ -4228,7 +4395,7 @@
             let previewItems = [];
 
             jobs.forEach(function(job) {
-                if(job.isAssemblyIndex && !job.synced) {
+                if(job.productRequired) {
                     previewItems.push({
                         order      : previewItems.length + 1,
                         callName   : 'add-product',
@@ -4423,8 +4590,8 @@
         };
     }
 
-    function ensureERPAssemblyIndexProduct(currentJob, testRun, results) {
-        if(!currentJob || !currentJob.isAssemblyIndex || currentJob.synced) {
+    function ensureERPProductPrerequisite(currentJob, testRun, results) {
+        if(!currentJob || !currentJob.productRequired) {
             return Promise.resolve(true);
         }
 
@@ -4443,7 +4610,7 @@
                 descriptor : currentJob.descriptor,
                 testRun    : testRun,
                 success    : false,
-                error      : 'Assembly index product payload is incomplete: ' + missingFields.join(', ')
+                error      : 'ERP product payload is incomplete: ' + missingFields.join(', ')
             });
             return Promise.resolve(false);
         }
@@ -4453,7 +4620,7 @@
             ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
             : erpTechnologyProxyBaseUrl + callName;
 
-        console.log('MBOM custom: sending assembly index ERP product prerequisite', {
+        console.log('MBOM custom: sending ERP product prerequisite', {
             testRun    : testRun,
             callName   : callName,
             indeks     : payload.indeks,
@@ -4498,27 +4665,151 @@
         });
     }
 
+    function ensureERPSyncProgressDialog() {
+        let elemDialog = $('#dialog-erp-sync');
+        if(elemDialog.length > 0) return elemDialog;
+
+        elemDialog = $('<div></div>')
+            .attr('id', 'dialog-erp-sync')
+            .addClass('dialog')
+            .appendTo('body');
+
+        $('<div></div>')
+            .addClass('dialog-header')
+            .text('ERP Technology Sync')
+            .appendTo(elemDialog);
+
+        let elemContent = $('<div></div>')
+            .addClass('dialog-content')
+            .appendTo(elemDialog);
+
+        function addProgressStep(id, label) {
+            let elemStep = $('<div></div>')
+                .attr('id', id)
+                .addClass('step')
+                .appendTo(elemContent);
+
+            $('<div></div>')
+                .addClass('step-label')
+                .text(label)
+                .appendTo(elemStep);
+
+            let elemProgress = $('<div></div>')
+                .addClass('step-progress')
+                .appendTo(elemStep);
+
+            $('<div></div>')
+                .attr('id', id + '-bar')
+                .addClass('step-bar')
+                .appendTo(elemProgress);
+
+            $('<div></div>')
+                .attr('id', id + '-counter')
+                .addClass('step-counter')
+                .appendTo(elemStep);
+        }
+
+        addProgressStep('erp-step-reading', 'Reading MBOM');
+        addProgressStep('erp-step-sending', 'Sending Technologies to ERP');
+
+        let elemFooter = $('<div></div>')
+            .addClass('dialog-footer')
+            .appendTo(elemDialog);
+
+        $('<div></div>')
+            .attr('id', 'confirm-erp-sync')
+            .addClass('button disabled')
+            .text('Close')
+            .click(function() {
+                if($(this).hasClass('disabled')) return;
+                elemDialog.hide();
+                $('#overlay').hide();
+            })
+            .appendTo(elemFooter);
+
+        return elemDialog;
+    }
+
+    function showERPSyncProgressDialog() {
+        let elemDialog = ensureERPSyncProgressDialog();
+
+        elemDialog.find('.dialog-header').text('ERP Technology Sync');
+        elemDialog.find('.step').removeClass('in-work');
+        elemDialog.find('.step-bar')
+            .addClass('transition-stopper')
+            .css('width', '0%')
+            .removeClass('transition-stopper');
+
+        $('#erp-step-reading').addClass('in-work');
+        $('#erp-step-reading-counter').text('Reading');
+        $('#erp-step-sending-counter').text('Waiting');
+        $('#confirm-erp-sync').addClass('disabled').removeClass('default');
+
+        $('#overlay').show();
+        elemDialog.show();
+    }
+
+    function startERPSyncSendingProgress(total) {
+        let count = Number(total) || 0;
+
+        $('#erp-step-reading').removeClass('in-work');
+        $('#erp-step-reading-bar').css('width', '100%');
+        $('#erp-step-reading-counter').text('Done');
+        $('#erp-step-sending').addClass('in-work');
+        $('#erp-step-sending-bar').css('width', '0%');
+        $('#erp-step-sending-counter').text('0 of ' + count);
+    }
+
+    function updateERPSyncSendingProgress(current, total) {
+        let done = Number(current) || 0;
+        let count = Number(total) || 0;
+        let progress = count > 0 ? Math.min(100, done * 100 / count) : 100;
+
+        $('#erp-step-sending-bar').css('width', progress + '%');
+        $('#erp-step-sending-counter').text(done + ' of ' + count);
+    }
+
+    function completeERPSyncProgressDialog(total, failed) {
+        let count = Number(total) || 0;
+
+        $('#erp-step-reading').removeClass('in-work');
+        $('#erp-step-reading-bar').css('width', '100%');
+        $('#erp-step-reading-counter').text('Done');
+        $('#erp-step-sending').removeClass('in-work');
+        $('#erp-step-sending-bar').css('width', '100%');
+        $('#erp-step-sending-counter').text(count + ' of ' + count);
+        $('#dialog-erp-sync .dialog-header').text(failed ? 'ERP Technology Sync Failed' : 'ERP Technology Sync Complete');
+        $('#confirm-erp-sync').removeClass('disabled').addClass('default');
+    }
+
     function syncERPTechnologies() {
         let elemButton = $('#sync-erp-technologies');
         if(elemButton.hasClass('disabled')) return;
         let testRun = isERPTechnologyTestRunEnabled();
+        let totalJobs = 0;
 
         elemButton.addClass('disabled').text('Syncing...');
+        showERPSyncProgressDialog();
         setERPStatusOutput(testRun ? 'Exporting ERP technology request JSON' : 'Syncing ERP technologies', {
             timestamp : new Date().toISOString(),
             testRun   : testRun
         }, false);
 
         collectERPTechnologyJobs().then(function(jobs) {
+            totalJobs = jobs.length;
+            startERPSyncSendingProgress(totalJobs);
+
             if(jobs.length === 0) {
                 setERPStatusOutput('No ERP technology payloads found', {
                     message : 'No process-based technology roots are available in the current MBOM.'
                 }, true);
+                completeERPSyncProgressDialog(totalJobs, true);
                 return;
             }
 
             let results = [];
             let chain = Promise.resolve();
+            let completedJobs = 0;
 
             jobs.forEach(function(job, index) {
                 chain = chain.then(function() {
@@ -4537,7 +4828,10 @@
                             return null;
                         }
 
-                        if(!isERPTechnologyMainRootItem(currentJob.elemItem) && currentJob.synced && !currentJob.isAssemblyIndex) {
+                        if(!isERPTechnologyMainRootItem(currentJob.elemItem) &&
+                            currentJob.synced &&
+                            !currentJob.isAssemblyIndex &&
+                            !currentJob.productRequired) {
                             console.log('MBOM custom: skipping ERP calls for already synced sub-MBOM item', {
                                 link       : currentJob.link,
                                 indeks     : currentJob.payload.indeks,
@@ -4547,9 +4841,9 @@
                             return null;
                         }
 
-                        return ensureERPAssemblyIndexProduct(currentJob, testRun, results).then(function(productReady) {
+                        return ensureERPProductPrerequisite(currentJob, testRun, results).then(function(productReady) {
                             if(!productReady) {
-                                console.warn('MBOM custom: skipping ERP technology because assembly index product prerequisite failed', {
+                                console.warn('MBOM custom: skipping ERP technology because its product prerequisite failed', {
                                     indeks     : currentJob.productPayload ? currentJob.productPayload.indeks : '',
                                     descriptor : currentJob.descriptor
                                 });
@@ -4613,6 +4907,9 @@
                             error      : String(error || '')
                         });
                     });
+                }).then(function() {
+                    completedJobs++;
+                    updateERPSyncSendingProgress(completedJobs, totalJobs);
                 });
             });
 
@@ -4623,12 +4920,17 @@
                     results.some(function(result) { return !result.success; }),
                     testRun
                 );
+                completeERPSyncProgressDialog(
+                    totalJobs,
+                    results.some(function(result) { return !result.success; })
+                );
             });
         }).catch(function(error) {
             console.warn('MBOM custom: ERP technology sync failed', error);
             setERPStatusOutput('ERP technology sync failed', {
                 error : String(error || '')
             }, true);
+            completeERPSyncProgressDialog(totalJobs, true);
         }).finally(function() {
             elemButton.removeClass('disabled').text('Sync Technology to ERP');
         });
