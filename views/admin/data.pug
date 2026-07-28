@@ -251,7 +251,7 @@ block body
                         .action.ws-type-6.no-select#release-as-in-vault
                             .action-title Release as in Vault
                             .action-details
-                                .description Release each item directly using PDM_ITEM_REVISION and the lifecycle action matching its current state
+                                .description Apply AES_STATE and AES_REVISION only to items in lifecycle state Unreleased. All other items are skipped.
 
                         .action.permission-attachments#import-attachments  
                             .action-title Import Files
@@ -383,8 +383,8 @@ block body
                             .label Dynamic requests count
                             .button.icon.icon-toggle-on.filled.toggle#auto-tune
                         .option
-                            .label Maximum Errors
-                            input.button#maxErrors(type='number' value=5)     
+                            .label Maximum Errors (0 = unlimited)
+                            input.button#maxErrors(type='number' min=0 value=0)
                         .option
                             .label Search Size
                             input.button#pageSize(type='number' value=100)     

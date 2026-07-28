@@ -465,12 +465,21 @@ function setLifecycleTransitionSelectors() {
     });
 
 }
-function getReleaseAsInVaultTransition(lifecycleState) {
+function isReleaseAsInVaultLifecycleState(lifecycleState) {
 
-    let transitionName = 'Production Revision';
+    return lifecycleState === 'Unreleased';
 
-    if(lifecycleState === 'Unreleased') transitionName = 'To Production';
-    else if(lifecycleState === 'Pre-Release') transitionName = 'Release to Production';
+}
+function getReleaseAsInVaultTransition(lifecycleState, aesState) {
+
+    if(!isReleaseAsInVaultLifecycleState(lifecycleState)) return null;
+
+    let transitionName = '';
+
+    if(aesState === 'SAP Released') transitionName = 'To SAP Released';
+    else if(aesState === 'Obsolete') transitionName = 'To Obsolete';
+
+    if(isBlank(transitionName)) return null;
 
     let transition = wsConfig.lifecycles.find(function(entry) {
         let names = [entry.name, entry.customLabel, entry.title];
@@ -1122,7 +1131,7 @@ function startProcessing() {
     options.testRun       = $('#test-run').hasClass('icon-toggle-on');
     options.requestsCount = Number($('#requestsCount').val()) || 5;
     options.autoTune      = $('#auto-tune').hasClass('icon-toggle-on');
-    options.maxErrors     = $('#maxErrors').val() || 10;
+    options.maxErrors     = Math.max(0, Number($('#maxErrors').val()) || 0);
     options.searchSize    = Number($('#pageSize').val()) || 100;
 
     if(options.requestsCount > maxRequestsCount) options.requestsCount = maxRequestsCount;
@@ -1133,10 +1142,13 @@ function startProcessing() {
     run.done         = 0;
     run.total        = -1;
     run.success      = 0;
+    run.skipped      = [];
     run.errors       = [];
     run.ids          = [];
     run.storage      = '';
     run.prev         = {};
+    run.startedAt    = null;
+    run.finishedAt   = null;
 
     run.params = {
         pageNo    : 0,
@@ -1202,9 +1214,15 @@ function getNextRecords() {
     run.params.pageNo = (options.mode === 'continue') ? (run.params.pageNo + 1) : 1;
     run.params.page   = run.params.pageNo;
 
-    if(run.errors.length === options.maxErrors) stopped = true;
+    if(hasReachedMaximumErrors()) {
+        addLogStoppedByErrors(run.errors);
+        endProcessing();
+        return;
+    }
 
     if(stopped) return;
+
+    if(run.startedAt === null) run.startedAt = Date.now();
 
     $.ajax({
         url     : run.url,
@@ -1585,24 +1603,37 @@ function genUpdateRequests(responses) {
 
         } else if(run.actionId === 'release-as-in-vault') {
 
-            let fieldId = 'PDM_ITEM_REVISION';
+            let fieldId = 'AES_REVISION';
             let revision = getSectionFieldValue(response.data.sections, fieldId, '');
+            let aesState = getSectionFieldValue(response.data.sections, 'AES_STATE', '');
             let lifecycleState = isBlank(response.data.lifecycle) ? '' : response.data.lifecycle.title;
-            let transition = getReleaseAsInVaultTransition(lifecycleState);
+            let transition = getReleaseAsInVaultTransition(lifecycleState, aesState);
 
             params.transition = transition;
             params.revision   = (typeof revision === 'string') ? revision.trim() : revision;
 
-            if(isBlank(params.revision)) {
+            if(!isReleaseAsInVaultLifecycleState(lifecycleState)) {
+                requests.push($.Deferred().resolve({
+                    skipped : true,
+                    message : 'Current lifecycle state is "' + lifecycleState + '"; only "Unreleased" items are processed',
+                    params  : params
+                }).promise());
+            } else if(isBlank(params.revision)) {
                 requests.push($.Deferred().resolve({
                     error   : true,
                     message : 'The Vault revision field (' + fieldId + ') is blank',
                     params  : params
                 }).promise());
+            } else if(!['SAP Released', 'Obsolete'].includes(aesState)) {
+                requests.push($.Deferred().resolve({
+                    error   : true,
+                    message : 'AES_STATE must be "SAP Released" or "Obsolete", but is "' + aesState + '"',
+                    params  : params
+                }).promise());
             } else if(isBlank(params.transition)) {
                 requests.push($.Deferred().resolve({
                     error   : true,
-                    message : 'No matching lifecycle action was found for state "' + lifecycleState + '"',
+                    message : 'No matching lifecycle action was found for AES state "' + aesState + '" and lifecycle state "' + lifecycleState + '"',
                     params  : params
                 }).promise());
             } else {
@@ -1654,7 +1685,12 @@ function genCompletionRequests(limit, responses) {
 
         for(let response of responses) {
 
-            if(response.url.indexOf('/import-attachment') === 0) {
+            if(!response) continue;
+
+            let responseUrl = (typeof response.url === 'string') ? response.url : '';
+            let responseParams = response.params || {};
+
+            if(responseUrl.indexOf('/import-attachment') === 0) {
 
                 if(response.error) {
 
@@ -1682,20 +1718,34 @@ function genCompletionRequests(limit, responses) {
 
                 }
 
-            } else if(record.link === response.params.link) {
+            } else if(record.link === responseParams.link) {
 
-                if(response.error) {
+                if(response.skipped) {
+
+                    success = false;
+
+                    run.skipped.push({
+                        link       : responseParams.link,
+                        descriptor : responseParams.descriptor
+                    });
+
+                    let link = genItemURL({ link : responseParams.link });
+
+                    addLogEntry('Skipped <a target="_blank" href="' + link + '">' + responseParams.descriptor + '</a>', 'notice');
+                    if(response.message !== '') addLogEntry('Reason: "' + response.message + '"', 'indent');
+
+                } else if(response.error) {
 
                     success = false;
 
                     run.errors.push({
-                        link       : response.params.link,
-                        descriptor : response.params.descriptor
+                        link       : responseParams.link,
+                        descriptor : responseParams.descriptor
                     });
 
-                    let link = genItemURL({ link : response.params.link });
+                    let link = genItemURL({ link : responseParams.link });
 
-                    addLogEntry('Error while processing  <a target="_blank" href="' + link + '">' + response.params.descriptor + '</a>', 'error');
+                    addLogEntry('Error while processing  <a target="_blank" href="' + link + '">' + responseParams.descriptor + '</a>', 'error');
                     if(response.message !== '') addLogEntry('Error message: "' + response.message + '"', 'indent');
 
                 }
@@ -1704,7 +1754,7 @@ function genCompletionRequests(limit, responses) {
 
         }
 
-        if(run.errors.length > options.maxErrors) {
+        if(hasReachedMaximumErrors()) {
             addLogStoppedByErrors(run.errors);
             endProcessing();
             return [];
@@ -1735,6 +1785,11 @@ function genCompletionRequests(limit, responses) {
     }
 
     return requests;
+
+}
+function hasReachedMaximumErrors() {
+
+    return (options.maxErrors > 0) && (run.errors.length >= options.maxErrors);
 
 }
 function getBOMRecords() {
@@ -1883,17 +1938,54 @@ function updateProgress(current) {
 
     let widthDone    = run.done * 100 / run.total;
     let widthCurrent = current * 100 / run.total;
+    let processingTime = getProcessingTime();
+    let progressText = 'Processed ' + run.done + ' of ' + run.total;
 
     $('#progress-done').css('width', widthDone + '%');
     $('#progress-current').css('width', widthCurrent + '%');
     $('#progress-current').css('left', widthDone + '%');
-    $('#progress-text').html('Processed ' + run.done + ' of ' + run.total);
+
+    if(processingTime > 0) progressText += ' | Elapsed ' + formatProcessingTime(processingTime);
+    if((processingTime > 0) && (run.done > 0)) progressText += ' | ' + formatProcessingTime(processingTime / run.done) + ' / item';
+
+    $('#progress-text').text(progressText);
+
+}
+function getProcessingTime() {
+
+    if(run.startedAt === null) return 0;
+
+    let endTime = (run.finishedAt === null) ? Date.now() : run.finishedAt;
+    return Math.max(0, endTime - run.startedAt);
+
+}
+function formatProcessingTime(milliseconds) {
+
+    let totalSeconds = milliseconds / 1000;
+
+    if(totalSeconds < 60) {
+        let decimals = (totalSeconds < 10) ? 1 : 0;
+        return totalSeconds.toFixed(decimals) + ' s';
+    }
+
+    let roundedSeconds = Math.round(totalSeconds);
+    let hours = Math.floor(roundedSeconds / 3600);
+    let minutes = Math.floor((roundedSeconds % 3600) / 60);
+    let seconds = roundedSeconds % 60;
+    let result = [];
+
+    if(hours > 0) result.push(hours + ' h');
+    if((hours > 0) || (minutes > 0)) result.push(minutes + ' min');
+    result.push(seconds + ' s');
+
+    return result.join(' ');
 
 }
 function endProcessing() {
 
     if(!run.active) return;
 
+    run.finishedAt = Date.now();
     run.active = false;
 
     $('#stop').removeClass('red');
@@ -1914,9 +2006,12 @@ function endProcessing() {
         let elemTable = $('<table></table>').appendTo($('#console-content'));
         
         insertLogSummaryRow(elemTable, 'Total items to process', run.total);
-        insertLogSummaryRow(elemTable, 'Processed items (success and failure)', run.done);
+        insertLogSummaryRow(elemTable, 'Processed items (success, skipped and failure)', run.done);
         insertLogSummaryRow(elemTable, 'Successful items', run.success);
+        insertLogSummaryRow(elemTable, 'Skipped items', run.skipped.length);
         insertLogSummaryRow(elemTable, 'Failed items', run.errors.length);
+        insertLogSummaryRow(elemTable, 'Total processing time', formatProcessingTime(getProcessingTime()));
+        insertLogSummaryRow(elemTable, 'Effective time per processed item', (run.done > 0) ? formatProcessingTime(getProcessingTime() / run.done) : '--');
 
         $('<div></div>').appendTo($('#console-content')).addClass('console-spacer');
 
