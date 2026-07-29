@@ -1626,8 +1626,8 @@ function genUpdateRequests(responses) {
                 }).promise());
             } else if(!['SAP Released', 'Obsolete'].includes(aesState)) {
                 requests.push($.Deferred().resolve({
-                    error   : true,
-                    message : 'AES_STATE must be "SAP Released" or "Obsolete", but is "' + aesState + '"',
+                    skipped : true,
+                    message : 'AES_STATE is "' + aesState + '"; only "SAP Released" or "Obsolete" items are processed',
                     params  : params
                 }).promise());
             } else if(isBlank(params.transition)) {
