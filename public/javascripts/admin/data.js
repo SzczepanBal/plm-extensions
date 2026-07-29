@@ -498,11 +498,11 @@ function getReleaseAsInVaultTransition(lifecycleState, aesState) {
     return (typeof transition === 'undefined') ? null : transition.__self__;
 
 }
-function releaseAsInVault(params, aesState) {
+function releaseAsInVault(params) {
 
     return $.post('/plm/lifecycle-transition', params).then(function(response) {
 
-        if(response.error || (aesState !== 'SAP Released')) return response;
+        if(response.error) return response;
 
         params.fields.push({
             fieldId : 'LATEST_RELEASED_VERSION',
@@ -1653,7 +1653,7 @@ function genUpdateRequests(responses) {
                     params  : params
                 }).promise());
             } else {
-                requests.push(releaseAsInVault(params, aesState));
+                requests.push(releaseAsInVault(params));
             }
                 
         } else if(run.actionId === 'delete-attachments') {
