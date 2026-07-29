@@ -2722,6 +2722,7 @@
         mergeParentEdgeIds(elemItem.children('.item-head').first(), directChildEdgeIds);
 
         updateMBOMNumbers();
+        if(typeof setStatusBar === 'function') setStatusBar();
     }
 
     function toggleInlineSubMBOM(elemItem) {
@@ -2761,6 +2762,7 @@
                 childCount : elemExistingBOM.children('.item').length
             });
 
+            if(typeof setStatusBar === 'function') setStatusBar();
             return Promise.resolve(true);
         }
 
