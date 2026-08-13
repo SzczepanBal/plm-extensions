@@ -253,6 +253,21 @@ block body
                             .action-details
                                 .description Apply AES_STATE and AES_REVISION only to items in lifecycle state Unreleased with AES_STATE set to SAP Released or Obsolete. After the transition, LATEST_RELEASED_VERSION is set to the current item for both SAP Released and Obsolete. All other items are skipped.
 
+                        .action.ws-type-6.no-select#repair-production-revision
+                            .action-title Repair Production Revision 10
+                            .action-details
+                                .description For a selected historical item whose current release letter is exactly "[REV::]", find its working version, perform the Production Revision lifecycle transition on that working version, and set the release letter to 10. All other selected items are skipped.
+
+                        .action.ws-type-6.no-select#write-version-number
+                            .action-title Experimental: Set versionNumber to 10
+                            .action-details
+                                .description Attempt a multipart itemDetail PUT to each selected version's item resource with versionNumber set to 10, regardless of its current release letter, then read the version resource back to verify the result.
+
+                        .action.ws-type-6.no-select#set-release-letter-only
+                            .action-title Experimental: Set Release Letter Only
+                            .action-details
+                                .description For selected working items, read AES_REVISION and send it as dmsVersionItem/release directly to the v1 item resource. This test does not call a lifecycle transition and does not modify versionNumber. The item is read back afterward.
+
                         .action.permission-attachments#import-attachments  
                             .action-title Import Files
                             .action-details   

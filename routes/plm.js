@@ -4455,6 +4455,206 @@ router.get('/workflow-history', function(req, res, next) {
 });
 
 
+/* ----- EXPERIMENTAL: WRITE RELEASE LETTER WITHOUT LIFECYCLE TRANSITION ----- */
+router.post('/release-letter-only', function(req, res, next) {
+
+    console.log(' ');
+    console.log('  /release-letter-only (EXPERIMENTAL)');
+    console.log(' --------------------------------------------');
+    console.log('  req.body.link     = ' + req.body.link);
+    console.log('  req.body.revision = ' + req.body.revision);
+    console.log('  lifecycle transition = NONE');
+    console.log('  versionNumber update  = NONE');
+    console.log();
+
+    let itemLink = req.body.link || '';
+    let revision = (typeof req.body.revision === 'undefined') ? '' : String(req.body.revision).trim();
+    let itemMatch = itemLink.match(/^\/api\/v3\/workspaces\/(\d+)\/items\/(\d+)$/);
+
+    if((itemMatch === null) || (revision === '')) {
+        sendResponse(req, res, {
+            status : 400,
+            data   : { message : 'A valid working-item link and a nonblank AES_REVISION value are required' }
+        }, true);
+        return;
+    }
+
+    let wsId      = itemMatch[1];
+    let dmsId     = itemMatch[2];
+    let itemURL   = getTenantLink(req) + itemLink;
+    let releaseURL = getTenantLink(req) + '/api/rest/v1/workspaces/' + wsId + '/items/' + dmsId;
+    let headers   = getCustomHeaders(req);
+    let xmlRelease = revision
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+    let body = '<dmsVersionItem><release>' + xmlRelease + '</release></dmsVersionItem>';
+
+    headers['Content-Type'] = 'application/xml';
+
+    axios.put(releaseURL, body, { headers : headers }).then(function() {
+        let readHeaders = getCustomHeaders(req);
+        readHeaders.Accept = 'application/json';
+        return axios.get(itemURL, { headers : readHeaders });
+    }).then(function(response) {
+        sendResponse(req, res, response, false);
+    }).catch(function(error) {
+        let errorResponse = error.response;
+        let errorStatus   = error.status || 500;
+        let errorDetails  = error.message || 'The release-only item PUT failed';
+
+        if(typeof errorResponse !== 'undefined') {
+            errorStatus = errorResponse.status || errorStatus;
+
+            if(typeof errorResponse.data === 'string') {
+                if(errorResponse.data.trim() !== '') errorDetails = errorResponse.data;
+            } else if((typeof errorResponse.data !== 'undefined') && (errorResponse.data !== null)) {
+                try {
+                    errorDetails = JSON.stringify(errorResponse.data);
+                } catch(serializationError) {
+                    errorDetails = String(errorResponse.data);
+                }
+            } else if(typeof errorResponse.statusText === 'string') {
+                if(errorResponse.statusText.trim() !== '') errorDetails = errorResponse.statusText;
+            }
+        }
+
+        errorResponse = {
+            status  : errorStatus,
+            message : errorDetails,
+            data    : { message : errorDetails }
+        };
+
+        console.error(' EXPERIMENTAL RELEASE-ONLY WRITE FAILED');
+        console.error(' URL');
+        console.error(' ' + releaseURL);
+        console.error(' STATUS');
+        console.error(' ' + errorStatus);
+        console.error(' ERROR');
+        console.error(errorDetails);
+
+        sendResponse(req, res, errorResponse, true);
+    });
+
+});
+
+
+/* ----- EXPERIMENTAL: WRITE VERSION NUMBER ----- */
+router.post('/version-number', function(req, res, next) {
+
+    console.log(' ');
+    console.log('  /version-number (EXPERIMENTAL)');
+    console.log(' --------------------------------------------');
+    console.log('  req.body.versionLink   = ' + req.body.versionLink);
+    console.log('  req.body.itemLink      = ' + req.body.itemLink);
+    console.log('  req.body.versionNumber = ' + req.body.versionNumber);
+    console.log();
+
+    let versionLink   = req.body.versionLink || '';
+    let itemLink      = req.body.itemLink || '';
+    let versionNumber = Number(req.body.versionNumber);
+    let versionMatch  = versionLink.match(/^\/api\/v3\/workspaces\/(\d+)\/items\/(\d+)\/versions\/(\d+)$/);
+    let itemMatch     = itemLink.match(/^\/api\/v3\/workspaces\/(\d+)\/items\/(\d+)$/);
+    let validLinks    = (versionMatch !== null) && (itemMatch !== null)
+                     && (versionMatch[1] === itemMatch[1])
+                     && (versionMatch[3] === itemMatch[2]);
+
+    if(!validLinks || !Number.isInteger(versionNumber)) {
+        sendResponse(req, res, {
+            status : 400,
+            data   : { message : 'Matching item/version resource links and an integer versionNumber are required' }
+        }, true);
+        return;
+    }
+
+    let versionURL = getTenantLink(req) + versionLink;
+    let itemURL    = getTenantLink(req) + itemLink;
+    let headers    = getCustomHeaders(req);
+
+    headers.Accept = 'application/json';
+
+    axios.get(itemURL, { headers : headers }).then(function(response) {
+
+        let itemData = response.data;
+        let formData = new FormData();
+
+        itemData.versionNumber = versionNumber;
+
+        formData.append('itemDetail', JSON.stringify(itemData), {
+            filename    : 'blob',
+            contentType : 'application/json'
+        });
+
+        let putHeaders = Object.assign(getCustomHeaders(req), formData.getHeaders());
+            putHeaders.Accept = 'application/json';
+
+        return axios.put(itemURL, formData, { headers : putHeaders });
+
+    }).then(function() {
+        return axios.get(versionURL, { headers : headers });
+    }).then(function(response) {
+
+        if(response.data.versionNumber !== versionNumber) {
+            sendResponse(req, res, {
+                status : 409,
+                data   : {
+                    message : 'Fusion Manage accepted the PUT but read-back returned versionNumber ' + response.data.versionNumber + ' instead of ' + versionNumber
+                }
+            }, true);
+        } else {
+            sendResponse(req, res, response, false);
+        }
+
+    }).catch(function(error) {
+        let errorResponse = error.response;
+
+        if(typeof errorResponse === 'undefined') {
+            errorResponse = {
+                message : error.message,
+                data    : error.message
+            };
+        }
+
+        console.error(' EXPERIMENTAL VERSION NUMBER WRITE FAILED');
+        console.error(' URL    : ' + itemURL);
+        console.error(' STATUS : ' + (errorResponse.status || 'unknown'));
+        console.error(' ERROR  : ', errorResponse.data || errorResponse.message || error);
+
+        sendResponse(req, res, errorResponse, true);
+    });
+
+});
+
+
+/* ----- GET AVAILABLE ITEM LIFECYCLE TRANSITIONS ----- */
+router.get('/lifecycle-transitions', function(req, res, next) {
+
+    console.log(' ');
+    console.log('  /lifecycle-transitions');
+    console.log(' --------------------------------------------');
+    console.log('  req.query.wsId  = ' + req.query.wsId);
+    console.log('  req.query.dmsId = ' + req.query.dmsId);
+    console.log('  req.query.link  = ' + req.query.link);
+    console.log();
+
+    let wsId    = (typeof req.query.wsId  !== 'undefined') ? req.query.wsId  : req.query.link.split('/')[4];
+    let dmsId   = (typeof req.query.dmsId !== 'undefined') ? req.query.dmsId : req.query.link.split('/')[6];
+    let url     = req.app.locals.tenantLink + '/api/rest/v1/workspaces/' + wsId + '/items/' + dmsId + '/lifecycles/transitions';
+    let headers = getCustomHeaders(req);
+
+    headers.Accept = 'application/json';
+
+    axios.get(url, { headers : headers }).then(function(response) {
+        sendResponse(req, res, response, false);
+    }).catch(function(error) {
+        sendResponse(req, res, error.response, true);
+    });
+
+});
+
+
 /* ----- PERFORM LIFECYCLE TRANSITION ----- */
 router.post('/lifecycle-transition', function(req, res, next) {
     
@@ -4483,7 +4683,21 @@ router.post('/lifecycle-transition', function(req, res, next) {
     }).then(function(response) {
         sendResponse(req, res, response, false);
     }).catch(function(error) {
-        sendResponse(req, res, error.response, true);
+        let errorResponse = error.response;
+
+        if(typeof errorResponse === 'undefined') {
+            errorResponse = {
+                message : error.message,
+                data    : error.message
+            };
+        }
+
+        console.error(' LIFECYCLE TRANSITION FAILED');
+        console.error(' URL    : ' + url);
+        console.error(' STATUS : ' + (errorResponse.status || 'unknown'));
+        console.error(' ERROR  : ', errorResponse.data || errorResponse.message || error);
+
+        sendResponse(req, res, errorResponse, true);
     });
     
 });

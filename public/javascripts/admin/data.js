@@ -481,6 +481,11 @@ function getReleaseAsInVaultTransition(lifecycleState, aesState) {
 
     if(isBlank(transitionName)) return null;
 
+    return getLifecycleTransitionByName(transitionName, lifecycleState);
+
+}
+function getLifecycleTransitionByName(transitionName, lifecycleState) {
+
     let transition = wsConfig.lifecycles.find(function(entry) {
         let names = [entry.name, entry.customLabel, entry.title];
         let matchesName = names.includes(transitionName);
@@ -1330,7 +1335,7 @@ function processNextRecords() {
 
         let updateRequests = genUpdateRequests(responses);
 
-        Promise.all(updateRequests).then(function(responsesUpdate) {
+        return Promise.all(updateRequests).then(function(responsesUpdate) {
             
             run.done += limit;
             
@@ -1344,7 +1349,7 @@ function processNextRecords() {
                 if(run.done === run.total) options.autoTune = false;
             }
 
-            Promise.all(completionRequests).then(function() {
+            return Promise.all(completionRequests).then(function() {
 
                 if(stopped) return;
 
@@ -1385,7 +1390,331 @@ function processNextRecords() {
 
         });
 
+    }).catch(function(error) {
+        logUnexpectedProcessingError(error);
     });
+
+}
+function resolveRequestFailure(request, params, url) {
+
+    return request.then(null, function(error) {
+        return {
+            error   : true,
+            message : getProcessingErrorMessage(error),
+            params  : params,
+            status  : error.status || '',
+            url     : url
+        };
+    });
+
+}
+function performProductionRevision(params) {
+
+    let selectedLink = params.link;
+    let request = resolveRequestFailure(
+        $.get('/plm/versions', { link : selectedLink }),
+        params,
+        '/plm/versions'
+    );
+
+    return request.then(function(response) {
+
+        if(response.error) return logProductionRevisionError(response, params);
+
+        let versions = response.data.versions || [];
+        let workingVersion = versions.find(function(entry) {
+            return (entry.workingVersion === true)
+                || (!isBlank(entry.item) && (entry.item.workingVersion === true));
+        });
+
+        // Fusion Manage returns the working version first. Other applications
+        // in this project use the same fallback when no explicit flag exists.
+        if(isBlank(workingVersion)) workingVersion = versions[0];
+
+        if(isBlank(workingVersion) || isBlank(workingVersion.item) || isBlank(workingVersion.item.link)) {
+            return logProductionRevisionError({
+                error   : true,
+                message : 'The versions API did not return a working-version item link',
+                params  : params,
+                url     : '/plm/versions'
+            }, params);
+        }
+
+        let workingLifecycleState = isBlank(workingVersion.lifecycle)
+            ? params.lifecycleState
+            : workingVersion.lifecycle.title;
+        let workingParams = Object.assign({}, params, {
+            link         : workingVersion.item.link,
+            selectedLink : selectedLink,
+            lifecycleState : workingLifecycleState,
+            transition   : getLifecycleTransitionByName('Production Revision', workingLifecycleState)
+        });
+
+        if(isBlank(workingParams.transition)) {
+            return logProductionRevisionError({
+                error   : true,
+                message : 'The workspace configuration does not contain the "Production Revision" transition from lifecycle state "' + workingLifecycleState + '"',
+                params  : workingParams
+            }, workingParams);
+        }
+
+        addLogEntry('Using Production Revision', 'notice');
+        addLogEntry('Selected version: ' + selectedLink, 'indent');
+        addLogEntry('Working version: ' + workingParams.link, 'indent');
+        addLogEntry('Release letter: 10', 'indent');
+
+        return resolveRequestFailure(
+            $.post('/plm/lifecycle-transition', workingParams),
+            workingParams,
+            '/plm/lifecycle-transition'
+        ).then(function(response) {
+            return logProductionRevisionError(response, workingParams);
+        });
+
+    });
+
+}
+function logProductionRevisionError(response, params) {
+
+    // Do not rely on parameters echoed by the server when associating the
+    // response with the item being processed.
+    response.params = params;
+
+    if(response.error) {
+        let message = getResponseErrorMessage(response);
+        let link    = genItemURL({ link : params.selectedLink || params.link });
+
+        addLogEntry('Production Revision failed for <a target="_blank" href="' + link + '">' + params.descriptor + '</a>', 'error');
+        addLogEntry('Error message:', 'indent');
+        addWrappedLogEntries(message, 'indent');
+        response.errorLogged = true;
+    }
+
+    return response;
+
+}
+function addWrappedLogEntries(message, type) {
+
+    let remaining = String(message).replace(/\s+/g, ' ').trim();
+    let maxLength = 52;
+
+    while(remaining.length > maxLength) {
+        let splitAt = remaining.lastIndexOf(' ', maxLength);
+
+        if(splitAt < 1) splitAt = maxLength;
+
+        addLogEntry(remaining.substring(0, splitAt), type);
+        remaining = remaining.substring(splitAt).trim();
+    }
+
+    if(remaining !== '') addLogEntry(remaining, type);
+
+}
+function findLifecycleTransitionByName(value, transitionName) {
+
+    if(isBlank(value)) return null;
+
+    if(Array.isArray(value)) {
+        for(let entry of value) {
+            let transition = findLifecycleTransitionByName(entry, transitionName);
+            if(!isBlank(transition)) return transition;
+        }
+        return null;
+    }
+
+    if(typeof value !== 'object') return null;
+
+    let names = [value.name, value.shortName, value.title, value.customLabel, value.label];
+
+    if(names.includes(transitionName)) {
+        let link = value.__self__ || value.link;
+        let id   = value.transitionID || value.transitionId || value.id;
+
+        if(!isBlank(link)) return String(link);
+        if(!isBlank(id  )) return String(id);
+    }
+
+    for(let property of Object.keys(value)) {
+        let transition = findLifecycleTransitionByName(value[property], transitionName);
+        if(!isBlank(transition)) return transition;
+    }
+
+    return null;
+
+}
+function performReleaseLetterOnly(params) {
+
+    addLogEntry('Experimental release-only item PUT', 'notice');
+    addLogEntry('Current release: "' + params.currentRelease + '"', 'indent');
+    addLogEntry('AES_REVISION value: "' + params.revision + '"', 'indent');
+    addLogEntry('Lifecycle transition: none', 'indent');
+    addLogEntry('versionNumber update: none', 'indent');
+
+    return resolveRequestFailure(
+        $.post('/plm/release-letter-only', params),
+        params,
+        '/plm/release-letter-only'
+    ).then(function(response) {
+
+        response.params = params;
+
+        if(response.error) {
+            let message = getResponseErrorMessage(response);
+            let link    = genItemURL({ link : params.link });
+
+            addLogEntry('Release-only test failed for <a target="_blank" href="' + link + '">' + params.descriptor + '</a>', 'error');
+            addLogEntry('HTTP status: ' + (isBlank(response.status) ? 'unknown' : response.status), 'indent');
+            addLogEntry('Error message:', 'indent');
+            addWrappedLogEntries(message, 'indent');
+            response.errorLogged = true;
+            return response;
+        }
+
+        let storedRelease = isBlank(response.data.version) ? '' : response.data.version;
+
+        addLogEntry('Release-only PUT was accepted', 'success');
+        addLogEntry('Release after read-back: "' + storedRelease + '"', 'indent');
+
+        return response;
+
+    });
+
+}
+function performVersionNumberWrite(params) {
+
+    let request = resolveRequestFailure(
+        $.get('/plm/versions', { link : params.link }),
+        params,
+        '/plm/versions'
+    );
+
+    return request.then(function(response) {
+
+        if(response.error) return logVersionNumberWriteError(response, params);
+
+        let versions = response.data.versions || [];
+        let version  = versions.find(function(entry) {
+            return !isBlank(entry.item) && (entry.item.link === params.link);
+        });
+
+        if(isBlank(version) || isBlank(version.__self__) || isBlank(version.item) || isBlank(version.item.link)) {
+            return logVersionNumberWriteError({
+                error   : true,
+                message : 'The versions API did not return the selected item version with version and item resource links',
+                params  : params,
+                url     : '/plm/versions'
+            }, params);
+        }
+
+        params.versionLink   = version.__self__;
+        params.itemLink      = version.item.link;
+        params.versionNumber = 10;
+
+        addLogEntry('Experimental multipart versionNumber update', 'notice');
+        addLogEntry('Item resource: ' + params.itemLink, 'indent');
+        addLogEntry('Target versionNumber: 10', 'indent');
+
+        return resolveRequestFailure(
+            $.post('/plm/version-number', params),
+            params,
+            '/plm/version-number'
+        ).then(function(response) {
+
+            response.params = params;
+
+            if(response.error) return logVersionNumberWriteError(response, params);
+
+            let storedVersionNumber = response.data.versionNumber;
+            let storedRelease       = isBlank(response.data.item) ? '' : response.data.item.version;
+
+            addLogEntry('Verified versionNumber: ' + storedVersionNumber, 'success');
+            addLogEntry('Displayed release: "' + storedRelease + '"', 'indent');
+
+            return response;
+
+        });
+
+    });
+
+}
+function logVersionNumberWriteError(response, params) {
+
+    response.params = params;
+
+    if(response.error) {
+        let message = getResponseErrorMessage(response);
+        let link    = genItemURL({ link : params.link });
+
+        addLogEntry('Experimental versionNumber write failed', 'error');
+        addLogEntry('Item: <a target="_blank" href="' + link + '">' + params.descriptor + '</a>', 'indent');
+        addLogEntry('Error message:', 'indent');
+        addWrappedLogEntries(message, 'indent');
+        response.errorLogged = true;
+    }
+
+    return response;
+
+}
+function getResponseErrorMessage(response) {
+
+    let message = response.message;
+
+    if(isBlank(message) && (typeof response.data === 'string')) message = response.data;
+    if(isBlank(message) && !isBlank(response.data) && (typeof response.data.message === 'string')) message = response.data.message;
+    if(isBlank(message) && !isBlank(response.data) && (typeof response.data.error === 'string')) message = response.data.error;
+    if(isBlank(message) && !isBlank(response.data) && (typeof response.data.detail === 'string')) message = response.data.detail;
+    if(isBlank(message) && !isBlank(response.data) && (typeof response.data === 'object')) {
+        try {
+            message = JSON.stringify(response.data);
+        } catch(error) {
+            message = String(response.data);
+        }
+    }
+    if(isBlank(message)) message = 'Request failed';
+    if(!isBlank(response.status)) message += ' (HTTP ' + response.status + ')';
+
+    return String(message).substring(0, 1000);
+
+}
+function getProcessingErrorMessage(error) {
+
+    if(isBlank(error)) return 'Unknown request error';
+
+    let response = error.responseJSON;
+    let message  = '';
+
+    if(!isBlank(response)) {
+        if(typeof response.message === 'string') message = response.message;
+        else if(!isBlank(response.data) && (typeof response.data.message === 'string')) message = response.data.message;
+    }
+
+    if(isBlank(message) && (typeof error.responseText === 'string')) message = error.responseText;
+    if(isBlank(message) && (typeof error.statusText   === 'string')) message = error.statusText;
+    if(isBlank(message) && (typeof error.message      === 'string')) message = error.message;
+    if(isBlank(message)) message = 'Request failed';
+
+    if(!isBlank(error.status)) message += ' (HTTP ' + error.status + ')';
+
+    return message.substring(0, 1000);
+
+}
+function logUnexpectedProcessingError(error) {
+
+    let message = getProcessingErrorMessage(error);
+    let record  = (records === null) ? null : records[0];
+
+    addLogEntry('Processing stopped because of an unexpected error', 'error');
+    addLogEntry('Error message:', 'indent');
+    addWrappedLogEntries(message, 'indent');
+
+    if(!isBlank(record)) {
+        run.errors.push({
+            link       : record.link,
+            descriptor : record.descriptor
+        });
+    }
+
+    endProcessing();
 
 }
 function genRequests(limit) {
@@ -1564,6 +1893,18 @@ function genRequests(limit) {
 
                 requests.push($.get('/plm/details', params));
 
+            } else if(run.actionId === 'repair-production-revision') {
+
+                requests.push(resolveRequestFailure($.get('/plm/details', params), params, '/plm/details'));
+
+            } else if(run.actionId === 'write-version-number') {
+
+                requests.push(resolveRequestFailure($.get('/plm/details', params), params, '/plm/details'));
+
+            } else if(run.actionId === 'set-release-letter-only') {
+
+                requests.push(resolveRequestFailure($.get('/plm/details', params), params, '/plm/details'));
+
             } else if(run.actionId === 'run-script') {
 
                 params.script = $('#select-run-script').val();
@@ -1597,6 +1938,11 @@ function genUpdateRequests(responses) {
     let requests = [];
 
     for(let response of responses) {
+
+        if(response.error) {
+            requests.push($.Deferred().resolve(response).promise());
+            continue;
+        }
 
         let params = {
             link       : response.params.link,
@@ -1655,7 +2001,55 @@ function genUpdateRequests(responses) {
             } else {
                 requests.push(releaseAsInVault(params));
             }
-                
+
+        } else if(run.actionId === 'repair-production-revision') {
+
+            let currentRevision = isBlank(response.data.version) ? '' : String(response.data.version).trim();
+            let lifecycleState  = isBlank(response.data.lifecycle) ? '' : response.data.lifecycle.title;
+
+            params.lifecycleState = lifecycleState;
+            params.revision       = '10';
+
+            if(currentRevision !== '[REV::]') {
+                requests.push($.Deferred().resolve({
+                    skipped : true,
+                    message : 'Current release letter is "' + currentRevision + '"; only items with release letter "[REV::]" are processed',
+                    params  : params
+                }).promise());
+            } else {
+                requests.push(performProductionRevision(params));
+            }
+
+        } else if(run.actionId === 'write-version-number') {
+
+            requests.push(performVersionNumberWrite(params));
+
+        } else if(run.actionId === 'set-release-letter-only') {
+
+            let fieldId        = 'AES_REVISION';
+            let revision       = getSectionFieldValue(response.data.sections, fieldId, '');
+            let currentRelease = isBlank(response.data.version) ? '' : String(response.data.version).trim();
+            let isWorking      = (response.data.workingVersion === true) || (currentRelease === '[REV:w]');
+
+            params.revision       = (typeof revision === 'string') ? revision.trim() : revision;
+            params.currentRelease = currentRelease;
+
+            if(!isWorking) {
+                requests.push($.Deferred().resolve({
+                    skipped : true,
+                    message : 'Selected item is not a working version (current release is "' + currentRelease + '")',
+                    params  : params
+                }).promise());
+            } else if(isBlank(params.revision)) {
+                requests.push($.Deferred().resolve({
+                    error   : true,
+                    message : 'The ' + fieldId + ' field is blank on the working item',
+                    params  : params
+                }).promise());
+            } else {
+                requests.push(performReleaseLetterOnly(params));
+            }
+
         } else if(run.actionId === 'delete-attachments') {
 
             if(response.data.length > 0) {
@@ -1761,8 +2155,11 @@ function genCompletionRequests(limit, responses) {
 
                     let link = genItemURL({ link : responseParams.link });
 
-                    addLogEntry('Error while processing  <a target="_blank" href="' + link + '">' + responseParams.descriptor + '</a>', 'error');
-                    if(response.message !== '') addLogEntry('Error message: "' + response.message + '"', 'indent');
+                    if(!response.errorLogged) {
+                        addLogEntry('Error while processing  <a target="_blank" href="' + link + '">' + responseParams.descriptor + '</a>', 'error');
+                        addLogEntry('Error message:', 'indent');
+                        addWrappedLogEntries(getResponseErrorMessage(response), 'indent');
+                    }
 
                 }
 
