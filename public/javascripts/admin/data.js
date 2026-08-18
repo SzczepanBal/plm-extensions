@@ -1591,8 +1591,8 @@ function addERPProperty(properties, sections, fieldId, propertyName, includeWhen
 const erpPropertyMappings = [
     ['MATERIAL'    , 'Materiał'],
     ['ITEM_WEIGHT' , 'Masa'],
-    ['DESCRIPTION' , 'Opis'],
-    ['DESCRIPTION'       , 'Nazwa'],
+    ['OPIS' , 'Opis'],
+    ['OPIS'       , 'Nazwa'],
     ['TITLE'       , 'Tytuł'],
     ['TITLE'       , 'Tutuł'],
     ['GRUPA_PRODUKTOWA', 'Grupa produktowa'],
@@ -1692,7 +1692,7 @@ function buildERPSyncPayload(details, erpCallName) {
     let properties = [];
     let payload = {};
     let itemType = getERPFieldValue(sections, 'RODZAJ');
-    let partNameFieldId = (String(itemType).trim().toUpperCase() === 'SUROWIEC') ? 'TITLE' : 'DESCRIPTION';
+    let partNameFieldId = (String(itemType).trim().toUpperCase() === 'SUROWIEC') ? 'TITLE' : 'OPIS';
 
     for(let mapping of erpPropertyMappings) {
         addERPProperty(properties, sections, mapping[0], mapping[1]);
@@ -1819,7 +1819,7 @@ function genUpdateRequests(responses) {
             let missingFields = [];
 
             if(isBlank(payload.indeks))       missingFields.push('NUMBER -> indeks');
-            if(isBlank(payload.nazwa_czesci)) missingFields.push('DESCRIPTION -> nazwa_czesci');
+            if(isBlank(payload.nazwa_czesci)) missingFields.push('OPIS -> nazwa_czesci');
             if(isBlank(payload.id_grupy))     missingFields.push('GRUPA_PRODUKTOWA -> id_grupy');
 
             if(missingFields.length > 0) {

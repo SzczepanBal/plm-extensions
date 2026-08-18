@@ -420,7 +420,16 @@ select#workspace {
     top : unset;
 }
 #console-content > div {
+    flex-shrink : 0;
     overflow : visible !important;
+}
+#console-content > .console-text {
+    height        : auto;
+    line-height   : 18px;
+    min-height    : 18px;
+    white-space   : normal;
+    overflow-wrap : anywhere;
+    word-break    : break-word;
 }
 .console-text.red {
     white-space : normal;
@@ -437,6 +446,7 @@ select#workspace {
     height     : 8px !important;
 }
 #console table {
+    flex-shrink : 0;
     width : 440px;
 }
 #console td {
