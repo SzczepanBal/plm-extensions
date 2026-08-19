@@ -17,6 +17,7 @@
     };
     let addProcessWorkspaceItemsPromise = null;
     let addProcessWorkspaceItemsCache = [];
+    let rawMaterialSearchPromises = {};
     let directAssemblyIndexEditor = false;
 
     function normalizeComparisonValue(value) {
@@ -58,8 +59,8 @@
         for(let candidate of weightCandidates) {
             let parsed = parseNumericValue(candidate);
             if(!Number.isNaN(parsed) && parsed > 0) {
-                console.log('MBOM custom: EBOM ITEM_WEIGHT found on part details', {
-                    ebomLink    : getPartItemLink(part),
+                console.log('MBOM custom: MBOM ITEM_WEIGHT found on part details', {
+                    mbomLink    : getPartItemLink(part),
                     partNumber  : getPartNumber(part),
                     rawValue    : candidate,
                     parsedValue : parsed
@@ -68,8 +69,8 @@
             }
         }
 
-        console.log('MBOM custom: EBOM ITEM_WEIGHT missing on part details', {
-            ebomLink   : getPartItemLink(part),
+        console.log('MBOM custom: MBOM ITEM_WEIGHT missing on part details', {
+            mbomLink   : getPartItemLink(part),
             partNumber : getPartNumber(part),
             candidates : weightCandidates
         });
@@ -85,7 +86,7 @@
             let value = getSectionFieldValue(itemDetails.sections, fieldId, '', null);
             let parsed = parseNumericValue(value);
             if(!Number.isNaN(parsed) && parsed > 0) {
-                console.log('MBOM custom: EBOM ITEM_WEIGHT found in /plm/details fallback', {
+                console.log('MBOM custom: MBOM ITEM_WEIGHT found in /plm/details fallback', {
                     fieldId     : fieldId,
                     rawValue    : value,
                     parsedValue : parsed
@@ -94,15 +95,15 @@
             }
         }
 
-        console.log('MBOM custom: EBOM ITEM_WEIGHT missing in /plm/details fallback', {
+        console.log('MBOM custom: MBOM ITEM_WEIGHT missing in /plm/details fallback', {
             candidateFields : candidates
         });
 
         return NaN;
     }
 
-    function fetchEBOMPartMaterialsFromDetails(ebomPartsList) {
-        let requests = ebomPartsList.map(function(part) {
+    function fetchMBOMPartMaterialsFromDetails(mbomParts) {
+        let requests = mbomParts.map(function(part) {
             return new Promise(function(resolve) {
                 let link = getPartItemLink(part);
                 if(!link) return resolve({ part: part, material: '', itemWeight: NaN });
@@ -111,8 +112,8 @@
                     .done(function(response) {
                         let material = getMaterialValueFromItemDetails(response.data);
                         let itemWeight = getItemWeightValueFromItemDetails(response.data);
-                        console.log('MBOM custom: fetched EBOM fallback details for raw material resolution', {
-                            ebomLink    : link,
+                        console.log('MBOM custom: fetched MBOM fallback details for raw material resolution', {
+                            mbomLink    : link,
                             partNumber  : getPartNumber(part),
                             material    : material,
                             itemWeight  : itemWeight
@@ -124,8 +125,8 @@
                         });
                     })
                     .fail(function() {
-                        console.warn('MBOM custom: failed to fetch EBOM fallback details for raw material resolution', {
-                            ebomLink   : link,
+                        console.warn('MBOM custom: failed to fetch MBOM fallback details for raw material resolution', {
+                            mbomLink   : link,
                             partNumber : getPartNumber(part)
                         });
                         resolve({ part: part, material: '', itemWeight: NaN });
@@ -136,28 +137,28 @@
         return Promise.all(requests);
     }
 
-    function fetchEBOMItemWeightFromDetails(part) {
+    function fetchMBOMItemWeightFromDetails(part) {
         let link = getPartItemLink(part);
         if(!link) return Promise.resolve(NaN);
 
-        console.log('MBOM custom: fetching EBOM /plm/details specifically for ITEM_WEIGHT', {
-            ebomLink   : link,
+        console.log('MBOM custom: fetching MBOM /plm/details specifically for ITEM_WEIGHT', {
+            mbomLink   : link,
             partNumber : getPartNumber(part)
         });
 
         return $.get('/plm/details', { link: link })
             .then(function(response) {
                 let itemWeight = getItemWeightValueFromItemDetails(response.data);
-                console.log('MBOM custom: explicit EBOM ITEM_WEIGHT fetch finished', {
-                    ebomLink    : link,
+                console.log('MBOM custom: explicit MBOM ITEM_WEIGHT fetch finished', {
+                    mbomLink    : link,
                     partNumber  : getPartNumber(part),
                     itemWeight  : itemWeight
                 });
                 return itemWeight;
             })
             .catch(function(error) {
-                console.warn('MBOM custom: explicit EBOM ITEM_WEIGHT fetch failed', {
-                    ebomLink   : link,
+                console.warn('MBOM custom: explicit MBOM ITEM_WEIGHT fetch failed', {
+                    mbomLink   : link,
                     partNumber : getPartNumber(part),
                     error      : error
                 });
@@ -227,6 +228,23 @@
             elemItem.children('.item-head').find('.mbom-shortcut.icon-factory').length > 0;
     }
 
+    function isMainMBOMRootItem(elemItem) {
+        if(!elemItem || elemItem.length === 0) return false;
+
+        let mainLink = (typeof links !== 'undefined' && links && links.mbom) ? links.mbom : '';
+        let itemLink = elemItem.attr('data-link-mbom') || elemItem.attr('data-link') || '';
+
+        if(!isBlank(mainLink) && !isBlank(itemLink)) {
+            return normalizePLMLink(mainLink) === normalizePLMLink(itemLink);
+        }
+
+        return elemItem.closest('#mbom-tree').length > 0 && elemItem.parent().attr('id') === 'mbom-tree';
+    }
+
+    function isMBOMTechnologyItem(elemItem) {
+        return isMainMBOMRootItem(elemItem) || hasMBOMShortcut(elemItem);
+    }
+
     function ensureMBOMShortcutIcons(elemItem) {
         if(!elemItem || elemItem.length === 0) return;
 
@@ -287,123 +305,69 @@
         return elemItem.attr('data-link') || elemItem.attr('data-number-db') || elemItem.attr('data-number') || 'root';
     }
 
-    function getMBOMItemForEBOMPart(part) {
-        let ebomLink = getPartItemLink(part);
-        if(!ebomLink) {
-            console.warn('MBOM custom: EBOM part link missing for part', part);
+    function getMBOMItemForPart(part) {
+        let mbomLink = getPartItemLink(part);
+        if(isBlank(mbomLink)) {
+            console.warn('MBOM custom: MBOM part link missing for raw material source', part);
             return $();
         }
 
-        let elemEBOMItem = $('#ebom').find('.item[data-link="' + ebomLink + '"]').first();
-        let mbomLinkFromApp = '';
+        let normalizedLink = normalizePLMLink(mbomLink);
+        let elemMBOMItem = $();
+        let edgeId = part.edgeId || '';
 
-        if(elemEBOMItem.length > 0) {
-            mbomLinkFromApp = elemEBOMItem.attr('data-mbom') || '';
-        }
-
-        if(isBlank(mbomLinkFromApp) && part && part.mbom && part.mbom.link) {
-            mbomLinkFromApp = part.mbom.link;
-        }
-
-        if(!isBlank(mbomLinkFromApp)) {
-            let elemMBOMByAppLink = $('#mbom').find('.item[data-link="' + mbomLinkFromApp + '"]').first();
-            if(elemMBOMByAppLink.length === 0) {
-                elemMBOMByAppLink = $('#mbom').find('.item[data-link-mbom="' + mbomLinkFromApp + '"]').first();
+        $('#mbom').find('.item').each(function() {
+            let elemCandidate = $(this);
+            if(!isBlank(edgeId) && elemCandidate.attr('data-edge') === String(edgeId)) {
+                elemMBOMItem = elemCandidate;
+                return false;
             }
 
-            if(elemMBOMByAppLink.length > 0) {
-                console.log('MBOM custom: matched MBOM item via EBOM MBOM link from app state', {
-                    ebomLink      : ebomLink,
-                    mbomLink      : mbomLinkFromApp,
-                    targetItem    : describeMBOMItem(elemMBOMByAppLink)
-                });
-                return elemMBOMByAppLink;
-            }
+            let candidateLinks = [
+                elemCandidate.attr('data-link'),
+                elemCandidate.attr('data-link-mbom')
+            ];
 
-            console.warn('MBOM custom: EBOM item exposes MBOM link but no MBOM DOM node matched it', {
-                ebomLink   : ebomLink,
-                mbomLink   : mbomLinkFromApp
+            if(candidateLinks.some(function(candidateLink) {
+                return !isBlank(candidateLink) && normalizePLMLink(candidateLink) === normalizedLink;
+            })) {
+                elemMBOMItem = elemCandidate;
+                return false;
+            }
+        });
+
+        if(elemMBOMItem.length === 0) {
+            console.warn('MBOM custom: could not find rendered MBOM item for raw material source', {
+                mbomLink   : mbomLink,
+                material   : getMaterialValue(part),
+                partNumber : getPartNumber(part)
             });
-        }
-
-        let elemMBOMItem = $('#mbom').find('.item[data-ebom="' + ebomLink + '"]').first();
-        if(elemMBOMItem.length === 0) {
-            elemMBOMItem = $('#mbom').find('.item[data-ebom-root="' + ebomLink + '"]').first();
-        }
-        if(elemMBOMItem.length === 0) {
-            elemMBOMItem = $('#mbom').find('.item[data-link-ebom="' + ebomLink + '"]').first();
-        }
-
-        if(elemMBOMItem.length === 0) {
-            let mbomLink = elemEBOMItem.attr('data-mbom');
-            if(!isBlank(mbomLink)) {
-                elemMBOMItem = $('#mbom').find('.item[data-link="' + mbomLink + '"]').first();
-            }
-        }
-
-        if(elemMBOMItem.length === 0) {
-            let elemMatchedChild = $();
-
-            $('#mbom').find('.item[data-link-ebom], .item[data-ebom]').each(function() {
-                let elemCandidate = $(this);
-                let linkEBOM = elemCandidate.attr('data-link-ebom') || elemCandidate.attr('data-ebom') || '';
-
-                if(normalizePLMLink(linkEBOM) === normalizePLMLink(ebomLink)) {
-                    elemMatchedChild = elemCandidate;
-                    return false;
-                }
-            });
-
-            if(elemMatchedChild.length > 0) {
-                elemMBOMItem = elemMatchedChild;
-            }
-        }
-
-        if(elemMBOMItem.length === 0) {
-            console.warn('MBOM custom: could not find matching MBOM item for EBOM link', ebomLink);
-            console.log('MBOM custom: available MBOM EBOM-link candidates', $('#mbom').find('.item[data-link-ebom], .item[data-ebom], .item[data-ebom-root]').map(function() {
-                let elemItem = $(this);
-                return {
-                    link       : elemItem.attr('data-link') || '',
-                    linkEBOM   : elemItem.attr('data-link-ebom') || '',
-                    ebom       : elemItem.attr('data-ebom') || '',
-                    ebomRoot   : elemItem.attr('data-ebom-root') || '',
-                    classes    : elemItem.attr('class') || '',
-                    descriptor : elemItem.find('.item-head-descriptor').first().text() || ''
-                };
-            }).get());
             return $();
         }
 
-        console.log('MBOM custom: matched MBOM item for EBOM link', {
-            ebomLink   : ebomLink,
-            targetItem : describeMBOMItem(elemMBOMItem),
-            linkEBOM   : elemMBOMItem.attr('data-link-ebom') || '',
-            ebom       : elemMBOMItem.attr('data-ebom') || '',
-            ebomRoot   : elemMBOMItem.attr('data-ebom-root') || ''
+        console.log('MBOM custom: matched raw material source directly to MBOM item', {
+            mbomLink   : mbomLink,
+            targetItem : describeMBOMItem(elemMBOMItem)
         });
         return elemMBOMItem;
     }
 
     function getRawMaterialTargetHeader(part) {
-        let ebomLink = getPartItemLink(part);
-        let elemMBOMItem = getMBOMItemForEBOMPart(part);
+        let mbomLink = getPartItemLink(part);
+        let elemMBOMItem = getMBOMItemForPart(part);
         if(!elemMBOMItem || elemMBOMItem.length === 0) {
-            console.warn('MBOM custom: raw material skipped because no MBOM item matched the EBOM link', {
-                ebomLink  : ebomLink,
+            console.warn('MBOM custom: raw material skipped because its MBOM source item is not rendered', {
+                mbomLink  : mbomLink,
                 material  : getMaterialValue(part),
                 partNumber: getPartNumber(part)
             });
             return $();
         }
 
-        let mbomLink = elemMBOMItem.attr('data-link') || elemMBOMItem.attr('data-link-mbom') || '';
-
         let elemProcessHeader = getFirstDirectProcessChildHeader(elemMBOMItem);
         if(elemProcessHeader.length > 0) {
             ensureInlineSubMBOMContainer(elemProcessHeader.closest('.item'));
-            console.log('MBOM custom: using first direct process child of linked MBOM item as raw material target', {
-                ebomLink      : ebomLink,
+            console.log('MBOM custom: using first direct process child of MBOM item as raw material target', {
                 mbomLink      : mbomLink,
                 material      : getMaterialValue(part),
                 linkedTarget  : describeMBOMItem(elemMBOMItem),
@@ -416,8 +380,7 @@
             let elemOwnHeader = elemMBOMItem.children('.item-head').first();
             if(elemOwnHeader.length > 0) {
                 ensureInlineSubMBOMContainer(elemMBOMItem);
-                console.log('MBOM custom: using linked process node itself as raw material target', {
-                    ebomLink      : ebomLink,
+                console.log('MBOM custom: using MBOM process node itself as raw material target', {
                     mbomLink      : mbomLink,
                     material      : getMaterialValue(part),
                     processTarget : describeMBOMItem(elemMBOMItem)
@@ -426,8 +389,7 @@
             }
         }
 
-        console.warn('MBOM custom: raw material skipped because linked MBOM item has no direct process child after expansion', {
-            ebomLink   : ebomLink,
+        console.warn('MBOM custom: raw material skipped because MBOM item has no direct process child after expansion', {
             mbomLink   : mbomLink,
             material   : getMaterialValue(part),
             partNumber : getPartNumber(part),
@@ -463,69 +425,12 @@
         return existingLinks;
     }
 
-    function logEBOMMaterials(ebomPartsList) {
-        console.group('MBOM custom: EBOM parts and their MATERIAL values');
-        let partsWithMaterial = 0;
-
-        for(let index = 0; index < ebomPartsList.length; index++) {
-            let part = ebomPartsList[index];
-            let material = getMaterialValue(part);
-            let partNumber = getPartNumber(part) || part.title || part.descriptor || 'Unknown';
-            if(!isBlank(material)) partsWithMaterial++;
-            console.log(partNumber + ' | ' + (material || 'None'));
-
-            if(index < 5 && isBlank(material)) {
-                console.debug('MBOM custom: EBOM part details keys:', Object.keys(part.details || {}));
-                if(Array.isArray(part.fields)) {
-                    console.debug('MBOM custom: EBOM part fields:', part.fields.map(function(field) {
-                        return { fieldId: field.fieldId, name: field.name, displayName: field.displayName, value: field.value };
-                    }));
-                }
-            }
-        }
-
-        if(partsWithMaterial === 0) {
-            console.warn('MBOM custom: No MATERIAL values were found in the loaded EBOM parts. This usually means MATERIAL is not part of the configured EBOM BOM view.');
-            if(typeof wsEBOM !== 'undefined' && Array.isArray(wsEBOM.viewFields)) {
-                console.debug('MBOM custom: Configured EBOM view fields:', wsEBOM.viewFields.map(function(field) {
-                    return { fieldId: field.fieldId, name: field.name, displayName: field.displayName };
-                }));
-            }
-
-            fetchEBOMPartMaterialsFromDetails(ebomPartsList).then(function(results) {
-                console.group('MBOM custom: EBOM part MATERIAL fallback from item details');
-                for(let result of results) {
-                    let part = result.part;
-                    let partNumber = getPartNumber(part) || part.title || part.descriptor || 'Unknown';
-                    console.log(partNumber + ' | ' + (result.material || 'None'));
-                }
-                console.groupEnd();
-            });
-        }
-
-        console.groupEnd();
-    }
-
-    function getMaterialsFromEBOMParts(ebomPartsList) {
-        let materials = getUniqueMaterialsFromEBOMParts(ebomPartsList);
-        if(materials.length > 0) {
-            return Promise.resolve(materials);
-        }
-
-        console.info('MBOM custom: no MATERIAL values found in EBOM; fetching fallback values from item details.');
-
-        return fetchEBOMPartMaterialsFromDetails(ebomPartsList).then(function(results) {
-            let fallbackMaterials = new Set();
-            results.forEach(function(result) {
-                if(!isBlank(result.material)) {
-                    fallbackMaterials.add(result.material);
-                }
-            });
-            return Array.from(fallbackMaterials);
-        });
-    }
-
     function searchRawMaterialItems(material) {
+        let cacheKey = normalizeComparisonValue(material);
+        if(!isBlank(cacheKey) && rawMaterialSearchPromises[cacheKey]) {
+            return rawMaterialSearchPromises[cacheKey];
+        }
+
         let encodedMaterial = encodeURIComponent(material);
         let query = 'ITEM_DETAILS:TITLE%3D%22' + encodedMaterial + '%22';
         let params = {
@@ -541,7 +446,7 @@
             query       : query
         });
 
-        return new Promise(function(resolve) {
+        let searchPromise = new Promise(function(resolve) {
             $.get('/plm/search-bulk', params)
                 .done(function(response) {
                     let items = (response && response.data && response.data.items) ? response.data.items : [];
@@ -578,6 +483,9 @@
                     resolve({ material: material, items: [], query: query });
                 });
         });
+
+        if(!isBlank(cacheKey)) rawMaterialSearchPromises[cacheKey] = searchPromise;
+        return searchPromise;
     }
 
     function getSearchItemLink(item) {
@@ -841,38 +749,38 @@
 
         let unitOfMeasure = getRawMaterialUnitOfMeasure(item);
         console.log('MBOM custom: raw material quantity decision started', {
-            ebomLink         : getPartItemLink(part),
+            mbomLink         : getPartItemLink(part),
             partNumber       : getPartNumber(part),
             material         : entry ? entry.material : '',
-            ebomQuantity     : defaultQuantity,
-            ebomItemWeight   : entry ? entry.itemWeight : NaN,
+            mbomQuantity     : defaultQuantity,
+            mbomItemWeight   : entry ? entry.itemWeight : NaN,
             rawMaterialLink  : getSearchItemLink(item),
             rawMaterialUOM   : unitOfMeasure
         });
 
-        let ebomWeight = entry ? entry.itemWeight : NaN;
-        if(!Number.isNaN(ebomWeight) && ebomWeight > 0) {
-            console.log('MBOM custom: using EBOM ITEM_WEIGHT for raw material quantity (test mode, no UOM check)', {
-                ebomLink      : getPartItemLink(part),
+        let mbomWeight = entry ? entry.itemWeight : NaN;
+        if(!Number.isNaN(mbomWeight) && mbomWeight > 0) {
+            console.log('MBOM custom: using MBOM ITEM_WEIGHT for raw material quantity (test mode, no UOM check)', {
+                mbomLink      : getPartItemLink(part),
                 unitOfMeasure : unitOfMeasure,
-                itemWeight    : ebomWeight
+                itemWeight    : mbomWeight
             });
-            return Promise.resolve(ebomWeight);
+            return Promise.resolve(mbomWeight);
         }
 
-        return fetchEBOMItemWeightFromDetails(part).then(function(fallbackWeight) {
+        return fetchMBOMItemWeightFromDetails(part).then(function(fallbackWeight) {
             if(!Number.isNaN(fallbackWeight) && fallbackWeight > 0) {
                 if(entry) entry.itemWeight = fallbackWeight;
-                console.log('MBOM custom: using explicit EBOM /plm/details ITEM_WEIGHT for raw material quantity (test mode, no UOM check)', {
-                    ebomLink      : getPartItemLink(part),
+                console.log('MBOM custom: using explicit MBOM /plm/details ITEM_WEIGHT for raw material quantity (test mode, no UOM check)', {
+                    mbomLink      : getPartItemLink(part),
                     unitOfMeasure : unitOfMeasure,
                     itemWeight    : fallbackWeight
                 });
                 return fallbackWeight;
             }
 
-            console.warn('MBOM custom: kilogram raw material is missing usable EBOM ITEM_WEIGHT, falling back to quantity 1', {
-                ebomLink        : getPartItemLink(part),
+            console.warn('MBOM custom: raw material source is missing usable MBOM ITEM_WEIGHT, falling back to quantity 1', {
+                mbomLink        : getPartItemLink(part),
                 itemLink        : getSearchItemLink(item),
                 unitOfMeasure   : unitOfMeasure,
                 defaultQuantity : defaultQuantity
@@ -1540,6 +1448,82 @@
             .text('Dodaj indeks złożeniowy')
             .click(createAssemblyIndex)
             .appendTo(elemButtonRow);
+    }
+
+    function getMBOMOverviewContext() {
+        let elemRoot = $('#mbom-tree').children('.item').first();
+        let link = elemRoot.attr('data-link') || '';
+
+        if(typeof links !== 'undefined' && links && !isBlank(links.mbom)) {
+            link = links.mbom;
+        }
+
+        return {
+            link       : getPLMItemLevelLink(link),
+            descriptor : getERPTechnologyDescriptor(elemRoot)
+        };
+    }
+
+    function ensureMBOMOverviewDialog(id) {
+        let elemDialog = $('#' + id);
+        if(elemDialog.length === 0) {
+            elemDialog = $('<div></div>')
+                .attr('id', id)
+                .appendTo('body');
+        }
+        return elemDialog;
+    }
+
+    function openMBOMOverview() {
+        let context = getMBOMOverviewContext();
+        if(isBlank(context.link)) {
+            showErrorMessage('Przegląd mBOM', 'Nie znaleziono zapisanego mBOM.');
+            return;
+        }
+
+        ensureMBOMOverviewDialog('mbom-overview-dialog');
+        insertBOM(context.link, {
+            id               : 'mbom-overview-dialog',
+            headerLabel      : 'Przegląd mBOM',
+            headerSubLabel   : context.descriptor,
+            showInDialog     : true,
+            bomViewName      : config.workspaceMBOM.bomView,
+            revisionBias     : 'working',
+            depth            : config.workspaceMBOM.depth,
+            fieldsIn         : ['Item', 'Quantity', 'Qty'],
+            contentSize      : 's',
+            collapseContents : true,
+            counters         : true,
+            openInPLM        : true,
+            path             : true,
+            reload           : true,
+            search           : true,
+            toggles          : true
+        });
+
+        $('#overlay').show();
+    }
+
+    function insertMBOMOverviewButtons() {
+        if($('#mbom-overview-row').length > 0) return;
+
+        insertAddAssemblyIndexButton();
+
+        let elemAssemblyRow = $('#mbom-add-assembly-index-row');
+        if(elemAssemblyRow.length === 0) return;
+
+        let elemRow = $('<div></div>')
+            .attr('id', 'mbom-overview-row')
+            .insertBefore(elemAssemblyRow);
+
+        $('<div></div>')
+            .attr('id', 'mbom-open-overview')
+            .addClass('button')
+            .attr('title', 'Pokaż zapisaną strukturę mBOM')
+            .text('Przegląd mBOM')
+            .click(openMBOMOverview)
+            .appendTo(elemRow);
+
     }
 
     function insertSelectedWorkspaceProcess() {
@@ -2482,7 +2466,6 @@
 
     function resolveInlineSubMBOMContext(elemItem) {
         let part = getMBOMPartFromElement(elemItem);
-        let ebomLink = '';
 
         if(elemItem && elemItem.length > 0 && elemItem.hasClass('assembly-index')) {
             let fallbackPart = part || {
@@ -2541,38 +2524,8 @@
             });
         }
 
-        if(part && part.ebom && part.ebom.link) {
-            ebomLink = part.ebom.link;
-        } else if(elemItem && elemItem.length > 0) {
-            ebomLink = elemItem.attr('data-ebom') || '';
-        }
-
-        if(!isBlank(ebomLink)) {
-            return $.get('/plm/details', { link: ebomLink }).then(function(response) {
-                let expansionLink = getSectionFieldValue(response.data.sections, config.workspaceEBOM.fieldIDs.mbom, '', 'link');
-                let fallbackPart = part || {
-                    link  : elemItem.attr('data-link'),
-                    root  : elemItem.attr('data-root'),
-                    level : getElementLevel(elemItem)
-                };
-
-                return {
-                    part          : fallbackPart,
-                    expansionLink : expansionLink || getInlineSubMBOMLink(elemItem, fallbackPart)
-                };
-            }).catch(function(error) {
-                console.warn('MBOM custom: failed to resolve linked MBOM from EBOM item', ebomLink, error);
-                return {
-                    part : part || {
-                        link  : elemItem.attr('data-link'),
-                        root  : elemItem.attr('data-root'),
-                        level : getElementLevel(elemItem)
-                    },
-                    expansionLink : getInlineSubMBOMLink(elemItem, part)
-                };
-            });
-        }
-
+        // The MBOM part/link is sufficient for expanding its manufacturing
+        // structure. Do not round-trip through the related EBOM item.
         if(part) {
             return Promise.resolve({
                 part          : part,
@@ -2845,10 +2798,10 @@
     }
 
     function ensureMBOMBranchReadyForRawMaterial(part) {
-        let elemMBOMItem = getMBOMItemForEBOMPart(part);
+        let elemMBOMItem = getMBOMItemForPart(part);
         if(!elemMBOMItem || elemMBOMItem.length === 0) {
-            console.warn('MBOM custom: could not prepare MBOM branch because no linked MBOM item was found', {
-                ebomLink   : getPartItemLink(part),
+            console.warn('MBOM custom: could not prepare raw material branch because the MBOM source item was not found', {
+                mbomLink   : getPartItemLink(part),
                 material   : getMaterialValue(part),
                 partNumber : getPartNumber(part)
             });
@@ -2857,37 +2810,37 @@
 
         let hasDirectProcessChild = getFirstDirectProcessChildHeader(elemMBOMItem).length > 0;
         if(hasDirectProcessChild) {
-            console.log('MBOM custom: linked MBOM item already has a direct process child in DOM', {
-                ebomLink   : getPartItemLink(part),
+            console.log('MBOM custom: MBOM source item already has a direct process child in DOM', {
+                mbomLink   : getPartItemLink(part),
                 targetItem : describeMBOMItem(elemMBOMItem)
             });
             return Promise.resolve(elemMBOMItem);
         }
 
         if(elemMBOMItem.hasClass('process') && !hasMBOMShortcut(elemMBOMItem)) {
-            console.log('MBOM custom: linked MBOM item is a process node without child process nodes, no expansion needed', {
-                ebomLink   : getPartItemLink(part),
+            console.log('MBOM custom: MBOM source item is a process node without child process nodes, no expansion needed', {
+                mbomLink   : getPartItemLink(part),
                 targetItem : describeMBOMItem(elemMBOMItem)
             });
             return Promise.resolve(elemMBOMItem);
         }
 
         if(!hasMBOMShortcut(elemMBOMItem)) {
-            console.log('MBOM custom: linked MBOM item has no inline sub-MBOM shortcut, using current node as-is', {
-                ebomLink   : getPartItemLink(part),
+            console.log('MBOM custom: MBOM source item has no inline sub-MBOM shortcut, using current node as-is', {
+                mbomLink   : getPartItemLink(part),
                 targetItem : describeMBOMItem(elemMBOMItem)
             });
             return Promise.resolve(elemMBOMItem);
         }
 
-        console.log('MBOM custom: expanding linked MBOM item to find direct process child target', {
-            ebomLink   : getPartItemLink(part),
+        console.log('MBOM custom: expanding MBOM source item to find direct process child target', {
+            mbomLink   : getPartItemLink(part),
             targetItem : describeMBOMItem(elemMBOMItem)
         });
 
         return ensureInlineSubMBOMExpanded(elemMBOMItem).then(function() {
-            console.log('MBOM custom: linked MBOM item expansion finished', {
-                ebomLink         : getPartItemLink(part),
+            console.log('MBOM custom: MBOM source item expansion finished', {
+                mbomLink         : getPartItemLink(part),
                 targetItem       : describeMBOMItem(elemMBOMItem),
                 processChildFound: getFirstDirectProcessChildHeader(elemMBOMItem).length > 0
             });
@@ -2895,76 +2848,75 @@
         });
     }
 
-    function resolveEBOMMaterials(ebomPartsList) {
-        return new Promise(function(resolve) {
-            let ebomMaterials = ebomPartsList.map(function(part) {
-                return {
-                    part       : part,
-                    material   : getMaterialValue(part),
-                    itemWeight : getItemWeightValue(part)
-                };
-            });
+    function resolveMBOMMaterials(mbomParts) {
+        let mbomSourceParts = mbomParts.filter(function(part) {
+            let elemMBOMItem = getMBOMItemForPart(part);
+            let isMBOM = isMBOMTechnologyItem(elemMBOMItem);
 
-            let missingFallbackParts = ebomMaterials.filter(function(entry) {
-                return isBlank(entry.material) || Number.isNaN(entry.itemWeight) || entry.itemWeight <= 0;
-            });
-
-            console.log('MBOM custom: resolved initial EBOM raw material candidates', ebomMaterials.map(function(entry) {
-                return {
-                    ebomLink    : getPartItemLink(entry.part),
-                    partNumber  : getPartNumber(entry.part),
-                    material    : entry.material,
-                    itemWeight  : entry.itemWeight
-                };
-            }));
-
-            if(missingFallbackParts.length === 0) {
-                resolve(ebomMaterials.filter(function(entry) { return !isBlank(entry.material); }));
-                return;
+            if(!isMBOM) {
+                console.log('MBOM custom: skipping raw material source because the item is not an MBOM root', {
+                    link       : getPartItemLink(part),
+                    partNumber : getPartNumber(part),
+                    targetItem : describeMBOMItem(elemMBOMItem)
+                });
             }
 
-            fetchEBOMPartMaterialsFromDetails(missingFallbackParts.map(function(entry) { return entry.part; }))
-                .then(function(results) {
-                    let fallbackMap = new Map();
-                    results.forEach(function(result) {
-                        let link = getPartItemLink(result.part);
-                        if(isBlank(link)) return;
-
-                        fallbackMap.set(link, {
-                            material   : result.material,
-                            itemWeight : result.itemWeight
-                        });
-                    });
-
-                    ebomMaterials.forEach(function(entry) {
-                        let link = getPartItemLink(entry.part);
-                        let fallback = fallbackMap.get(link);
-                        if(!fallback) return;
-
-                        if(isBlank(entry.material) && !isBlank(fallback.material)) {
-                            entry.material = fallback.material;
-                        }
-
-                        if((Number.isNaN(entry.itemWeight) || entry.itemWeight <= 0) && !Number.isNaN(fallback.itemWeight) && fallback.itemWeight > 0) {
-                            entry.itemWeight = fallback.itemWeight;
-                        }
-                    });
-
-                    console.log('MBOM custom: resolved final EBOM raw material candidates after fallback', ebomMaterials.map(function(entry) {
-                        return {
-                            ebomLink    : getPartItemLink(entry.part),
-                            partNumber  : getPartNumber(entry.part),
-                            material    : entry.material,
-                            itemWeight  : entry.itemWeight
-                        };
-                    }));
-
-                    resolve(ebomMaterials.filter(function(entry) { return !isBlank(entry.material); }));
-                })
-                .catch(function() {
-                    resolve(ebomMaterials.filter(function(entry) { return !isBlank(entry.material); }));
-                });
+            return isMBOM;
         });
+
+        console.log('MBOM custom: raw material sources restricted to MBOM roots', {
+            loadedItems : mbomParts.length,
+            mbomRoots   : mbomSourceParts.length
+        });
+
+        let mbomMaterials = mbomSourceParts.map(function(part) {
+            return {
+                part       : part,
+                material   : getMaterialValue(part),
+                itemWeight : getItemWeightValue(part)
+            };
+        });
+
+        let withMaterial = function() {
+            return mbomMaterials.filter(function(entry) { return !isBlank(entry.material); });
+        };
+
+        // The MATERIAL value is normally present in the loaded BOM data even when
+        // ITEM_WEIGHT needs the details fallback. Start the title lookup now so
+        // the lookup and target duplicate check can run concurrently with it.
+        withMaterial().forEach(function(entry) {
+            searchRawMaterialItems(entry.material);
+            entry.targetPreparationPromise = prepareRawMaterialTarget(entry);
+        });
+
+        let missingFallbackParts = mbomMaterials.filter(function(entry) {
+            return isBlank(entry.material) || Number.isNaN(entry.itemWeight) || entry.itemWeight <= 0;
+        });
+
+        if(missingFallbackParts.length === 0) return Promise.resolve(withMaterial());
+
+        return fetchMBOMPartMaterialsFromDetails(missingFallbackParts.map(function(entry) { return entry.part; }))
+            .then(function(results) {
+                let fallbackMap = new Map();
+                results.forEach(function(result) {
+                    let link = getPartItemLink(result.part);
+                    if(!isBlank(link)) fallbackMap.set(link, result);
+                });
+
+                mbomMaterials.forEach(function(entry) {
+                    let fallback = fallbackMap.get(getPartItemLink(entry.part));
+                    if(!fallback) return;
+
+                    if(isBlank(entry.material) && !isBlank(fallback.material)) entry.material = fallback.material;
+                    if((Number.isNaN(entry.itemWeight) || entry.itemWeight <= 0) &&
+                        !Number.isNaN(fallback.itemWeight) && fallback.itemWeight > 0) {
+                        entry.itemWeight = fallback.itemWeight;
+                    }
+                });
+
+                return withMaterial();
+            })
+            .catch(withMaterial);
     }
 
     function initRawMaterialsDialog(searchTotal, applyTotal) {
@@ -3031,14 +2983,36 @@
         $('#confirm-raw-materials').removeClass('disabled').addClass('default');
     }
 
-    function addRawMaterialsToMBOM(ebomMaterials) {
-        if(!Array.isArray(ebomMaterials) || ebomMaterials.length === 0) {
-            console.info('MBOM custom: no EBOM parts with MATERIAL values available to add raw materials.');
+    function prepareRawMaterialTarget(entry) {
+        return ensureMBOMBranchReadyForRawMaterial(entry.part).then(function() {
+            let elemHeader = getRawMaterialTargetHeader(entry.part);
+            if(elemHeader.length === 0) return null;
+
+            let targetKey = getRawMaterialTargetKey(elemHeader);
+            return fetchExistingBOMChildren(elemHeader).then(function(existingState) {
+                return {
+                    elemHeader    : elemHeader,
+                    targetKey     : targetKey,
+                    existingState : existingState
+                };
+            });
+        }).catch(function(error) {
+            console.warn('MBOM custom: failed to prepare raw material target', {
+                mbomLink : getPartItemLink(entry.part),
+                error    : error
+            });
+            return null;
+        });
+    }
+
+    function addRawMaterialsToMBOM(mbomMaterials) {
+        if(!Array.isArray(mbomMaterials) || mbomMaterials.length === 0) {
+            console.info('MBOM custom: no MBOM parts with MATERIAL values available to add raw materials.');
             $('#confirm-raw-materials').removeClass('disabled').addClass('default');
             return;
         }
 
-        console.log('MBOM custom: Found', ebomMaterials.length, 'EBOM part(s) with MATERIAL values.');
+        console.log('MBOM custom: Found', mbomMaterials.length, 'MBOM part(s) with MATERIAL values.');
 
         let button = $('#add-raw-materials');
         if(button.length) {
@@ -3046,12 +3020,22 @@
             button.html('Searching...');
         }
 
-        let uniqueMaterials = Array.from(new Set(ebomMaterials.map(function(entry) { return entry.material; })));
+        let uniqueMaterials = Array.from(new Set(mbomMaterials.map(function(entry) { return entry.material; })));
         let searchResultsByMaterial = {};
         let searchDone = 0;
         let applyDone = 0;
+        let targetPreparationPromises = new Map();
 
-        setRawMaterialsDialogTotals(uniqueMaterials.length, ebomMaterials.length);
+        setRawMaterialsDialogTotals(uniqueMaterials.length, mbomMaterials.length);
+
+        // Target expansion and duplicate checks do not depend on the search
+        // result, so let them run while material searches are in progress.
+        mbomMaterials.forEach(function(entry) {
+            targetPreparationPromises.set(
+                entry,
+                entry.targetPreparationPromise || prepareRawMaterialTarget(entry)
+            );
+        });
 
         let searchRequests = uniqueMaterials.map(function(material) {
             return searchRawMaterialItems(material).then(function(result) {
@@ -3069,7 +3053,7 @@
             let insertedByTarget = {};
             let chain = Promise.resolve();
 
-            ebomMaterials.forEach(function(entry) {
+            mbomMaterials.forEach(function(entry) {
                 chain = chain.then(function() {
                     let material = entry.material;
 
@@ -3079,7 +3063,7 @@
                             material : material
                         });
                         applyDone++;
-                        updateRawMaterialsApplyDialog(applyDone, ebomMaterials.length);
+                        updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                         return null;
                     }
 
@@ -3089,7 +3073,7 @@
                             material : material
                         });
                         applyDone++;
-                        updateRawMaterialsApplyDialog(applyDone, ebomMaterials.length);
+                        updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                         return null;
                     }
 
@@ -3099,24 +3083,24 @@
                             material : material
                         });
                         applyDone++;
-                        updateRawMaterialsApplyDialog(applyDone, ebomMaterials.length);
+                        updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                         return null;
                     }
 
                     return getRawMaterialInsertQuantity(entry, item).then(function(quantity) {
-                        return ensureMBOMBranchReadyForRawMaterial(entry.part).then(function() {
-                            let elemHeader = getRawMaterialTargetHeader(entry.part);
-                            if(elemHeader.length === 0) {
+                        return targetPreparationPromises.get(entry).then(function(targetContext) {
+                            if(!targetContext) {
                                 console.warn('MBOM custom: cannot find MBOM insertion target', {
                                     material : material,
-                                    ebomLink  : getPartItemLink(entry.part)
+                                    mbomLink  : getPartItemLink(entry.part)
                                 });
                                 applyDone++;
-                                updateRawMaterialsApplyDialog(applyDone, ebomMaterials.length);
+                                updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                                 return null;
                             }
 
-                            let targetKey = getRawMaterialTargetKey(elemHeader);
+                            let elemHeader = targetContext.elemHeader;
+                            let targetKey = targetContext.targetKey;
                             console.log('MBOM custom: inserting new raw material into MBOM', {
                                 material : material,
                                 targetKey: targetKey,
@@ -3124,12 +3108,12 @@
                                 quantity : quantity
                             });
 
-                            let targetStatePromise = insertedByTarget[targetKey]
-                                ? Promise.resolve(insertedByTarget[targetKey])
-                                : fetchExistingBOMChildren(elemHeader).then(function(existingState) {
-                                    insertedByTarget[targetKey] = existingState;
-                                    return existingState;
-                                });
+                            let targetStatePromise = Promise.resolve(
+                                insertedByTarget[targetKey] || targetContext.existingState
+                            ).then(function(existingState) {
+                                insertedByTarget[targetKey] = existingState;
+                                return existingState;
+                            });
 
                             return targetStatePromise.then(function(existingState) {
                                 let normalizedLink = normalizePLMLink(link);
@@ -3170,7 +3154,7 @@
                                         });
                                     }
                                     applyDone++;
-                                    updateRawMaterialsApplyDialog(applyDone, ebomMaterials.length);
+                                    updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                                     return null;
                                 }
 
@@ -3181,7 +3165,7 @@
                                     quantity : quantity
                                 });
 
-                                return insertAdditionalItem(elemHeader, link).then(function(elemInserted) {
+                                return insertAdditionalItem(elemHeader, link, { knownLeaf: true }).then(function(elemInserted) {
                                     if(!elemInserted || elemInserted.length === 0) {
                                         throw new Error('Raw material item could not be inserted into the MBOM tree.');
                                     }
@@ -3213,7 +3197,7 @@
                                     });
                                 }).then(function() {
                                     applyDone++;
-                                    updateRawMaterialsApplyDialog(applyDone, ebomMaterials.length);
+                                    updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                                     console.log('MBOM custom: raw material insert completed', {
                                         material : material,
                                         link     : link,
@@ -3230,14 +3214,14 @@
                 console.log('MBOM custom: Add Raw Materials finished', {
                     added   : totalAdded,
                     updated : totalUpdated,
-                    total   : ebomMaterials.length
+                    total   : mbomMaterials.length
                 });
 
                 if(totalAdded === 0 && totalUpdated === 0) {
                     console.info('MBOM custom: no raw materials were added or updated. Check MATERIAL values and matching TITLE values in WS 57.');
                 }
 
-                completeRawMaterialsDialog(ebomMaterials.length);
+                completeRawMaterialsDialog(mbomMaterials.length);
 
                 if(button.length) {
                     button.removeClass('disabled');
@@ -3254,128 +3238,63 @@
         });
     }
 
-    function getUniqueMaterialsFromEBOMParts(ebomPartsList) {
-        let materials = new Set();
-
-        for(let part of ebomPartsList) {
-            let material = getMaterialValue(part);
-            if(!isBlank(material)) {
-                materials.add(material);
-            }
-        }
-
-        return Array.from(materials);
-    }
-
-    function findTitleMatchesForMaterials() {
-        console.log('MBOM custom: Finding MATERIAL matches on init');
-
-        if(Array.isArray(ebomPartsList) && ebomPartsList.length > 0) {
-            console.log('MBOM custom: Found loaded ebomPartsList on init with', ebomPartsList.length, 'parts');
-            logEBOMMaterials(ebomPartsList);
-            return;
-        }
-
-        console.warn('MBOM custom: ebomPartsList not available on init; skipping MATERIAL match search');
-    }
-
-    function addRawMaterialsFromEBOM() {
+    function addRawMaterialsFromMBOM() {
         console.log('MBOM custom: Add Raw Materials button clicked');
         initRawMaterialsDialog(0, 0);
         setRawMaterialsDialogPendingState();
 
-        if(Array.isArray(ebomPartsList) && ebomPartsList.length > 0) {
-            console.log('MBOM custom: Using loaded ebomPartsList with', ebomPartsList.length, 'items');
-            logEBOMMaterials(ebomPartsList);
-            resolveEBOMMaterials(ebomPartsList).then(function(ebomMaterials) {
-                addRawMaterialsToMBOM(ebomMaterials);
+        if(Array.isArray(mbomPartsList) && mbomPartsList.length > 0) {
+            console.log('MBOM custom: Using loaded mbomPartsList with', mbomPartsList.length, 'items');
+            resolveMBOMMaterials(mbomPartsList).then(function(mbomMaterials) {
+                addRawMaterialsToMBOM(mbomMaterials);
             }).catch(function(error) {
-                console.warn('MBOM custom: failed while resolving EBOM materials', error);
+                console.warn('MBOM custom: failed while resolving MBOM materials', error);
                 $('#confirm-raw-materials').removeClass('disabled').addClass('default');
             });
             return;
         }
 
-        console.warn('MBOM custom: ebomPartsList not loaded yet; falling back to explicit EBOM fetch');
+        console.warn('MBOM custom: mbomPartsList not loaded yet; falling back to explicit MBOM fetch');
 
-        let startLink = (typeof urlParameters !== 'undefined' && urlParameters.link) ? urlParameters.link : null;
-        if (!startLink) {
-            console.warn('MBOM custom: No start link found in URL parameters');
+        let rootItem = $('#mbom-tree').children('.item').first();
+        let mbomLink = (typeof links !== 'undefined' && !isBlank(links.mbom))
+            ? links.mbom
+            : getMBOMSaveLink(rootItem);
 
+        if(isBlank(mbomLink)) {
+            console.warn('MBOM custom: no MBOM link is available for raw material discovery');
+            completeRawMaterialsDialog(0);
             return;
         }
 
-        console.log('MBOM custom: Fetching details for start link:', startLink);
+        let params = {
+            link            : mbomLink,
+            viewId          : wsMBOM.viewId,
+            depth           : config.workspaceMBOM.depth,
+            revisionBias    : 'working',
+            getBOMPartsList : true
+        };
 
-        $.get('/plm/details', { link: startLink })
-            .done(function(detailsResponse) {
-                let fieldIdEBOM = (typeof config !== 'undefined' && config.workspaceMBOM && config.workspaceMBOM.fieldIDs && config.workspaceMBOM.fieldIDs.ebom) ? config.workspaceMBOM.fieldIDs.ebom : null;
-                if (!fieldIdEBOM) {
-                    console.warn('MBOM custom: EBOM field ID not found in config');
+        console.log('MBOM custom: fetching MBOM data for raw material discovery', params);
+
+        $.get('/plm/bom', params)
+            .done(function(bomResponse) {
+                let fetchedMBOMParts = (bomResponse.data && bomResponse.data.bomPartsList) ? bomResponse.data.bomPartsList : [];
+                if(!Array.isArray(fetchedMBOMParts) || fetchedMBOMParts.length === 0) {
+                    console.warn('MBOM custom: no MBOM parts found for raw material discovery');
+                    completeRawMaterialsDialog(0);
                     return;
                 }
 
-                let ebomLink = getSectionFieldValue(detailsResponse.data.sections, fieldIdEBOM, '', 'link');
-                if (!ebomLink) {
-                    console.warn('MBOM custom: No EBOM link found in MBOM item details');
-                    return;
-                }
-
-                console.log('MBOM custom: Found EBOM link:', ebomLink);
-
-                let ebomWsId = (typeof config !== 'undefined' && config.workspaceEBOM && config.workspaceEBOM.workspaceId) || (typeof common !== 'undefined' && common.workspaceIds && common.workspaceIds.items) || 57;
-
-                $.get('/plm/bom-views', { wsId: ebomWsId })
-                    .done(function(viewsResponse) {
-                        let bomViewName = (typeof config !== 'undefined' && config.workspaceEBOM && config.workspaceEBOM.bomView) ? config.workspaceEBOM.bomView : 'MBOM Transition';
-                        let view = viewsResponse.data.bomViews.find(v => v.name === bomViewName);
-                        if (!view) {
-                            console.warn('MBOM custom: BOM view not found:', bomViewName);
-                            return;
-                        }
-                        let viewId = view.id;
-                        console.log('MBOM custom: Found view ID:', viewId, 'for', bomViewName);
-
-                        let params = {
-                            link: ebomLink,
-                            viewId: viewId,
-                            depth: (typeof config !== 'undefined' && config.workspaceEBOM && config.workspaceEBOM.depth) ? config.workspaceEBOM.depth : 10,
-                            revisionBias: 'mostRecent',
-                            getBOMPartsList: true
-                        };
-
-                        console.log('MBOM custom: Fetching EBOM data with params:', params);
-
-                        $.get('/plm/bom', params)
-                            .done(function(bomResponse) {
-                                let ebomPartsList = (bomResponse.data && bomResponse.data.bomPartsList) ? bomResponse.data.bomPartsList : [];
-                                if (!Array.isArray(ebomPartsList) || ebomPartsList.length === 0) {
-                                    console.warn('MBOM custom: No EBOM parts found');
-                                    return;
-                                }
-
-                                console.log('MBOM custom: Found', ebomPartsList.length, 'EBOM parts');
-
-                                logEBOMMaterials(ebomPartsList);
-                                resolveEBOMMaterials(ebomPartsList).then(function(ebomMaterials) {
-                                    addRawMaterialsToMBOM(ebomMaterials);
-                                }).catch(function(error) {
-                                    console.warn('MBOM custom: failed while resolving fetched EBOM materials', error);
-                                    $('#confirm-raw-materials').removeClass('disabled').addClass('default');
-                                });
-                            })
-                            .fail(function() {
-                                console.warn('MBOM custom: Failed to fetch EBOM data');
-                                $('#confirm-raw-materials').removeClass('disabled').addClass('default');
-                            });
-                    })
-                    .fail(function() {
-                        console.warn('MBOM custom: Failed to fetch BOM views');
-                        $('#confirm-raw-materials').removeClass('disabled').addClass('default');
-                    });
+                resolveMBOMMaterials(fetchedMBOMParts).then(function(mbomMaterials) {
+                    addRawMaterialsToMBOM(mbomMaterials);
+                }).catch(function(error) {
+                    console.warn('MBOM custom: failed while resolving fetched MBOM materials', error);
+                    $('#confirm-raw-materials').removeClass('disabled').addClass('default');
+                });
             })
             .fail(function() {
-                console.warn('MBOM custom: Failed to fetch details for start link');
+                console.warn('MBOM custom: failed to fetch MBOM data');
                 $('#confirm-raw-materials').removeClass('disabled').addClass('default');
             });
     }
@@ -3421,9 +3340,9 @@
         ['Wariant', ['WARIANT']],
         ['Specyfikacja', ['SPECYFIKACJA']],
         ['Producent', ['PRODUCENT']],
-        ['Szerokość', ['SZEROKOSC']],
-        ['Długość', ['DUGOSC']],
-        ['Wysokość/grubość', ['WYSOKOSC']],
+        ['Szerokość', ['WIDTH']],
+        ['Długość', ['LENGTH']],
+        ['Wysokość/grubość', ['HEIGHT']],
         ['Średnica', ['SREDNICA']],
         ['Kolor', ['KOLOR']],
         ['Powłoka', ['POWLOKA']],
@@ -3668,16 +3587,7 @@
     }
 
     function isERPTechnologyMainRootItem(elemItem) {
-        if(!elemItem || elemItem.length === 0) return false;
-
-        let mainLink = (typeof links !== 'undefined' && links && links.mbom) ? links.mbom : '';
-        let itemLink = getERPTechnologyElementLink(elemItem);
-
-        if(!isBlank(mainLink) && !isBlank(itemLink)) {
-            return normalizePLMLink(mainLink) === normalizePLMLink(itemLink);
-        }
-
-        return elemItem.closest('#mbom-tree').length > 0 && elemItem.parent().attr('id') === 'mbom-tree';
+        return isMainMBOMRootItem(elemItem);
     }
 
     function getERPTechnologyPartDetailsValue(part, candidateIds) {
@@ -5323,7 +5233,266 @@
             .off('click.custom-toggle-viewer')
             .on('click.custom-toggle-viewer', function() {
                 resizeViewerIfStarted(100);
+        });
+    }
+
+    function getMBOMPropertyRepairMappings() {
+        if(typeof config === 'undefined' || !config.mbomRoot || !Array.isArray(config.mbomRoot.fieldsToCopy)) return [];
+
+        return config.mbomRoot.fieldsToCopy.filter(function(mapping) {
+            return mapping && !isBlank(mapping.ebom) && !isBlank(mapping.mbom);
+        });
+    }
+
+    function getMBOMPropertyRepairSourceLink(detailsData) {
+        let sections = detailsData && Array.isArray(detailsData.sections) ? detailsData.sections : [];
+        let fieldId = config.workspaceMBOM.fieldIDs.ebom;
+        return getBOMLinkedFieldLink(getSectionFieldValue(sections, fieldId, '', 'object'));
+    }
+
+    function isMBOMPropertyRepairManufacturingType(value) {
+        if(isBlank(value)) return false;
+
+        let configuredTypeLink = (config.mbomRoot && config.mbomRoot.typeValue) ? config.mbomRoot.typeValue : '';
+        let valueLink = getBOMLinkedFieldLink(value);
+        if(!isBlank(configuredTypeLink)) {
+            return !isBlank(valueLink)
+                && String(configuredTypeLink).toLowerCase() === String(valueLink).toLowerCase();
+        }
+
+        let title = '';
+        if(typeof value === 'string') title = value;
+        else if(value && typeof value.title === 'string') title = value.title;
+        else if(value && typeof value.label === 'string') title = value.label;
+
+        return title.trim().toLowerCase() === 'manufacturing';
+    }
+
+    function isMBOMPropertyRepairTarget(detailsData, targetLink, sourceLink) {
+        if(!detailsData || !Array.isArray(detailsData.sections)) return false;
+        if(normalizePLMLink(targetLink) === normalizePLMLink(sourceLink)) return false;
+
+        let typeValue = getSectionFieldValue(
+            detailsData.sections,
+            config.workspaceMBOM.fieldIDs.type,
+            '',
+            'object'
+        );
+
+        let linkedSource = getMBOMPropertyRepairSourceLink(detailsData);
+        return isMBOMPropertyRepairManufacturingType(typeValue)
+            && normalizePLMLink(linkedSource) === normalizePLMLink(sourceLink);
+    }
+
+    function getLoadedMBOMPropertyRepairTarget(part) {
+        if(!part) return '';
+
+        let values = [part.mbom];
+        let fieldId = config.workspaceEBOM.fieldIDs.mbom;
+        let contextFieldId = (typeof urlParameters !== 'undefined') ? urlParameters.contextfieldidmbom : '';
+        let suffix = (typeof siteSuffix !== 'undefined') ? siteSuffix : '';
+        let fieldIds = [contextFieldId + suffix, contextFieldId, fieldId + suffix, fieldId];
+
+        if(Array.isArray(part.fields)) {
+            fieldIds.forEach(function(candidate) {
+                if(!isBlank(candidate)) values.push(getBOMPartFieldValue(part, candidate));
             });
+        }
+
+        for(let value of values) {
+            let link = getBOMLinkedFieldLink(value);
+            if(!isBlank(link)) return getPLMItemLevelLink(link);
+        }
+
+        return '';
+    }
+
+    function loadMBOMPropertyRepairDetails(link, label) {
+        return $.get('/plm/details', { link : link }).then(function(response) {
+            if(!response || response.error || !response.data) {
+                throw new Error((response && response.message) || 'Could not load ' + label + ' details.');
+            }
+            return response.data;
+        });
+    }
+
+    function buildMBOMPropertyRepairFields(sourceSections, mappings) {
+        let fields = [];
+
+        mappings.forEach(function(mapping) {
+            let value = getSectionFieldValue(sourceSections, mapping.ebom, null);
+            if(!isBlank(value)) fields.push({ fieldId : mapping.mbom, value : value });
+        });
+
+        if(fields.length === 0) return fields;
+
+        let timestamp = new Date();
+        let syncDate = timestamp.getFullYear() + '-' + (timestamp.getMonth() + 1) + '-' + timestamp.getDate();
+
+        if(!isBlank(config.workspaceMBOM.fieldIDs.lastMBOMSync)) {
+            fields.push({ fieldId : config.workspaceMBOM.fieldIDs.lastMBOMSync, value : syncDate });
+        }
+        if(!isBlank(config.workspaceMBOM.fieldIDs.lastMBOMUser) &&
+            typeof userAccount !== 'undefined' && !isBlank(userAccount.displayName)) {
+            fields.push({ fieldId : config.workspaceMBOM.fieldIDs.lastMBOMUser, value : userAccount.displayName });
+        }
+
+        return fields;
+    }
+
+    function repairMBOMPropertiesFromEBOM(sourceEBOMLink, mappings, results) {
+        let sourceData;
+        let sourceLink;
+        let targetLink;
+
+        return loadMBOMPropertyRepairDetails(sourceEBOMLink, 'source eBOM').then(function(data) {
+            sourceData = data;
+            sourceLink = getPLMItemLevelLink(data.__self__ || sourceEBOMLink);
+            targetLink = getPLMItemLevelLink(getConfiguredMBOMLinkFromDetails(data));
+
+            if(isBlank(targetLink)) {
+                results.skipped++;
+                return null;
+            }
+            if(normalizePLMLink(targetLink) === normalizePLMLink(sourceLink)) {
+                throw new Error('Safety check refused an mBOM relationship that points to the source eBOM itself.');
+            }
+
+            return loadMBOMPropertyRepairDetails(targetLink, 'target mBOM');
+        }).then(function(targetData) {
+            if(!targetData) return;
+
+            let verifiedTargetLink = getPLMItemLevelLink(targetData.__self__ || targetLink);
+            if(normalizePLMLink(verifiedTargetLink) !== normalizePLMLink(targetLink)) {
+                throw new Error('Safety check refused an mBOM response whose item link does not match the requested target.');
+            }
+            if(!isMBOMPropertyRepairTarget(targetData, verifiedTargetLink, sourceLink)) {
+                throw new Error('Safety check refused the target: it is not a distinct Manufacturing mBOM linked back to this eBOM.');
+            }
+
+            let fields = buildMBOMPropertyRepairFields(sourceData.sections || [], mappings);
+            if(fields.length === 0) {
+                results.skipped++;
+                return;
+            }
+
+            console.info('MBOM custom: repairing properties EBOM -> MBOM', {
+                sourceEBOM : sourceLink,
+                targetMBOM : verifiedTargetLink,
+                fieldIds   : fields.map(function(field) { return field.fieldId; })
+            });
+
+            return $.post('/plm/edit', {
+                link     : verifiedTargetLink,
+                sections : wsMBOM.sections,
+                fields   : fields
+            }).then(function(response) {
+                if(response && response.error) {
+                    throw new Error(response.message || 'PLM rejected the property update.');
+                }
+                results.updated++;
+            });
+        });
+    }
+
+    function runMBOMPropertyRepair() {
+        let elemButton = $('#repair-mbom-properties');
+        if(elemButton.hasClass('disabled')) return;
+
+        let mappings = getMBOMPropertyRepairMappings();
+        if(mappings.length === 0) {
+            showErrorMessage('Repair mBOM properties', 'No fields are configured in mbomRoot.fieldsToCopy.');
+            return;
+        }
+
+        if(!window.confirm('Copy the configured properties from each related eBOM to the current mBOM and all discovered sub-mBOMs?')) return;
+
+        let queue = [];
+        let seenSources = new Set();
+        let results = {
+            scanned : 0,
+            updated : 0,
+            skipped : 0,
+            errors  : []
+        };
+
+        function enqueueSource(link) {
+            let normalizedLink = normalizePLMLink(link);
+            if(isBlank(normalizedLink) || seenSources.has(normalizedLink)) return;
+
+            seenSources.add(normalizedLink);
+            queue.push(link);
+        }
+
+        enqueueSource((typeof links !== 'undefined') ? links.ebom : '');
+
+        if(Array.isArray(ebomPartsList)) {
+            ebomPartsList.forEach(function(part) {
+                if(!part || isBlank(part.link) || isBlank(getLoadedMBOMPropertyRepairTarget(part))) return;
+                enqueueSource(part.link);
+            });
+        }
+
+        if(queue.length === 0) {
+            showErrorMessage('Repair mBOM properties', 'The current eBOM and its components could not be determined.');
+            return;
+        }
+
+        let saveWasDisabled = $('#save').hasClass('disabled');
+        elemButton.addClass('disabled').text('Repairing...');
+        $('#save').addClass('disabled');
+
+        let totalSources = queue.length;
+        let repairChain = Promise.resolve();
+
+        queue.forEach(function(sourceEBOMLink, index) {
+            repairChain = repairChain.then(function() {
+                results.scanned++;
+                elemButton.text('Repair ' + (index + 1) + ' / ' + totalSources);
+
+                return repairMBOMPropertiesFromEBOM(sourceEBOMLink, mappings, results).catch(function(error) {
+                    results.errors.push({ link : sourceEBOMLink, error : error });
+                    console.warn('MBOM custom: property repair failed', sourceEBOMLink, error);
+                });
+            });
+        });
+
+        repairChain.then(function() {
+            let summary = results.updated + ' mBOM(s) updated, '
+                + results.skipped + ' skipped, '
+                + results.errors.length + ' error(s).';
+
+            console.log('MBOM custom: property repair completed', results);
+
+            if(results.errors.length > 0) {
+                showErrorMessage('mBOM property repair completed with errors', summary + ' See the browser console for details.');
+            } else {
+                showSuccessMessage('mBOM property repair completed', summary);
+            }
+        }).catch(function(error) {
+            console.warn('MBOM custom: property repair stopped unexpectedly', error);
+            showErrorMessage('Repair mBOM properties', String(error && error.message ? error.message : error));
+        }).finally(function() {
+            elemButton.removeClass('disabled').text('Repair mBOM');
+            if(!saveWasDisabled) $('#save').removeClass('disabled');
+        });
+    }
+
+    function insertMBOMPropertyRepairButton() {
+        if($('#repair-mbom-properties').length > 0) return;
+
+        let button = $('<div></div>')
+            .attr('id', 'repair-mbom-properties')
+            .addClass('button default')
+            .attr('title', 'One-time copy of configured EBOM properties to this MBOM and all discovered sub-MBOMs')
+            .text('Repair mBOM')
+            .click(runMBOMPropertyRepair);
+
+        if($('#header-toolbar').length) {
+            $('#header-toolbar').find('#header-avatar').before(button);
+        } else {
+            $('body').append(button);
+        }
     }
 
     function insertAddRawMaterialsButton() {
@@ -5332,9 +5501,9 @@
         let button = $('<div></div>')
             .attr('id', 'add-raw-materials')
             .addClass('button default')
-            .attr('title', 'Add raw materials found by EBOM MATERIAL values')
+            .attr('title', 'Add raw materials found by MBOM MATERIAL values')
             .html('Dodaj Surowce')
-            .click(addRawMaterialsFromEBOM);
+            .click(addRawMaterialsFromMBOM);
 
         if($('#header-toolbar').length) {
             $('#header-toolbar').find('#header-avatar').before(button);
@@ -5401,7 +5570,9 @@
 
     $(document).ready(function() {
         insertAddRawMaterialsButton();
+        insertMBOMPropertyRepairButton();
         insertAddAssemblyIndexButton();
+        insertMBOMOverviewButtons();
         setupAddProcessPicker();
         insertERPTab();
         attachERPTabEvents();
@@ -5567,22 +5738,24 @@
     }
 
     if(typeof insertAdditionalItem === 'function') {
-        insertAdditionalItem = function(elemHead, link) {
+        insertAdditionalItem = function(elemHead, link, options) {
+            let knownLeaf = !!(options && options.knownLeaf);
             console.log('MBOM custom: insertAdditionalItem started', {
-                link : link
+                link      : link,
+                knownLeaf : knownLeaf
             });
 
             $('#overlay').show();
 
-            let requests = [
-                $.get('/plm/details', { link : link } ),
-                $.get('/plm/bom', {
+            let requests = [$.get('/plm/details', { link : link })];
+            if(!knownLeaf) {
+                requests.push($.get('/plm/bom', {
                     link         : link,
                     viewId       : wsMBOM.viewId,
                     depth        : getCustomMBOMDepth(),
                     revisionBias : config.revisionBias
-                })
-            ];
+                }));
+            }
 
             return Promise.all(requests).then(function(responses) {
 
@@ -5592,6 +5765,9 @@
                 $('#overlay').hide();
 
                 if(isProcess == 'true') {
+                    if(knownLeaf) {
+                        throw new Error('Raw material unexpectedly resolved to a process item.');
+                    }
 
                     mBOM = responses[1].data;
                     for(let edgeMBOM of mBOM.edges) edgeMBOM.depth++;
@@ -5896,6 +6072,7 @@
             }
 
             insertAddAssemblyIndexButton();
+            insertMBOMOverviewButtons();
             setupAddProcessPicker();
             $('#confirm-raw-materials').off('click').on('click', function() {
                 if($(this).hasClass('disabled')) return;
@@ -5905,10 +6082,9 @@
             attachCustomSaveGuard();
             attachERPTabEvents();
             attachCustomModeResizeEvents();
-            // findTitleMatchesForMaterials();
         };
     } else {
-        console.warn('MBOM custom: initEditor is not defined yet; MATERIAL match search was not attached.');
+        console.warn('MBOM custom: initEditor is not defined yet; custom editor hooks were not attached.');
     }
 
     if(typeof createMBOMRoot === 'function') {
@@ -6032,10 +6208,6 @@
             });
 
         };
-    }
-
-    if(typeof window !== 'undefined') {
-        window.findMBOMMaterialTitleMatches = findTitleMatchesForMaterials;
     }
 
 })();

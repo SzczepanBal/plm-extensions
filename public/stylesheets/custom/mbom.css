@@ -160,9 +160,34 @@ body.details-on.no-viewer #tabs {
     border-radius: 0 2px 2px 0;
 }
 
-/* Reserve space for both rows of the custom MBOM add panel. */
+/* Read-only BOM navigation sits above the assembly-index action. */
+#mbom-overview-row {
+    display: flex;
+    flex: 0 0 100%;
+    gap: 8px;
+    margin-bottom: 6px;
+    width: 100%;
+}
+
+#mbom-overview-row > .button,
+#mbom-add-assembly-index-row > .button {
+    box-sizing: border-box;
+    height: 28px;
+    line-height: 26px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#mbom-overview-row > .button {
+    flex: 1 1 50%;
+}
+
+/* Reserve space for all three rows of the custom MBOM add panel. */
 #mbom-tree {
-    bottom: 96px;
+    bottom: 130px;
 }
 
 /* Offer MBOM creation beside Add for unmatched EBOM Make items. */

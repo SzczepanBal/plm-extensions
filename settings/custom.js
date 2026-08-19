@@ -102,7 +102,20 @@ exports.applications = {
         // }, 
         // workspaceMBOM : {
         //     workspaceId : null, // uses common.workspaceIds.items per default
-        // }
+        // },
+        mbomRoot : {
+            fieldsToCopy : [
+                { ebom : 'TITLE'      , mbom : 'TITLE'       },
+                { ebom : 'DESCRIPTION', mbom : 'DESCRIPTION' },
+                { ebom : 'OPIS'       , mbom : 'OPIS'        },
+                { ebom : 'MATERIAL'   , mbom : 'MATERIAL'    },
+                { ebom : 'ITEM_WEIGHT', mbom : 'ITEM_WEIGHT' },
+                { ebom : 'LENGTH'     , mbom : 'LENGTH'      },
+                { ebom : 'WIDTH'      , mbom : 'WIDTH'       },
+                { ebom : 'HEIGHT'     , mbom : 'HEIGHT'      },
+                { ebom : 'SREDNICA'   , mbom : 'SREDNICA'    }
+            ]
+        }
     },
     portal         : {
         // downloadPatterns : [{
