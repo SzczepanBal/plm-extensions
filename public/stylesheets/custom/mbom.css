@@ -160,6 +160,45 @@ body.details-on.no-viewer #tabs {
     border-radius: 0 2px 2px 0;
 }
 
+/* Keep the engineering hierarchy visible and show its linked mBOM as a
+   separate, persistent navigation marker. */
+#ebom .linked-mbom-marker {
+    align-self: center;
+    box-sizing: border-box;
+    color: var(--color-gray-600);
+    cursor: pointer;
+    flex: 0 0 var(--height-item);
+    font-size: 16px;
+    height: var(--height-item);
+    line-height: calc(var(--height-item) - 2px);
+    margin: 0 2px;
+    max-width: var(--height-item);
+    min-width: var(--height-item);
+    padding: 0;
+    text-align: center;
+    width: var(--height-item);
+}
+
+#ebom .linked-mbom-marker:hover,
+#ebom .linked-mbom-marker.active {
+    border-color: var(--color-blue-500);
+    color: var(--color-blue-500);
+}
+
+#ebom .linked-mbom-marker.loading {
+    opacity: 0.45;
+}
+
+#ebom .linked-mbom-marker.error {
+    border-color: var(--color-status-red);
+    color: var(--color-status-red);
+}
+
+#mbom .item.linked-mbom-focus > .item-head {
+    outline: 2px solid var(--color-blue-500);
+    outline-offset: -2px;
+}
+
 /* Read-only BOM navigation sits above the assembly-index action. */
 #mbom-overview-row {
     display: flex;
