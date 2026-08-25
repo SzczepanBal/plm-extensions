@@ -51,6 +51,7 @@ const context = {
 
 vm.createContext(context);
 [
+    'normalizeComparisonValue',
     'parseNumericValue',
     'normalizePLMLink',
     'getBOMBooleanValue',
@@ -70,24 +71,24 @@ async function run() {
     context.ebomPartsList = [
         { level : 0, link : '/api/v3/workspaces/1/items/1', quantity : 0 },
         { level : 1, link : '/api/v3/workspaces/1/items/10', quantity : 2, mbom : { link : '/api/v3/workspaces/1/items/110' } },
-        { level : 2, link : '/api/v3/workspaces/1/items/100', partNumber : 'A', quantity : 3 },
+        { level : 2, link : '/api/v3/workspaces/1/items/100', root : '/api/v3/workspaces/1/items/1000', partNumber : 'A', quantity : 3 },
         { level : 1, link : '/api/v3/workspaces/1/items/20', quantity : 1, mbom : { link : '/api/v3/workspaces/1/items/120' } },
-        { level : 2, link : '/api/v3/workspaces/1/items/200', partNumber : 'B', quantity : 4 },
+        { level : 2, link : '/api/v3/workspaces/1/items/200', root : '/api/v3/workspaces/1/items/2000', partNumber : 'B', quantity : 4 },
         { level : 1, link : '/api/v3/workspaces/1/items/30', quantity : 1, ignoreInMBOM : true },
         { level : 2, link : '/api/v3/workspaces/1/items/300', partNumber : 'IGNORED', quantity : 9 }
     ];
 
     const expected = vm.runInContext('getHolisticEBOMTotals()', context);
-    assert.strictEqual(expected['/api/v3/workspaces/1/items/100'].quantity, 6);
-    assert.strictEqual(expected['/api/v3/workspaces/1/items/200'].quantity, 4);
+    assert.strictEqual(expected['/api/v3/workspaces/1/items/1000'].quantity, 6);
+    assert.strictEqual(expected['/api/v3/workspaces/1/items/2000'].quantity, 4);
     assert.strictEqual(expected['/api/v3/workspaces/1/items/300'], undefined);
 
     const manufacturingParts = [
         { level : 0, link : '/api/v3/workspaces/1/items/500', quantity : 0 },
         { level : 1, link : '/api/v3/workspaces/1/items/501', quantity : 1, isProcess : true },
-        { level : 2, link : '/api/v3/workspaces/1/items/200', partNumber : 'B', quantity : 4, isProcess : false },
+        { level : 2, link : '/api/v3/workspaces/1/items/201', ebomRoot : '/api/v3/workspaces/1/items/2000', partNumber : 'B', quantity : 4, isProcess : false },
         { level : 1, link : '/api/v3/workspaces/1/items/502', quantity : 1, isProcess : true },
-        { level : 2, link : '/api/v3/workspaces/1/items/100', partNumber : 'A', quantity : 6, isProcess : false }
+        { level : 2, link : '/api/v3/workspaces/1/items/101', ebomRoot : '/api/v3/workspaces/1/items/1000', partNumber : 'A', quantity : 6, isProcess : false }
     ];
     const actual = {};
     context.manufacturingParts = manufacturingParts;
@@ -97,15 +98,15 @@ async function run() {
         context
     );
 
-    assert.strictEqual(actual['/api/v3/workspaces/1/items/100'].quantity, 6);
-    assert.strictEqual(actual['/api/v3/workspaces/1/items/200'].quantity, 4);
+    assert.strictEqual(actual['/api/v3/workspaces/1/items/1000'].quantity, 6);
+    assert.strictEqual(actual['/api/v3/workspaces/1/items/2000'].quantity, 4);
 
     context.fetchHolisticMBOMParts = async function(link) {
         assert.strictEqual(link, '/api/v3/workspaces/1/items/110');
         return [
             { level : 0, link : '/api/v3/workspaces/1/items/110', quantity : 0 },
             { level : 1, link : '/api/v3/workspaces/1/items/111', quantity : 1, isProcess : true },
-            { level : 2, link : '/api/v3/workspaces/1/items/100', partNumber : 'A', quantity : 3, isProcess : false }
+            { level : 2, link : '/api/v3/workspaces/1/items/101', ebomRoot : '/api/v3/workspaces/1/items/1000', partNumber : 'A', quantity : 3, isProcess : false }
         ];
     };
     context.nestedManufacturingParts = [
@@ -115,6 +116,7 @@ async function run() {
             link      : '/api/v3/workspaces/1/items/110',
             quantity  : 2,
             ebom      : { link : '/api/v3/workspaces/1/items/10' },
+            type      : 'Manufacturing',
             isProcess : false
         }
     ];
@@ -123,14 +125,23 @@ async function run() {
         'aggregateHolisticMBOMParts(nestedManufacturingParts, 0, 1, nestedActual, new Set(), [])',
         context
     );
-    assert.strictEqual(context.nestedActual['/api/v3/workspaces/1/items/100'].quantity, 6);
+    assert.strictEqual(context.nestedActual['/api/v3/workspaces/1/items/1000'].quantity, 6);
+
+    assert.strictEqual(vm.runInContext(
+        "isHolisticExpandableMBOMPart({ type: 'Mechanical', ebom: { link: '/api/v3/workspaces/1/items/100' } })",
+        context
+    ), false);
+    assert.strictEqual(vm.runInContext(
+        "isHolisticExpandableMBOMPart({ type: 'Manufacturing', ebom: { link: '/api/v3/workspaces/1/items/10' } })",
+        context
+    ), true);
 
     context.expected = expected;
     context.actual = actual;
-    assert.strictEqual(vm.runInContext("getHolisticComparisonState(expected, actual, '/api/v3/workspaces/1/items/100')", context), 'match');
+    assert.strictEqual(vm.runInContext("getHolisticComparisonState(expected, actual, '/api/v3/workspaces/1/items/1000')", context), 'match');
 
-    actual['/api/v3/workspaces/1/items/100'].quantity = 5;
-    assert.strictEqual(vm.runInContext("getHolisticComparisonState(expected, actual, '/api/v3/workspaces/1/items/100')", context), 'different');
+    actual['/api/v3/workspaces/1/items/1000'].quantity = 5;
+    assert.strictEqual(vm.runInContext("getHolisticComparisonState(expected, actual, '/api/v3/workspaces/1/items/1000')", context), 'different');
 
     actual['/api/v3/workspaces/1/items/999'] = { quantity : 1, partNumbers : ['EXTRA'] };
     assert.strictEqual(vm.runInContext("getHolisticComparisonState(expected, actual, '/api/v3/workspaces/1/items/999')", context), 'additional');

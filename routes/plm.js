@@ -3943,19 +3943,23 @@ router.post('/bom-update', function(req, res, next) {
     console.log();
 
     let linkParent = (typeof req.body.linkParent !== 'undefined') ? req.body.linkParent : '/api/v3/workspaces/' + req.body.wsIdParent + '/items/' + req.body.dmsIdParent;
-    let linkChild  = (typeof req.body.linkChild  !== 'undefined') ? req.body.linkChild  : '/api/v3/workspaces/' + req.body.wsIdChild  + '/items/' + req.body.dmsIdChild;
-    let isPinned   = (typeof req.body.pinned     === 'undefined') ? false : (req.body.pinned.toLowerCase() == 'true');
-    let quantity   = (typeof req.body.quantity   === 'undefined') ? 1 : req.body.quantity;
+    let linkChild  = null;
+    let quantity   = (typeof req.body.quantity === 'undefined') ? 1 : req.body.quantity;
+
+    if(typeof req.body.linkChild !== 'undefined') {
+        linkChild = req.body.linkChild;
+    } else if(typeof req.body.wsIdChild !== 'undefined' && typeof req.body.dmsIdChild !== 'undefined') {
+        linkChild = '/api/v3/workspaces/' + req.body.wsIdChild + '/items/' + req.body.dmsIdChild;
+    }
     
     let url = req.app.locals.tenantLink + linkParent + '/bom-items/' + req.body.edgeId;
     
     let params = {
-        quantity  : parseFloat(quantity),
-        isPinned  : isPinned,
-        item      : { 
-            link  : linkChild
-        }
+        quantity : parseFloat(quantity)
     };
+
+    if(linkChild !== null) params.item = { link : linkChild };
+    if(typeof req.body.pinned !== 'undefined') params.isPinned = (String(req.body.pinned).toLowerCase() === 'true');
 
     if(typeof req.body.number !== 'undefined') params.itemNumber = Number(req.body.number);
     

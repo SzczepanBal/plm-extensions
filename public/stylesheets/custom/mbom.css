@@ -83,45 +83,45 @@ body.mode-erp #erp {
     margin: 0;
 }
 
-/* Custom MBOM layout: MBOM / EBOM / viewer = 40 / 30 / 30. */
+/* Custom MBOM layout: MBOM / EBOM / viewer = 35 / 35 / 30. */
 :root {
     --custom-details-mbom-share: 240px;
 }
 
 #mbom {
-    width: calc(40% - (2 * var(--border-h)));
+    width: calc(35% - (2 * var(--border-h)));
 }
 
 #tabs {
-    left: 40%;
+    left: 35%;
 }
 
 .viewer {
-    left: calc(50% + (var(--border-h) / 2));
+    left: calc(53.846% + (var(--border-h) / 2));
 }
 
 #ebom {
-    width: calc(50% - (var(--border-h) / 2));
+    width: calc(53.846% - (var(--border-h) / 2));
 }
 
-/* Custom layout without viewer: MBOM / EBOM = 60 / 40. */
+/* Custom layout without viewer: MBOM / EBOM = 50 / 50. */
 body.mode-ebom.no-viewer #mbom {
-    right: 40%;
+    right: 50%;
     width: unset;
 }
 
 body.mode-ebom.no-viewer #tabs {
-    left: 60%;
+    left: 50%;
     width: unset;
 }
 
 body.details-on.no-viewer #mbom {
     right: unset;
-    width: calc(60% - (2 * var(--border-h)) - var(--custom-details-mbom-share));
+    width: calc(50% - (2 * var(--border-h)) - var(--custom-details-mbom-share));
 }
 
 body.details-on.no-viewer #tabs {
-    left: calc(60% - var(--custom-details-mbom-share));
+    left: calc(50% - var(--custom-details-mbom-share));
 }
 
 /* Operations & Suppliers is not used in the custom MBOM UI. */
@@ -160,38 +160,75 @@ body.details-on.no-viewer #tabs {
     border-radius: 0 2px 2px 0;
 }
 
-/* Keep the engineering hierarchy visible and show its linked mBOM as a
-   separate, persistent navigation marker. */
+/* Linked mBOM state marker: keep it on the right side of the eBOM row,
+   immediately before the row action area. */
 #ebom .linked-mbom-marker {
     align-self: center;
     box-sizing: border-box;
     color: var(--color-gray-600);
     cursor: pointer;
     flex: 0 0 var(--height-item);
-    font-size: 16px;
+    font-size: 18px;
     height: var(--height-item);
-    line-height: calc(var(--height-item) - 2px);
-    margin: 0 2px;
+    line-height: var(--height-item);
+    margin-left: 4px;
     max-width: var(--height-item);
     min-width: var(--height-item);
+    outline: none;
     padding: 0;
+    position: relative;
     text-align: center;
     width: var(--height-item);
 }
 
 #ebom .linked-mbom-marker:hover,
+#ebom .linked-mbom-marker:focus-visible,
 #ebom .linked-mbom-marker.active {
-    border-color: var(--color-blue-500);
     color: var(--color-blue-500);
 }
 
-#ebom .linked-mbom-marker.loading {
-    opacity: 0.45;
+#ebom .linked-mbom-marker.active {
+    font-variation-settings: 'FILL' 1;
+}
+
+#ebom .linked-mbom-marker.loading::before {
+    animation: linked-mbom-marker-spin 0.8s linear infinite;
+    border: 2px solid var(--color-gray-600);
+    border-radius: 50%;
+    border-top-color: var(--color-blue-500);
+    box-sizing: border-box;
+    content: '';
+    display: inline-block;
+    height: 16px;
+    vertical-align: middle;
+    width: 16px;
 }
 
 #ebom .linked-mbom-marker.error {
-    border-color: var(--color-status-red);
-    color: var(--color-status-red);
+    color: var(--color-gray-600);
+}
+
+#ebom .linked-mbom-marker.error::after {
+    align-items: center;
+    background: var(--color-status-red);
+    border-radius: 50%;
+    color: white;
+    content: '!';
+    display: flex;
+    font-family: Arial, sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    height: 12px;
+    justify-content: center;
+    line-height: 12px;
+    position: absolute;
+    right: 1px;
+    top: 2px;
+    width: 12px;
+}
+
+@keyframes linked-mbom-marker-spin {
+    to { transform: rotate(360deg); }
 }
 
 #mbom .item.linked-mbom-focus > .item-head {
