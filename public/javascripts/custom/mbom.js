@@ -1630,12 +1630,23 @@
         });
     }
 
-    function attachCustomEBOMItemFocus(elemItem) {
-        if(!elemItem || elemItem.length === 0) return;
+    function setupCustomEBOMItemFocus() {
+        let elemEBOM = document.getElementById('ebom');
+        if(!elemEBOM || elemEBOM.getAttribute('data-linked-focus-ready') === 'true') return;
 
-        elemItem.off('click.custom-linked-focus').on('click.custom-linked-focus', function() {
-            focusLinkedMBOMItemForEBOM($(this));
-        });
+        elemEBOM.setAttribute('data-linked-focus-ready', 'true');
+        elemEBOM.addEventListener('click', function(e) {
+            let elemTarget = $(e.target);
+
+            // Keep dedicated controls independent. The production-hall icon
+            // retains its own load-and-focus behavior.
+            if(elemTarget.closest('.linked-mbom-marker, .item-actions, .item-toggle, input, select, button, a').length > 0) return;
+
+            let elemItem = elemTarget.closest('.item');
+            if(elemItem.length === 0 || elemItem.closest('#ebom').length === 0) return;
+
+            focusLinkedMBOMItemForEBOM(elemItem);
+        }, true);
     }
 
     function enableSubMBOMOperationTarget(elemItem) {
@@ -6380,6 +6391,7 @@
         insertAddAssemblyIndexButton();
         insertMBOMOverviewButtons();
         setupAddProcessPicker();
+        setupCustomEBOMItemFocus();
         insertERPTab();
         attachERPTabEvents();
         attachCustomModeResizeEvents();
@@ -6566,7 +6578,6 @@
             if(bomType === 'ebom') {
                 addEBOMMakeFactoryAction(elemNode, resolvedNode);
                 removeEBOMMBOMNavigationButtons(elemNode);
-                attachCustomEBOMItemFocus(elemNode);
 
                 let linkedMBOM = getBOMLinkedFieldLink(resolvedNode ? resolvedNode.mbom : '');
                 if(!isBlank(linkedMBOM)) addLinkedMBOMMarker(elemNode, linkedMBOM);
