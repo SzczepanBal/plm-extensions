@@ -1788,7 +1788,8 @@
 
     function getMBOMSaveLink(elemItem) {
         if(!elemItem || elemItem.length === 0) return '';
-        return elemItem.attr('data-link-mbom') || elemItem.attr('data-link') || '';
+        let normalizedLink = getMBOMChildSaveLink(elemItem);
+        return normalizedLink || elemItem.attr('data-link-mbom') || elemItem.attr('data-link') || '';
     }
 
     function getMBOMChildSaveLink(elemItem) {
@@ -6089,12 +6090,12 @@
             !hasMBOMShortcut(elemItem);
     }
 
-    function setHolisticItemState(elemItem, state) {
+    function setHolisticItemState(elemItem, state, markQuantity) {
         elemItem.removeClass('additional different match different-qty different-revision enable-update');
         if(isBlank(state)) return;
 
         elemItem.addClass(state);
-        if(state === 'different') elemItem.addClass('different-qty');
+        if(state === 'different' && markQuantity === true) elemItem.addClass('different-qty');
     }
 
     function getHolisticItemState(elemItem) {
@@ -6183,7 +6184,7 @@
 
             let key = normalizePLMLink(elemItem.attr('data-root') || elemItem.attr('data-link'));
             let state = getHolisticComparisonState(expected, actual, key);
-            setHolisticItemState(elemItem, state);
+            setHolisticItemState(elemItem, state, true);
         });
 
         applyHolisticTreeRollups('#ebom');
@@ -6200,7 +6201,7 @@
                 state = getRenderedEBOMStateByKey(key);
             }
 
-            setHolisticItemState(elemItem, state);
+            setHolisticItemState(elemItem, state, isRenderedMBOMTerminal(elemItem));
         });
 
         applyHolisticTreeRollups('#mbom');
@@ -6713,6 +6714,7 @@
 
                 let requests = [];
                 let elements = [];
+                let payloads = [];
 
                 $('.pending-update').each(function() {
 
@@ -6724,39 +6726,36 @@
                         let edMakeBuy    = elemItem.find('.item-make-buy').first().val();
                         let isEBOMItem   = elemItem.hasClass('is-ebom-item');
                         let linkParent   = getMBOMSaveLink(elemParent);
-                        let dbLink       = getPLMItemLevelLink(elemItem.attr('data-link-db') || elemItem.attr('data-link'));
-                        let edLink       = getPLMItemLevelLink(elemItem.attr('data-link'));
-                        let dbNumber     = elemItem.attr('data-number-db');
-                        let edNumber     = elemItem.attr('data-number');
-                        let dbMakeBuy    = elemItem.attr('data-make-buy');
+                        let linkChild    = getMBOMChildSaveLink(elemItem);
 
                         let params = { 
                             linkParent : linkParent,
+                            linkChild  : linkChild,
                             edgeId     : elemItem.attr('data-edge'),
-                            quantity   : edQty
+                            number     : elemItem.attr('data-number'),
+                            pinned     : (isEBOMItem && config.pinEBOMItemsInMBOM),
+                            quantity   : edQty,
+                            fields     : []
                         };
 
                         if(isBlank(linkParent)) {
                             console.warn('MBOM custom: missing MBOM parent link while updating item', elemItem.attr('data-link'));
                             return;
                         }
-                        if(dbLink !== edLink) {
-                            let linkChild = getMBOMChildSaveLink(elemItem);
-                            if(isBlank(linkChild)) {
-                                console.warn('MBOM custom: missing MBOM child link while updating item', elemItem.attr('data-link'));
-                                return;
-                            }
-                            params.linkChild = linkChild;
-                            params.pinned = (isEBOMItem && config.pinEBOMItemsInMBOM);
+                        if(isBlank(linkChild)) {
+                            console.warn('MBOM custom: missing MBOM child link while updating item', elemItem.attr('data-link'));
+                            return;
                         }
-                        if(dbNumber !== edNumber) params.number = edNumber;
 
-                        if(config.displayOptions.bomColumnMakeBuy && dbMakeBuy !== edMakeBuy) {
-                            params.fields = [{ link : bomViewLinksMBOM.makeBuy, value : { link : edMakeBuy } }];
+                        if(config.displayOptions.bomColumnMakeBuy &&
+                            !isBlank(bomViewLinksMBOM.makeBuy) &&
+                            !isBlank(edMakeBuy)) {
+                            params.fields.push({ link : bomViewLinksMBOM.makeBuy, value : { link : edMakeBuy } });
                         }
 
                         requests.push($.post('/plm/bom-update', params));
                         elements.push(elemItem);
+                        payloads.push(params);
 
                     }
 
@@ -6765,10 +6764,22 @@
                 Promise.all(requests).then(function(responses) {
 
                     let index = 0;
+                    let failed = false;
 
                     for(let response of responses) {
 
-                        let elemItem = elements[index++];
+                        let elemItem = elements[index];
+                        let payload = payloads[index++];
+
+                        if(response.error) {
+                            failed = true;
+                            console.error('MBOM custom: BOM item update failed', {
+                                payload  : payload,
+                                response : response
+                            });
+                            continue;
+                        }
+
                             elemItem.removeClass('pending-update');
                             elemItem.attr('data-qty', response.params.quantity);
 
@@ -6784,6 +6795,12 @@
                             elemItem.attr('data-make-buy', response.params.fields[0].value.link);
                         }
                 
+                    }
+
+                    if(failed) {
+                        showErrorMessage('Error while updating BOM items', 'One or more BOM rows could not be saved. The rejected payload is available in the browser console.');
+                        endProcessing();
+                        return;
                     }
 
                     updateBOMItems();

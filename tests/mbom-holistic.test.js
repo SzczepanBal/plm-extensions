@@ -62,7 +62,10 @@ vm.createContext(context);
     'getHolisticMBOMPartKey',
     'isHolisticExpandableMBOMPart',
     'aggregateHolisticMBOMParts',
-    'getHolisticComparisonState'
+    'getHolisticComparisonState',
+    'getMBOMSaveLink',
+    'getMBOMChildSaveLink',
+    'setHolisticItemState'
 ].forEach(function(name) {
     vm.runInContext(extractFunction(name), context);
 });
@@ -145,6 +148,55 @@ async function run() {
 
     actual['/api/v3/workspaces/1/items/999'] = { quantity : 1, partNumbers : ['EXTRA'] };
     assert.strictEqual(vm.runInContext("getHolisticComparisonState(expected, actual, '/api/v3/workspaces/1/items/999')", context), 'additional');
+
+    function createStatusElement(classes) {
+        return {
+            classes : new Set(classes || []),
+            removeClass(value) {
+                String(value).split(/\s+/).forEach((name) => this.classes.delete(name));
+                return this;
+            },
+            addClass(value) {
+                String(value).split(/\s+/).forEach((name) => this.classes.add(name));
+                return this;
+            }
+        };
+    }
+
+    context.rollupElement = createStatusElement(['different-qty']);
+    vm.runInContext("setHolisticItemState(rollupElement, 'different')", context);
+    assert.strictEqual(context.rollupElement.classes.has('different'), true);
+    assert.strictEqual(context.rollupElement.classes.has('different-qty'), false);
+
+    context.directMismatchElement = createStatusElement();
+    vm.runInContext("setHolisticItemState(directMismatchElement, 'different', true)", context);
+    assert.strictEqual(context.directMismatchElement.classes.has('different'), true);
+    assert.strictEqual(context.directMismatchElement.classes.has('different-qty'), true);
+
+    function createLinkElement(attributes) {
+        return {
+            length : 1,
+            attr(name) {
+                return attributes[name];
+            }
+        };
+    }
+
+    context.apiLinkElement = createLinkElement({
+        'data-link-mbom' : '/api/v3/workspaces/57/items/19466'
+    });
+    assert.strictEqual(
+        vm.runInContext('getMBOMChildSaveLink(apiLinkElement)', context),
+        '/api/v3/workspaces/57/items/19466'
+    );
+
+    context.urnLinkElement = createLinkElement({
+        'data-link-mbom' : 'urn:adsk.plm:tenant.workspace.item:TENANT.57.19466'
+    });
+    assert.strictEqual(
+        vm.runInContext('getMBOMSaveLink(urnLinkElement)', context),
+        '/api/v3/workspaces/57/items/19466'
+    );
 
     console.log('Holistic mBOM comparison tests passed.');
 }
