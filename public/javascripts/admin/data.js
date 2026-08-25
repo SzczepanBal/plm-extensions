@@ -1251,42 +1251,67 @@ function getNextRecords() {
         data    : run.params, 
         success : function(response) {
 
-            if(run.total < 0) {
-                if(run.actionId === 'import-attachments') run.total = response.totalCountFiles;
-                else run.total = response.data.totalResultCount || response.data.total;
-                $('#progress').removeClass('hidden');
-            }
+            if(!run.active) return;
 
-            if(isBlank(run.total)) run.total = 0;
+            try {
 
-            updateProgress(0);
-            setRecordsData(response);
+                setRecordsData(response);
 
-            if(records.length === 0) {
-                endProcessing();
-            } else {
-                if(run.actionId === 'import-attachments') {
-                    let record = records[0];
-                    if(record.type == 'file') addLogEntry('Next file : ' + record.name);
-                    else addLogEntry('Next file : ' + record.name + '/' + record.files[0].name);
-                } else if(records.length === 1) addLogEntry('Found next record to process');
-                else addLogEntry('Found next ' + records.length + ' records to process');
-                processNextRecords();
+                if(run.total < 0) {
+                    if(run.actionId === 'import-attachments') run.total = response.totalCountFiles;
+                    else run.total = response.data.totalResultCount || response.data.total;
+                    $('#progress').removeClass('hidden');
+                }
+
+                if(isBlank(run.total)) run.total = 0;
+
+                updateProgress(0);
+
+                if(records.length === 0) {
+                    endProcessing();
+                } else {
+                    if(run.actionId === 'import-attachments') {
+                        let record = records[0];
+                        if(record.type == 'file') addLogEntry('Next file : ' + record.name);
+                        else addLogEntry('Next file : ' + record.name + '/' + record.files[0].name);
+                    } else if(records.length === 1) addLogEntry('Found next record to process');
+                    else addLogEntry('Found next ' + records.length + ' records to process');
+                    processNextRecords();
+                }
+
+            } catch(error) {
+                logUnexpectedProcessingError(error);
             }
             
+        },
+        error : function(error) {
+            if(run.active) logUnexpectedProcessingError(error);
         }
     });
 
 }
 function setRecordsData(response) {
 
+    if(isBlank(response)) throw new Error('The records request returned an empty response');
+    if(response.error) throw response;
+
     if(run.actionId === 'import-attachments') {
         records = response.contents;
         if(response.totalCountFiles === 0) records = [];
-        return;
+    } else {
+        if(isBlank(response.data) || (typeof response.data !== 'object')) {
+            throw new Error('The records request did not return a data object');
+        }
+
+        records = response.data.row || response.data.items;
     }
 
-    records = response.data.row || response.data.items;
+    // Some Fusion Manage endpoints return a single item as an object instead
+    // of a one-element array. Normalize that valid response before processing.
+    if(!Array.isArray(records)) {
+        if(!isBlank(records) && (typeof records === 'object')) records = [ records ];
+        else throw new Error('The records request did not return a records collection');
+    }
 
     for(let record of records) {
 
@@ -1679,6 +1704,7 @@ function getResponseErrorMessage(response) {
 function getProcessingErrorMessage(error) {
 
     if(isBlank(error)) return 'Unknown request error';
+    if(error.error === true) return getResponseErrorMessage(error);
 
     let response = error.responseJSON;
     let message  = '';
