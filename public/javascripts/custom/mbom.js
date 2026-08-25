@@ -308,23 +308,33 @@
         });
     }
 
-    function revealLinkedMBOMItem(elemItem) {
+    function revealLinkedTreeItem(elemItem, panelSelector, focusClass) {
         if(!elemItem || elemItem.length === 0) return;
 
         elemItem.parents('.item-bom').each(function() {
             let elemBOM = $(this);
             elemBOM.removeClass('hidden');
+            let elemParentItem = elemBOM.parent('.item');
             elemBOM.prev('.item-head').children('.item-toggle')
                 .removeClass('icon-expand')
                 .addClass('icon-collapse');
+            setInlineSubMBOMToggleState(elemParentItem, true);
         });
 
-        $('#mbom').find('.linked-mbom-focus').removeClass('linked-mbom-focus');
-        elemItem.addClass('linked-mbom-focus');
+        $(panelSelector).find('.' + focusClass).removeClass(focusClass);
+        elemItem.addClass(focusClass);
 
         if(elemItem[0] && typeof elemItem[0].scrollIntoView === 'function') {
             elemItem[0].scrollIntoView({ behavior : 'smooth', block : 'center' });
         }
+    }
+
+    function revealLinkedMBOMItem(elemItem) {
+        revealLinkedTreeItem(elemItem, '#mbom', 'linked-mbom-focus');
+    }
+
+    function revealLinkedEBOMItem(elemItem) {
+        revealLinkedTreeItem(elemItem, '#ebom', 'linked-ebom-focus');
     }
 
     function focusLinkedMBOMFromEBOM(elemEBOMItem, elemMarker) {
@@ -1491,6 +1501,88 @@
         return elemMatch;
     }
 
+    function findLinkedMBOMItemForEBOM(elemItem) {
+        if(!elemItem || elemItem.length === 0) return $();
+
+        let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(elemItem);
+        if(!isBlank(linkedMBOM)) {
+            let elemLinkedMBOM = findRenderedMBOMItemByLink(linkedMBOM);
+            if(elemLinkedMBOM.length > 0) return elemLinkedMBOM;
+        }
+
+        let ebomLink = elemItem.attr('data-link') || '';
+        let ebomRoot = elemItem.attr('data-ebom-root') || elemItem.attr('data-root') || '';
+        let partNumber = elemItem.attr('data-part-number') || '';
+        let elemMatch = $();
+
+        $('#mbom .item').each(function() {
+            let elemMBOMItem = $(this);
+            if(elemMBOMItem.hasClass('root') || elemMBOMItem.hasClass('process')) return;
+
+            let linkedEBOM = elemMBOMItem.attr('data-ebom') || elemMBOMItem.attr('data-link-ebom') || '';
+            let mbomRoot = elemMBOMItem.attr('data-ebom-root') || elemMBOMItem.attr('data-root') || '';
+
+            if(!isBlank(ebomLink) &&
+                !isBlank(linkedEBOM) &&
+                normalizePLMLink(ebomLink) === normalizePLMLink(linkedEBOM)) {
+                elemMatch = elemMBOMItem;
+                return false;
+            }
+
+            if(!isBlank(ebomRoot) &&
+                normalizePLMLink(ebomRoot) === normalizePLMLink(mbomRoot)) {
+                elemMatch = elemMBOMItem;
+                return false;
+            }
+        });
+
+        if(elemMatch.length > 0 || isBlank(partNumber)) return elemMatch;
+
+        $('#mbom .item').each(function() {
+            let elemMBOMItem = $(this);
+            if(elemMBOMItem.hasClass('root') || elemMBOMItem.hasClass('process')) return;
+            if((elemMBOMItem.attr('data-part-number') || '') === partNumber) {
+                elemMatch = elemMBOMItem;
+                return false;
+            }
+        });
+
+        return elemMatch;
+    }
+
+    function getLinkedEBOMAncestor(elemItem) {
+        let elemCurrent = elemItem;
+
+        while(elemCurrent && elemCurrent.length > 0) {
+            if(!isBlank(getLinkedMBOMLinkFromEBOMElement(elemCurrent))) return elemCurrent;
+            elemCurrent = elemCurrent.parent().closest('.item');
+        }
+
+        return $();
+    }
+
+    function focusLinkedMBOMItemForEBOM(elemEBOMItem) {
+        let elemMBOMItem = findLinkedMBOMItemForEBOM(elemEBOMItem);
+        if(elemMBOMItem.length > 0) {
+            revealLinkedMBOMItem(elemMBOMItem);
+            return;
+        }
+
+        let elemLinkedAncestor = getLinkedEBOMAncestor(elemEBOMItem);
+        if(elemLinkedAncestor.length === 0) return;
+
+        let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(elemLinkedAncestor);
+        let elemLinkedMBOM = findRenderedMBOMItemByLink(linkedMBOM);
+        if(elemLinkedMBOM.length === 0) return;
+
+        ensureInlineSubMBOMExpanded(elemLinkedMBOM).then(function(success) {
+            if(!success) return;
+
+            let elemResolvedMBOM = findLinkedMBOMItemForEBOM(elemEBOMItem);
+            revealLinkedMBOMItem(elemResolvedMBOM.length > 0 ? elemResolvedMBOM : elemLinkedMBOM);
+        });
+    }
+
     function selectCustomMBOMItem(elemItem) {
         if(!elemItem || elemItem.length === 0) return;
 
@@ -1513,6 +1605,7 @@
             if(!wasSelected && elemItem.hasClass('selected')) {
                 elemItem.addClass('selected-target');
             }
+            revealLinkedEBOMItem(elemEBOMItem);
             return;
         }
 
@@ -1534,6 +1627,14 @@
             e.stopPropagation();
             e.preventDefault();
             selectCustomMBOMItem($(this));
+        });
+    }
+
+    function attachCustomEBOMItemFocus(elemItem) {
+        if(!elemItem || elemItem.length === 0) return;
+
+        elemItem.off('click.custom-linked-focus').on('click.custom-linked-focus', function() {
+            focusLinkedMBOMItemForEBOM($(this));
         });
     }
 
@@ -6465,6 +6566,7 @@
             if(bomType === 'ebom') {
                 addEBOMMakeFactoryAction(elemNode, resolvedNode);
                 removeEBOMMBOMNavigationButtons(elemNode);
+                attachCustomEBOMItemFocus(elemNode);
 
                 let linkedMBOM = getBOMLinkedFieldLink(resolvedNode ? resolvedNode.mbom : '');
                 if(!isBlank(linkedMBOM)) addLinkedMBOMMarker(elemNode, linkedMBOM);

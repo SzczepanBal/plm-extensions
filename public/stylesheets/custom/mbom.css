@@ -231,7 +231,8 @@ body.details-on.no-viewer #tabs {
     to { transform: rotate(360deg); }
 }
 
-#mbom .item.linked-mbom-focus > .item-head {
+#mbom .item.linked-mbom-focus > .item-head,
+#ebom .item.linked-ebom-focus > .item-head {
     outline: 2px solid var(--color-blue-500);
     outline-offset: -2px;
 }
