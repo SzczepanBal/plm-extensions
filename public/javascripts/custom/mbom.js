@@ -3,6 +3,7 @@
     const rawMaterialsWorkspaceId = 57;
     const addProcessWorkspaceId = 274;
     const addProcessWorkspacePageSize = 250;
+    const rawMaterialFallbackProcessName = 'Ciecie';
     const rawMaterialTypeName = 'Surowiec';
     const rawMaterialTypeQueryValue = 'SUROWIEC';
     const erpStatusProxyUrl = '/plm/custom-erp-status';
@@ -17,6 +18,7 @@
     };
     let addProcessWorkspaceItemsPromise = null;
     let addProcessWorkspaceItemsCache = [];
+    let rawMaterialTargetSequence = 0;
     let rawMaterialSearchPromises = {};
     let holisticMBOMRequests = {};
     let holisticStatusTimer = null;
@@ -271,6 +273,46 @@
         return '';
     }
 
+    function setLinkedEBOMBOMCheckPending(elemEBOMItem, pending) {
+        if(!elemEBOMItem || elemEBOMItem.length === 0) return;
+
+        let isEBOMBOM = elemEBOMItem.closest('#ebom').length > 0 &&
+            !elemEBOMItem.hasClass('root') &&
+            elemEBOMItem.hasClass('item-has-bom');
+        let elemStatus = elemEBOMItem.children('.item-head').children('.item-head-status').first();
+
+        if(!isEBOMBOM) {
+            elemEBOMItem.removeClass('linked-mbom-check-pending');
+            return;
+        }
+
+        elemEBOMItem.toggleClass('linked-mbom-check-pending', pending === true);
+        if(elemStatus.length === 0) return;
+
+        elemStatus.attr('title', pending === true
+            ? 'Light gray: linked mBOM has not been loaded and checked yet'
+            : 'EBOM / MBOM match indicator\r\n- Green : match\r\n- Red : missing in MBOM\r\n- Orange : quantity mismatch');
+    }
+
+    function completeLinkedEBOMBOMCheckForMBOM(elemMBOMItem) {
+        if(!elemMBOMItem || elemMBOMItem.length === 0) return;
+
+        let linkedMBOM = normalizePLMLink(
+            elemMBOMItem.attr('data-link-mbom') ||
+            elemMBOMItem.attr('data-linked-mbom') ||
+            elemMBOMItem.attr('data-link') ||
+            ''
+        );
+        if(isBlank(linkedMBOM)) return;
+
+        $('#ebom').find('.item.linked-mbom-check-pending').each(function() {
+            let elemEBOMItem = $(this);
+            if(normalizePLMLink(getLinkedMBOMLinkFromEBOMElement(elemEBOMItem)) === linkedMBOM) {
+                setLinkedEBOMBOMCheckPending(elemEBOMItem, false);
+            }
+        });
+    }
+
     function mirrorStandardStatusToLinkedEBOMRows() {
         $('#ebom').find('.item').has('.linked-mbom-marker').each(function() {
             let elemEBOMItem = $(this);
@@ -356,6 +398,7 @@
 
         ensureInlineSubMBOMExpanded(elemMBOMItem).then(function(success) {
             if(success) {
+                completeLinkedEBOMBOMCheckForMBOM(elemMBOMItem);
                 setLinkedMBOMMarkerState(elemMarker, 'active');
                 revealLinkedMBOMItem(elemMBOMItem);
             } else {
@@ -402,6 +445,10 @@
         if(elemHead.length === 0) return $();
 
         let elemMarker = elemHead.children('.linked-mbom-marker').first();
+        let elemLinkedMBOM = findRenderedMBOMItemByLink(linkedMBOM);
+        let isChecked = elemLinkedMBOM.length > 0 &&
+            elemLinkedMBOM.attr('data-inline-submbom-loaded') === 'true';
+        setLinkedEBOMBOMCheckPending(elemItem, !isChecked);
         if(elemMarker.length > 0) return elemMarker;
 
         elemMarker = $('<div></div>')
@@ -513,7 +560,20 @@
         if(!elemHeader || elemHeader.length === 0) return 'root';
         let elemItem = elemHeader.closest('.item');
         if(elemItem.length === 0) return 'root';
-        return elemItem.attr('data-link') || elemItem.attr('data-number-db') || elemItem.attr('data-number') || 'root';
+
+        let itemLink = elemItem.attr('data-link');
+        if(!isBlank(itemLink)) return normalizePLMLink(itemLink);
+
+        let edgeId = elemItem.attr('data-edge');
+        if(!isBlank(edgeId)) return 'edge:' + edgeId;
+
+        let targetKey = elemItem.attr('data-raw-material-target-key');
+        if(isBlank(targetKey)) {
+            targetKey = 'new-operation:' + (++rawMaterialTargetSequence);
+            elemItem.attr('data-raw-material-target-key', targetKey);
+        }
+
+        return targetKey;
     }
 
     function getMBOMItemForPart(part) {
@@ -587,7 +647,10 @@
             return elemProcessHeader;
         }
 
-        if(elemMBOMItem.hasClass('process')) {
+        // The editor also assigns .process to the main mBOM root so it can be
+        // selected as a structural target. Only a real operation may receive
+        // raw material directly.
+        if(elemMBOMItem.hasClass('process') && !isMBOMTechnologyItem(elemMBOMItem)) {
             let elemOwnHeader = elemMBOMItem.children('.item-head').first();
             if(elemOwnHeader.length > 0) {
                 ensureInlineSubMBOMContainer(elemMBOMItem);
@@ -600,7 +663,7 @@
             }
         }
 
-        console.warn('MBOM custom: raw material skipped because MBOM item has no direct process child after expansion', {
+        console.info('MBOM custom: MBOM item has no direct process child after expansion', {
             mbomLink   : mbomLink,
             material   : getMaterialValue(part),
             partNumber : getPartNumber(part),
@@ -704,6 +767,33 @@
         if(item.item && item.item.link) return item.item.link;
         if(item.__self__) return item.__self__;
         return '';
+    }
+
+    function normalizeProcessLookupName(value) {
+        let normalized = normalizeComparisonValue(value);
+        if(typeof normalized.normalize === 'function') {
+            normalized = normalized.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        }
+        return normalized.replace(/ł/g, 'l');
+    }
+
+    function findAddProcessWorkspaceItemByName(items, processName) {
+        let normalizedName = normalizeProcessLookupName(processName);
+        let fallbackMatch = null;
+
+        for(let item of (Array.isArray(items) ? items : [])) {
+            let normalizedTitle = normalizeProcessLookupName(getAddProcessItemTitle(item));
+            if(normalizedTitle === normalizedName) return item;
+
+            if(!fallbackMatch && (
+                normalizedTitle.indexOf(normalizedName + ' ') === 0 ||
+                normalizedTitle.indexOf(normalizedName + ' -') === 0
+            )) {
+                fallbackMatch = item;
+            }
+        }
+
+        return fallbackMatch;
     }
 
     function getSearchItemFieldValue(item, fieldId) {
@@ -1314,6 +1404,38 @@
         return elemBOM;
     }
 
+    function insertWorkspaceProcessItem(selectedItem, elemParentItem, fallbackTitle) {
+        if(!selectedItem || !elemParentItem || elemParentItem.length === 0) return $();
+
+        let title = getAddProcessItemTitle(selectedItem);
+        if(isBlank(title)) title = fallbackTitle || '';
+        if(isBlank(title)) return $();
+
+        let elemBOM = getProcessParentBOM(elemParentItem, true);
+        if(elemBOM.length === 0) return $();
+
+        let node = {
+            level       : getElementLevel(elemParentItem) + 1,
+            bomType     : 'mbom',
+            title       : title,
+            hasChildren : true,
+            isEBOMItem  : false,
+            isProcess   : true,
+            isLeaf      : false,
+            icon        : 'radio-process',
+            code        : getNextProcessCode(elemBOM),
+            revision    : '-',
+            quantity    : 1
+        };
+
+        let elemNew = insertBOMPartListNode('mbom', null, node);
+        if(disassembleMode) elemBOM.prepend(elemNew);
+        else elemBOM.append(elemNew);
+
+        updateMBOMNumbers();
+        return elemNew;
+    }
+
     function getNextProcessCode(elemBOM) {
         let highestCode = 0;
         let elemTargetBOM = elemBOM && elemBOM.length > 0 ? elemBOM : getProcessParentBOM();
@@ -1578,6 +1700,7 @@
         ensureInlineSubMBOMExpanded(elemLinkedMBOM).then(function(success) {
             if(!success) return;
 
+            completeLinkedEBOMBOMCheckForMBOM(elemLinkedMBOM);
             let elemResolvedMBOM = findLinkedMBOMItemForEBOM(elemEBOMItem);
             revealLinkedMBOMItem(elemResolvedMBOM.length > 0 ? elemResolvedMBOM : elemLinkedMBOM);
         });
@@ -1858,36 +1981,12 @@
         }
 
         let elemParentItem = getSelectedProcessParentItem();
-        let elemBOM = getProcessParentBOM(elemParentItem, true);
+        let elemNew = insertWorkspaceProcessItem(selectedItem, elemParentItem, title);
 
-        if(elemBOM.length === 0) {
+        if(elemNew.length === 0) {
             showErrorMessage('Add Process', 'Could not find the selected MBOM target.');
             return false;
         }
-
-        let processCode = getNextProcessCode(elemBOM);
-        let parentLevel = getElementLevel(elemParentItem);
-
-        let node = {
-            level       : parentLevel + 1,
-            bomType     : 'mbom',
-            title       : title,
-            hasChildren : true,
-            isEBOMItem  : false,
-            isProcess   : true,
-            isLeaf      : false,
-            icon        : 'radio-process',
-            code        : processCode,
-            revision    : '-',
-            quantity    : 1
-        };
-
-        let elemNew = insertBOMPartListNode('mbom', null, node);
-
-        if(disassembleMode) elemBOM.prepend(elemNew);
-        else elemBOM.append(elemNew);
-
-        updateMBOMNumbers();
         elemParentItem.addClass('selected');
         selectProcess(elemParentItem);
 
@@ -3050,6 +3149,8 @@
                 elemToggle.removeClass('icon-expand').addClass('icon-collapse');
             }
             setInlineSubMBOMToggleState(elemItem, true);
+            completeLinkedEBOMBOMCheckForMBOM(elemItem);
+            if(typeof setStatusBar === 'function') setStatusBar();
 
             return Promise.resolve(true);
         }
@@ -3060,6 +3161,7 @@
             elemExistingBOM.removeClass('hidden');
             elemItem.attr('data-inline-submbom-loaded', 'true');
             setInlineSubMBOMToggleState(elemItem, true);
+            completeLinkedEBOMBOMCheckForMBOM(elemItem);
 
             console.info('MBOM custom: reusing sub-MBOM children already rendered by the main BOM response', {
                 link       : elemItem.attr('data-link'),
@@ -3127,6 +3229,8 @@
                 appendInlineSubMBOMChildren(elemItem, children);
                 elemItem.attr('data-inline-submbom-loaded', 'true');
                 setInlineSubMBOMToggleState(elemItem, true);
+                completeLinkedEBOMBOMCheckForMBOM(elemItem);
+                if(typeof setStatusBar === 'function') setStatusBar();
                 return true;
             });
         }).catch(function(error) {
@@ -3170,7 +3274,7 @@
             return Promise.resolve(elemMBOMItem);
         }
 
-        if(elemMBOMItem.hasClass('process') && !hasMBOMShortcut(elemMBOMItem)) {
+        if(elemMBOMItem.hasClass('process') && !isMBOMTechnologyItem(elemMBOMItem)) {
             console.log('MBOM custom: MBOM source item is a process node without child process nodes, no expansion needed', {
                 mbomLink   : getPartItemLink(part),
                 targetItem : describeMBOMItem(elemMBOMItem)
@@ -3199,6 +3303,58 @@
             });
             return elemMBOMItem;
         });
+    }
+
+    function ensureRawMaterialFallbackProcess(part) {
+        let elemMBOMItem = getMBOMItemForPart(part);
+        if(!elemMBOMItem || elemMBOMItem.length === 0) return Promise.resolve($());
+
+        let elemExistingHeader = getRawMaterialTargetHeader(part);
+        if(elemExistingHeader.length > 0) return Promise.resolve(elemExistingHeader);
+
+        let pendingPromise = elemMBOMItem.data('raw-material-process-promise');
+        if(pendingPromise) return pendingPromise;
+
+        pendingPromise = loadAddProcessWorkspaceItems().then(function(items) {
+            let elemHeader = getRawMaterialTargetHeader(part);
+            if(elemHeader.length > 0) return elemHeader;
+
+            let processItem = findAddProcessWorkspaceItemByName(items, rawMaterialFallbackProcessName);
+            if(!processItem) {
+                throw new Error('Operation "' + rawMaterialFallbackProcessName +
+                    '" was not found in workspace ' + addProcessWorkspaceId + '.');
+            }
+
+            let elemProcess = insertWorkspaceProcessItem(
+                processItem,
+                elemMBOMItem,
+                rawMaterialFallbackProcessName
+            );
+            if(elemProcess.length === 0) {
+                throw new Error('Operation "' + rawMaterialFallbackProcessName +
+                    '" could not be inserted below the target mBOM.');
+            }
+
+            let elemProcessHeader = elemProcess.children('.item-head').first();
+            ensureInlineSubMBOMContainer(elemProcess);
+
+            console.log('MBOM custom: added fallback operation for raw material', {
+                operation  : getAddProcessItemTitle(processItem) || rawMaterialFallbackProcessName,
+                mbomLink   : getPartItemLink(part),
+                targetItem : describeMBOMItem(elemMBOMItem)
+            });
+
+            return elemProcessHeader;
+        }).then(function(elemProcessHeader) {
+            elemMBOMItem.removeData('raw-material-process-promise');
+            return elemProcessHeader;
+        }).catch(function(error) {
+            elemMBOMItem.removeData('raw-material-process-promise');
+            throw error;
+        });
+
+        elemMBOMItem.data('raw-material-process-promise', pendingPromise);
+        return pendingPromise;
     }
 
     function resolveMBOMMaterials(mbomParts) {
@@ -3336,10 +3492,13 @@
         $('#confirm-raw-materials').removeClass('disabled').addClass('default');
     }
 
-    function prepareRawMaterialTarget(entry) {
+    function prepareRawMaterialTarget(entry, createFallbackProcess) {
         return ensureMBOMBranchReadyForRawMaterial(entry.part).then(function() {
             let elemHeader = getRawMaterialTargetHeader(entry.part);
-            if(elemHeader.length === 0) return null;
+            if(elemHeader.length > 0 || createFallbackProcess !== true) return elemHeader;
+            return ensureRawMaterialFallbackProcess(entry.part);
+        }).then(function(elemHeader) {
+            if(!elemHeader || elemHeader.length === 0) return null;
 
             let targetKey = getRawMaterialTargetKey(elemHeader);
             return fetchExistingBOMChildren(elemHeader).then(function(existingState) {
@@ -3442,6 +3601,9 @@
 
                     return getRawMaterialInsertQuantity(entry, item).then(function(quantity) {
                         return targetPreparationPromises.get(entry).then(function(targetContext) {
+                            if(targetContext) return targetContext;
+                            return prepareRawMaterialTarget(entry, true);
+                        }).then(function(targetContext) {
                             if(!targetContext) {
                                 console.warn('MBOM custom: cannot find MBOM insertion target', {
                                     material : material,

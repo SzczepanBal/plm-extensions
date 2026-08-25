@@ -44,6 +44,9 @@ const context = {
     getPLMItemLevelLink(value) {
         return value;
     },
+    getAddProcessItemTitle(item) {
+        return item && item.title ? item.title : '';
+    },
     isAssemblyIndexNode() {
         return false;
     }
@@ -52,6 +55,8 @@ const context = {
 vm.createContext(context);
 [
     'normalizeComparisonValue',
+    'normalizeProcessLookupName',
+    'findAddProcessWorkspaceItemByName',
     'parseNumericValue',
     'normalizePLMLink',
     'getBOMBooleanValue',
@@ -71,6 +76,20 @@ vm.createContext(context);
 });
 
 async function run() {
+    context.processItems = [
+        { title : 'Gięcie' },
+        { title : 'Cięcie' },
+        { title : 'Spawanie' }
+    ];
+    assert.strictEqual(
+        vm.runInContext("normalizeProcessLookupName('Cięcie')", context),
+        'ciecie'
+    );
+    assert.strictEqual(
+        vm.runInContext("findAddProcessWorkspaceItemByName(processItems, 'Ciecie').title", context),
+        'Cięcie'
+    );
+
     context.ebomPartsList = [
         { level : 0, link : '/api/v3/workspaces/1/items/1', quantity : 0 },
         { level : 1, link : '/api/v3/workspaces/1/items/10', quantity : 2, mbom : { link : '/api/v3/workspaces/1/items/110' } },

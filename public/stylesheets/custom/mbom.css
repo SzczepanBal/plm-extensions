@@ -227,6 +227,11 @@ body.details-on.no-viewer #tabs {
     width: 12px;
 }
 
+/* A linked eBOM assembly cannot be evaluated until its mBOM branch is loaded. */
+#ebom .item.item-has-bom.linked-mbom-check-pending > .item-head > .item-head-status {
+    background: var(--color-gray-400);
+}
+
 @keyframes linked-mbom-marker-spin {
     to { transform: rotate(360deg); }
 }
