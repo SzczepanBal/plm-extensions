@@ -360,12 +360,12 @@
         if(!elemMarker || elemMarker.length === 0) return;
 
         elemMarker
-            .removeClass('active loading error icon-radio-checked icon-radio-unchecked')
+            .removeClass('active loading error icon-radio-checked icon-radio-unchecked icon-factory')
             .attr('data-state', state);
 
         if(state === 'active') {
             elemMarker
-                .addClass('active icon-radio-checked')
+                .addClass('active icon-factory')
                 .attr('title', 'Linked mBOM is focused or expanded');
         } else if(state === 'loading') {
             elemMarker
@@ -373,11 +373,11 @@
                 .attr('title', 'Linked mBOM is loading');
         } else if(state === 'error') {
             elemMarker
-                .addClass('error icon-radio-unchecked')
+                .addClass('error icon-factory')
                 .attr('title', 'Linked mBOM exists, but could not be loaded');
         } else {
             elemMarker
-                .addClass('icon-radio-unchecked')
+                .addClass('icon-factory')
                 .attr('title', 'Linked mBOM exists - click to focus it');
         }
     }
@@ -2901,6 +2901,19 @@
         if(typeof setStatusBar === 'function') setStatusBar();
     }
 
+    function setInlineSubMBOMToggleState(elemItem, expanded) {
+        if(!elemItem || elemItem.length === 0) return;
+
+        let elemInlineToggle = elemItem.children('.item-head').children('.item-toggle').first()
+            .children('.inline-submbom-toggle').first();
+        if(elemInlineToggle.length === 0) return;
+
+        elemInlineToggle
+            .removeClass('icon-expand icon-collapse icon-radio-checked icon-radio-unchecked')
+            .addClass(expanded ? 'icon-collapse' : 'icon-expand')
+            .attr('title', expanded ? 'Collapse the linked sub-MBOM' : 'Expand the linked sub-MBOM');
+    }
+
     function toggleInlineSubMBOM(elemItem) {
         let elemToggle = elemItem.children('.item-head').children('.item-toggle').first();
         let elemBOM = elemItem.children('.item-bom').first();
@@ -2910,6 +2923,7 @@
         }
 
         elemBOM.toggleClass('hidden');
+        setInlineSubMBOMToggleState(elemItem, !elemBOM.hasClass('hidden'));
     }
 
     function ensureInlineSubMBOMExpanded(elemItem) {
@@ -2923,6 +2937,7 @@
             if(elemToggle.hasClass('icon-expand')) {
                 elemToggle.removeClass('icon-expand').addClass('icon-collapse');
             }
+            setInlineSubMBOMToggleState(elemItem, true);
 
             return Promise.resolve(true);
         }
@@ -2932,6 +2947,7 @@
             elemExistingBOM.children('.inline-submbom-status').remove();
             elemExistingBOM.removeClass('hidden');
             elemItem.attr('data-inline-submbom-loaded', 'true');
+            setInlineSubMBOMToggleState(elemItem, true);
 
             console.info('MBOM custom: reusing sub-MBOM children already rendered by the main BOM response', {
                 link       : elemItem.attr('data-link'),
@@ -2986,6 +3002,7 @@
                     console.info('MBOM custom: no inline sub-MBOM children found for', expansionLink);
                     elemItem.attr('data-inline-submbom-loaded', 'empty');
                     setInlineSubMBOMStatus(elemItem, 'No sub-MBOM children were returned for this item.', true);
+                    setInlineSubMBOMToggleState(elemItem, false);
                     return false;
                 }
 
@@ -2997,6 +3014,7 @@
 
                 appendInlineSubMBOMChildren(elemItem, children);
                 elemItem.attr('data-inline-submbom-loaded', 'true');
+                setInlineSubMBOMToggleState(elemItem, true);
                 return true;
             });
         }).catch(function(error) {
@@ -6271,8 +6289,7 @@
         setStatusBar = function() {
             let result = originalSetStatusBar.apply(this, arguments);
             mirrorStandardStatusToLinkedEBOMRows();
-            applyHolisticTreeRollups('#ebom');
-            applyHolisticTreeRollups('#mbom');
+            applyImmediateStandardStatusRollups();
             return result;
         };
     }
@@ -6401,8 +6418,8 @@
                 .addClass('icon')
                 .addClass('mbom-shortcut')
                 .addClass('inline-submbom-toggle')
-                .addClass('icon-radio-unchecked')
-                .attr('title', 'Expand or collapse the linked sub-MBOM inline')
+                .addClass('icon-expand')
+                .attr('title', 'Expand the linked sub-MBOM')
                 .click(function(e) {
 
                     e.preventDefault();
@@ -6412,6 +6429,13 @@
                     expandInlineSubMBOMForElement(elemItem);
 
                 });
+
+            let elemBOM = elemItem.children('.item-bom').first();
+            let hasRenderedChildren = elemBOM.children('.item').length > 0;
+            let isExpanded = elemBOM.length > 0 &&
+                !elemBOM.hasClass('hidden') &&
+                (elemItem.attr('data-inline-submbom-loaded') === 'true' || hasRenderedChildren);
+            setInlineSubMBOMToggleState(elemItem, isExpanded);
         };
     }
 
