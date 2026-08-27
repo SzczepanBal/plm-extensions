@@ -99,6 +99,11 @@ function onListening() {
 	console.log('  >> Debug Mode Enabled?      ' + app.locals.debugMode);
 	console.log('  >> Listening on             ' + bind);
 
+	let tokenRefreshTestSeconds = Number(process.env.APS_TOKEN_REFRESH_TEST_SECONDS);
+	if(Number.isFinite(tokenRefreshTestSeconds) && (tokenRefreshTestSeconds > 0)) {
+		console.log('  >> Token Refresh Test Mode  ACTIVE - refresh after ' + tokenRefreshTestSeconds + ' seconds');
+	}
+
 	if((app.locals.adminClientId === '') || (app.locals.adminClientSecret === '')) {
 		console.log();	
 		console.log('  The USER SETTINGS MANAGER cannot be used as Admin Client ID/Secret is missing');
