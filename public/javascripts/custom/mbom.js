@@ -278,15 +278,27 @@
 
         let isEBOMBOM = elemEBOMItem.closest('#ebom').length > 0 &&
             !elemEBOMItem.hasClass('root') &&
-            elemEBOMItem.hasClass('item-has-bom');
+            (
+                elemEBOMItem.hasClass('item-has-bom') ||
+                elemEBOMItem.children('.item-bom').children('.item').length > 0
+            );
         let elemStatus = elemEBOMItem.children('.item-head').children('.item-head-status').first();
 
         if(!isEBOMBOM) {
-            elemEBOMItem.removeClass('linked-mbom-check-pending');
+            elemEBOMItem
+                .removeClass('linked-mbom-bom')
+                .removeClass('linked-mbom-check-pending')
+                .removeAttr('data-linked-mbom-status-checked');
             return;
         }
 
+        // A linked engineering assembly already has its own mBOM. Standard
+        // eBOM assembly actions (add node, add children, create mBOM, etc.)
+        // are therefore not valid for this row; only the focus marker remains.
+        elemEBOMItem.addClass('linked-mbom-bom');
         elemEBOMItem.toggleClass('linked-mbom-check-pending', pending === true);
+        if(pending === true) elemEBOMItem.removeAttr('data-linked-mbom-status-checked');
+        else elemEBOMItem.attr('data-linked-mbom-status-checked', 'true');
         if(elemStatus.length === 0) return;
 
         elemStatus.attr('title', pending === true
@@ -398,6 +410,7 @@
 
         ensureInlineSubMBOMExpanded(elemMBOMItem).then(function(success) {
             if(success) {
+                setLinkedEBOMBOMCheckPending(elemEBOMItem, false);
                 completeLinkedEBOMBOMCheckForMBOM(elemMBOMItem);
                 setLinkedMBOMMarkerState(elemMarker, 'active');
                 revealLinkedMBOMItem(elemMBOMItem);
@@ -445,9 +458,7 @@
         if(elemHead.length === 0) return $();
 
         let elemMarker = elemHead.children('.linked-mbom-marker').first();
-        let elemLinkedMBOM = findRenderedMBOMItemByLink(linkedMBOM);
-        let isChecked = elemLinkedMBOM.length > 0 &&
-            elemLinkedMBOM.attr('data-inline-submbom-loaded') === 'true';
+        let isChecked = elemItem.attr('data-linked-mbom-status-checked') === 'true';
         setLinkedEBOMBOMCheckPending(elemItem, !isChecked);
         if(elemMarker.length > 0) return elemMarker;
 

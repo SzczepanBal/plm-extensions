@@ -228,8 +228,15 @@ body.details-on.no-viewer #tabs {
 }
 
 /* A linked eBOM assembly cannot be evaluated until its mBOM branch is loaded. */
-#ebom .item.item-has-bom.linked-mbom-check-pending > .item-head > .item-head-status {
-    background: var(--color-gray-400);
+#ebom .item.linked-mbom-check-pending > .item-head > .item-head-status {
+    background: var(--color-gray-400, #bbbbbb) !important;
+}
+
+/* Linked eBOM assemblies use the production-hall marker for navigation.
+   Standard add/convert/children actions would incorrectly imply that the
+   linked mBOM is missing. */
+#ebom .item.linked-mbom-bom > .item-head > .item-actions {
+    display: none !important;
 }
 
 @keyframes linked-mbom-marker-spin {
