@@ -4,6 +4,8 @@
     const addProcessWorkspaceId = 274;
     const addProcessWorkspacePageSize = 250;
     const rawMaterialFallbackProcessName = 'Ciecie';
+    const rawMaterialAccountingUnitFieldId = 'JEDNOSTKA_ROZLICZENIOWA';
+    const rawMaterialAccountingQuantityFieldId = 'ILOSC_ROZLICZENIOWA';
     const rawMaterialTypeName = 'Surowiec';
     const rawMaterialTypeQueryValue = 'SUROWIEC';
     const erpStatusProxyUrl = '/plm/custom-erp-status';
@@ -49,84 +51,77 @@
         return (material || '').toString();
     }
 
-    function getItemWeightValue(part) {
-        if(!part || !part.details) return NaN;
+    function getMBOMAccountingFieldValue(part, fieldId) {
+        if(!part) return '';
 
-        let weightCandidates = [
-            part.details.ITEM_WEIGHT,
-            part.details['ITEM_WEIGHT'],
-            part.details.WEIGHT,
-            part.details['WEIGHT'],
-            part.details.Weight,
-            part.details['Weight']
-        ];
-
-        for(let candidate of weightCandidates) {
-            let parsed = parseNumericValue(candidate);
-            if(!Number.isNaN(parsed) && parsed > 0) {
-                console.log('MBOM custom: MBOM ITEM_WEIGHT found on part details', {
-                    mbomLink    : getPartItemLink(part),
-                    partNumber  : getPartNumber(part),
-                    rawValue    : candidate,
-                    parsedValue : parsed
-                });
-                return parsed;
-            }
+        if(part.details && Object.prototype.hasOwnProperty.call(part.details, fieldId)) {
+            return part.details[fieldId];
         }
 
-        console.log('MBOM custom: MBOM ITEM_WEIGHT missing on part details', {
-            mbomLink   : getPartItemLink(part),
-            partNumber : getPartNumber(part),
-            candidates : weightCandidates
-        });
+        if(Array.isArray(part.fields)) {
+            let value = getBOMPartFieldValue(part, fieldId);
+            if(value !== null && typeof value !== 'undefined') return value;
+        }
 
-        return NaN;
+        return '';
     }
 
-    function getItemWeightValueFromItemDetails(itemDetails) {
+    function getMBOMAccountingUnit(part) {
+        return normalizeMBOMUnitOfMeasureValue(
+            getMBOMAccountingFieldValue(part, rawMaterialAccountingUnitFieldId)
+        );
+    }
+
+    function getMBOMAccountingQuantity(part) {
+        return parseNumericValue(
+            getMBOMAccountingFieldValue(part, rawMaterialAccountingQuantityFieldId)
+        );
+    }
+
+    function getMBOMAccountingUnitFromItemDetails(itemDetails) {
+        if(!itemDetails || !itemDetails.sections) return '';
+        return normalizeMBOMUnitOfMeasureValue(
+            getSectionFieldValue(itemDetails.sections, rawMaterialAccountingUnitFieldId, '', null)
+        );
+    }
+
+    function getMBOMAccountingQuantityFromItemDetails(itemDetails) {
         if(!itemDetails || !itemDetails.sections) return NaN;
-
-        let candidates = ['ITEM_WEIGHT', 'WEIGHT', 'Weight'];
-        for(let fieldId of candidates) {
-            let value = getSectionFieldValue(itemDetails.sections, fieldId, '', null);
-            let parsed = parseNumericValue(value);
-            if(!Number.isNaN(parsed) && parsed > 0) {
-                console.log('MBOM custom: MBOM ITEM_WEIGHT found in /plm/details fallback', {
-                    fieldId     : fieldId,
-                    rawValue    : value,
-                    parsedValue : parsed
-                });
-                return parsed;
-            }
-        }
-
-        console.log('MBOM custom: MBOM ITEM_WEIGHT missing in /plm/details fallback', {
-            candidateFields : candidates
-        });
-
-        return NaN;
+        return parseNumericValue(
+            getSectionFieldValue(itemDetails.sections, rawMaterialAccountingQuantityFieldId, '', null)
+        );
     }
 
     function fetchMBOMPartMaterialsFromDetails(mbomParts) {
         let requests = mbomParts.map(function(part) {
             return new Promise(function(resolve) {
                 let link = getPartItemLink(part);
-                if(!link) return resolve({ part: part, material: '', itemWeight: NaN });
+                if(!link) {
+                    return resolve({
+                        part               : part,
+                        material           : '',
+                        accountingUnit     : '',
+                        accountingQuantity : NaN
+                    });
+                }
 
                 $.get('/plm/details', { link: link })
                     .done(function(response) {
                         let material = getMaterialValueFromItemDetails(response.data);
-                        let itemWeight = getItemWeightValueFromItemDetails(response.data);
+                        let accountingUnit = getMBOMAccountingUnitFromItemDetails(response.data);
+                        let accountingQuantity = getMBOMAccountingQuantityFromItemDetails(response.data);
                         console.log('MBOM custom: fetched MBOM fallback details for raw material resolution', {
-                            mbomLink    : link,
-                            partNumber  : getPartNumber(part),
-                            material    : material,
-                            itemWeight  : itemWeight
+                            mbomLink           : link,
+                            partNumber         : getPartNumber(part),
+                            material           : material,
+                            accountingUnit     : accountingUnit,
+                            accountingQuantity : accountingQuantity
                         });
                         resolve({
-                            part       : part,
-                            material   : material,
-                            itemWeight : itemWeight
+                            part               : part,
+                            material           : material,
+                            accountingUnit     : accountingUnit,
+                            accountingQuantity : accountingQuantity
                         });
                     })
                     .fail(function() {
@@ -134,41 +129,17 @@
                             mbomLink   : link,
                             partNumber : getPartNumber(part)
                         });
-                        resolve({ part: part, material: '', itemWeight: NaN });
+                        resolve({
+                            part               : part,
+                            material           : '',
+                            accountingUnit     : '',
+                            accountingQuantity : NaN
+                        });
                     });
             });
         });
 
         return Promise.all(requests);
-    }
-
-    function fetchMBOMItemWeightFromDetails(part) {
-        let link = getPartItemLink(part);
-        if(!link) return Promise.resolve(NaN);
-
-        console.log('MBOM custom: fetching MBOM /plm/details specifically for ITEM_WEIGHT', {
-            mbomLink   : link,
-            partNumber : getPartNumber(part)
-        });
-
-        return $.get('/plm/details', { link: link })
-            .then(function(response) {
-                let itemWeight = getItemWeightValueFromItemDetails(response.data);
-                console.log('MBOM custom: explicit MBOM ITEM_WEIGHT fetch finished', {
-                    mbomLink    : link,
-                    partNumber  : getPartNumber(part),
-                    itemWeight  : itemWeight
-                });
-                return itemWeight;
-            })
-            .catch(function(error) {
-                console.warn('MBOM custom: explicit MBOM ITEM_WEIGHT fetch failed', {
-                    mbomLink   : link,
-                    partNumber : getPartNumber(part),
-                    error      : error
-                });
-                return NaN;
-            });
     }
 
     function getPartNumber(part) {
@@ -889,13 +860,6 @@
         return Number.isNaN(parsed) ? NaN : parsed;
     }
 
-    function isKilogramUnitValue(value) {
-        if(value === null || typeof value === 'undefined') return false;
-
-        let normalized = normalizeComparisonValue(value);
-        return normalized === 'kilogram' || normalized === 'kilograms' || normalized === 'kg';
-    }
-
     function getRawMaterialUnitOfMeasure(item) {
         if(!item) return '';
 
@@ -904,32 +868,151 @@
             'UOM',
             'UNIT',
             'BOM_UOM',
-            'ITEM_UOM'
+            'ITEM_UOM',
+            rawMaterialAccountingUnitFieldId
         ];
 
         for(let fieldId of unitCandidates) {
-            let value = getSearchItemFieldValue(item, fieldId);
+            let value = normalizeMBOMUnitOfMeasureValue(getSearchItemFieldValue(item, fieldId));
             if(!isBlank(value)) return value;
         }
 
         return '';
     }
 
-    function getRawMaterialWeight(item) {
-        if(!item) return NaN;
+    function getRawMaterialUnitOfMeasureFromItemDetails(itemDetails) {
+        if(!itemDetails || !itemDetails.sections) return '';
 
-        let weightCandidates = [
-            'ITEM_WEIGHT',
-            'WEIGHT'
+        let candidateIds = [
+            'UNIT_OF_MEASURE',
+            'UOM',
+            'UNIT',
+            'BOM_UOM',
+            'ITEM_UOM',
+            rawMaterialAccountingUnitFieldId
         ];
 
-        for(let fieldId of weightCandidates) {
-            let value = getSearchItemFieldValue(item, fieldId);
-            let parsed = parseNumericValue(value);
-            if(!Number.isNaN(parsed) && parsed > 0) return parsed;
+        for(let fieldId of candidateIds) {
+            let value = normalizeMBOMUnitOfMeasureValue(
+                getSectionFieldValue(itemDetails.sections, fieldId, '', null)
+            );
+            if(!isBlank(value)) return value;
         }
 
-        return NaN;
+        return '';
+    }
+
+    function resolveRawMaterialUnitOfMeasure(item) {
+        let unitOfMeasure = getRawMaterialUnitOfMeasure(item);
+        if(!isBlank(unitOfMeasure)) return Promise.resolve(unitOfMeasure);
+
+        let link = getSearchItemLink(item);
+        if(isBlank(link)) return Promise.resolve('');
+
+        return $.get('/plm/details', { link : link })
+            .then(function(response) {
+                return getRawMaterialUnitOfMeasureFromItemDetails(response && response.data);
+            })
+            .catch(function(error) {
+                console.warn('MBOM custom: could not load raw material UOM', {
+                    rawMaterialLink : link,
+                    error           : error
+                });
+                return '';
+            });
+    }
+
+    function normalizeRawMaterialUnitForComparison(value) {
+        if(isBlank(value)) return '';
+
+        let normalized = normalizeComparisonValue(value)
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/²/g, '2');
+        let mappings = {
+            'ea'                : 'each',
+            'each'              : 'each',
+            'pc'                : 'each',
+            'pcs'               : 'each',
+            'piece'             : 'each',
+            'pieces'            : 'each',
+            'szt'               : 'each',
+            'szt.'              : 'each',
+            'mm'                : 'millimeter',
+            'millimeter'        : 'millimeter',
+            'millimeters'       : 'millimeter',
+            'cm'                : 'centimeter',
+            'centimeter'        : 'centimeter',
+            'centimeters'       : 'centimeter',
+            'dm'                : 'decimeter',
+            'decimeter'         : 'decimeter',
+            'decimeters'        : 'decimeter',
+            'm'                 : 'meter',
+            'meter'             : 'meter',
+            'meters'            : 'meter',
+            'km'                : 'kilometer',
+            'kilometer'         : 'kilometer',
+            'kilometers'        : 'kilometer',
+            'mm2'               : 'square millimeter',
+            'square millimeter' : 'square millimeter',
+            'cm2'               : 'square centimeter',
+            'square centimeter' : 'square centimeter',
+            'dm2'               : 'square decimeter',
+            'square decimeter'  : 'square decimeter',
+            'm2'                : 'square meter',
+            'square meter'      : 'square meter',
+            'km2'               : 'square kilometer',
+            'square kilometer'  : 'square kilometer',
+            'mm3'               : 'cubic millimeter',
+            'cubic millimeter'  : 'cubic millimeter',
+            'cm3'               : 'cubic centimeter',
+            'cubic centimeter'  : 'cubic centimeter',
+            'dm3'               : 'cubic decimeter',
+            'cubic decimeter'   : 'cubic decimeter',
+            'm3'                : 'cubic meter',
+            'cubic meter'       : 'cubic meter',
+            'ml'                : 'milliliter',
+            'milliliter'        : 'milliliter',
+            'milliliters'       : 'milliliter',
+            'l'                 : 'liter',
+            'liter'             : 'liter',
+            'liters'            : 'liter',
+            'mg'                : 'milligram',
+            'milligram'         : 'milligram',
+            'milligrams'        : 'milligram',
+            'g'                 : 'gram',
+            'gram'              : 'gram',
+            'grams'             : 'gram',
+            'kg'                : 'kilogram',
+            'kilogram'          : 'kilogram',
+            'kilograms'         : 'kilogram',
+            't'                 : 'metric ton',
+            'tonne'             : 'metric ton',
+            'tonnes'            : 'metric ton',
+            'metric ton'        : 'metric ton',
+            's'                 : 'second',
+            'sec'               : 'second',
+            'second'            : 'second',
+            'seconds'           : 'second',
+            'min'               : 'minute',
+            'minute'            : 'minute',
+            'minutes'           : 'minute',
+            'h'                 : 'hour',
+            'hr'                : 'hour',
+            'hour'              : 'hour',
+            'hours'             : 'hour'
+        };
+
+        return mappings[normalized] || normalized;
+    }
+
+    function rawMaterialUnitsMatch(mbomUnit, rawMaterialUnit) {
+        let normalizedMBOMUnit = normalizeRawMaterialUnitForComparison(mbomUnit);
+        let normalizedRawMaterialUnit = normalizeRawMaterialUnitForComparison(rawMaterialUnit);
+
+        return normalizedMBOMUnit !== '' &&
+            normalizedRawMaterialUnit !== '' &&
+            normalizedMBOMUnit === normalizedRawMaterialUnit;
     }
 
     function normalizeMBOMUnitOfMeasureValue(value) {
@@ -1056,49 +1139,43 @@
 
     function getRawMaterialInsertQuantity(entry, item) {
         let part = entry ? entry.part : null;
-        let defaultQuantity = parseNumericValue(part && part.quantity);
-        if(Number.isNaN(defaultQuantity) || defaultQuantity <= 0) defaultQuantity = 1;
+        let accountingUnit = entry ? entry.accountingUnit : '';
+        let accountingQuantity = entry ? entry.accountingQuantity : NaN;
 
-        let unitOfMeasure = getRawMaterialUnitOfMeasure(item);
-        console.log('MBOM custom: raw material quantity decision started', {
-            mbomLink         : getPartItemLink(part),
-            partNumber       : getPartNumber(part),
-            material         : entry ? entry.material : '',
-            mbomQuantity     : defaultQuantity,
-            mbomItemWeight   : entry ? entry.itemWeight : NaN,
-            rawMaterialLink  : getSearchItemLink(item),
-            rawMaterialUOM   : unitOfMeasure
-        });
-
-        let mbomWeight = entry ? entry.itemWeight : NaN;
-        if(!Number.isNaN(mbomWeight) && mbomWeight > 0) {
-            console.log('MBOM custom: using MBOM ITEM_WEIGHT for raw material quantity (test mode, no UOM check)', {
-                mbomLink      : getPartItemLink(part),
-                unitOfMeasure : unitOfMeasure,
-                itemWeight    : mbomWeight
+        return resolveRawMaterialUnitOfMeasure(item).then(function(rawMaterialUnit) {
+            console.log('MBOM custom: raw material accounting quantity decision', {
+                mbomLink           : getPartItemLink(part),
+                partNumber         : getPartNumber(part),
+                material           : entry ? entry.material : '',
+                accountingUnit     : accountingUnit,
+                accountingQuantity : accountingQuantity,
+                rawMaterialLink    : getSearchItemLink(item),
+                rawMaterialUOM     : rawMaterialUnit
             });
-            return Promise.resolve(mbomWeight);
-        }
 
-        return fetchMBOMItemWeightFromDetails(part).then(function(fallbackWeight) {
-            if(!Number.isNaN(fallbackWeight) && fallbackWeight > 0) {
-                if(entry) entry.itemWeight = fallbackWeight;
-                console.log('MBOM custom: using explicit MBOM /plm/details ITEM_WEIGHT for raw material quantity (test mode, no UOM check)', {
-                    mbomLink      : getPartItemLink(part),
-                    unitOfMeasure : unitOfMeasure,
-                    itemWeight    : fallbackWeight
+            if(Number.isNaN(accountingQuantity) || accountingQuantity <= 0) {
+                console.warn('MBOM custom: raw material skipped because MBOM ILOSC_ROZLICZENIOWA is missing or invalid', {
+                    mbomLink : getPartItemLink(part),
+                    value    : accountingQuantity
                 });
-                return fallbackWeight;
+                return NaN;
             }
 
-            console.warn('MBOM custom: raw material source is missing usable MBOM ITEM_WEIGHT, falling back to quantity 1', {
-                mbomLink        : getPartItemLink(part),
-                itemLink        : getSearchItemLink(item),
-                unitOfMeasure   : unitOfMeasure,
-                defaultQuantity : defaultQuantity
-            });
+            if(entry) {
+                entry.uomChecked = true;
+                entry.uomMismatch = rawMaterialUnitsMatch(accountingUnit, rawMaterialUnit)
+                    ? null
+                    : {
+                        mbomLink        : getPartItemLink(part),
+                        partNumber      : getPartNumber(part),
+                        material        : entry.material,
+                        mbomUnit        : accountingUnit,
+                        rawMaterialLink : getSearchItemLink(item),
+                        rawMaterialUOM  : rawMaterialUnit
+                    };
+            }
 
-            return 1;
+            return accountingQuantity;
         });
     }
 
@@ -3391,9 +3468,10 @@
 
         let mbomMaterials = mbomSourceParts.map(function(part) {
             return {
-                part       : part,
-                material   : getMaterialValue(part),
-                itemWeight : getItemWeightValue(part)
+                part               : part,
+                material           : getMaterialValue(part),
+                accountingUnit     : getMBOMAccountingUnit(part),
+                accountingQuantity : getMBOMAccountingQuantity(part)
             };
         });
 
@@ -3401,16 +3479,18 @@
             return mbomMaterials.filter(function(entry) { return !isBlank(entry.material); });
         };
 
-        // The MATERIAL value is normally present in the loaded BOM data even when
-        // ITEM_WEIGHT needs the details fallback. Start the title lookup now so
-        // the lookup and target duplicate check can run concurrently with it.
+        // Start material lookup and target preparation while any missing
+        // accounting fields are loaded from the mBOM item details.
         withMaterial().forEach(function(entry) {
             searchRawMaterialItems(entry.material);
             entry.targetPreparationPromise = prepareRawMaterialTarget(entry);
         });
 
         let missingFallbackParts = mbomMaterials.filter(function(entry) {
-            return isBlank(entry.material) || Number.isNaN(entry.itemWeight) || entry.itemWeight <= 0;
+            return isBlank(entry.material) ||
+                isBlank(entry.accountingUnit) ||
+                Number.isNaN(entry.accountingQuantity) ||
+                entry.accountingQuantity <= 0;
         });
 
         if(missingFallbackParts.length === 0) return Promise.resolve(withMaterial());
@@ -3423,15 +3503,18 @@
                     if(!isBlank(link)) fallbackMap.set(link, result);
                 });
 
-                mbomMaterials.forEach(function(entry) {
-                    let fallback = fallbackMap.get(getPartItemLink(entry.part));
-                    if(!fallback) return;
+            mbomMaterials.forEach(function(entry) {
+                let fallback = fallbackMap.get(getPartItemLink(entry.part));
+                if(!fallback) return;
 
-                    if(isBlank(entry.material) && !isBlank(fallback.material)) entry.material = fallback.material;
-                    if((Number.isNaN(entry.itemWeight) || entry.itemWeight <= 0) &&
-                        !Number.isNaN(fallback.itemWeight) && fallback.itemWeight > 0) {
-                        entry.itemWeight = fallback.itemWeight;
-                    }
+                if(isBlank(entry.material) && !isBlank(fallback.material)) entry.material = fallback.material;
+                if(isBlank(entry.accountingUnit) && !isBlank(fallback.accountingUnit)) {
+                    entry.accountingUnit = fallback.accountingUnit;
+                }
+                if((Number.isNaN(entry.accountingQuantity) || entry.accountingQuantity <= 0) &&
+                    !Number.isNaN(fallback.accountingQuantity) && fallback.accountingQuantity > 0) {
+                    entry.accountingQuantity = fallback.accountingQuantity;
+                }
                 });
 
                 return withMaterial();
@@ -3453,6 +3536,7 @@
 
         $('#raw-step-counter1').html('0 of ' + totalSearch);
         $('#raw-step-counter2').html('0 of ' + totalApply);
+        $('#raw-material-results').removeClass('with-warning').hide().empty();
         $('#dialog-raw-materials').show();
     }
 
@@ -3495,11 +3579,37 @@
         $('#raw-step-counter2').html(done + ' of ' + count);
     }
 
-    function completeRawMaterialsDialog(total) {
+    function setRawMaterialsDialogResult(summary) {
+        let result = summary || {};
+        let found = Math.max(0, Number(result.found) || 0);
+        let added = Math.max(0, Number(result.added) || 0);
+        let updated = Math.max(0, Number(result.updated) || 0);
+        let skipped = Math.max(0, Number(result.skipped) || 0);
+        let uomMismatches = Math.max(0, Number(result.uomMismatches) || 0);
+        let lines = [
+            'Found ' + found + ' mBOM' + (found === 1 ? '' : 's') + ' with materials.',
+            'Added ' + added + ' raw material' + (added === 1 ? '' : 's') + '.'
+        ];
+
+        if(updated > 0) lines.push('Updated ' + updated + ' existing raw material' + (updated === 1 ? '' : 's') + '.');
+        if(skipped > 0) lines.push('Not applied: ' + skipped + '. Check the browser log for details.');
+        if(uomMismatches > 0) {
+            lines.push('UOM mismatches to review: ' + uomMismatches + '. The materials were still applied.');
+        }
+        if(result.error) lines.push('Processing stopped before all materials could be applied. Check the browser log.');
+
+        $('#raw-material-results')
+            .toggleClass('with-warning', skipped > 0 || uomMismatches > 0 || result.error === true)
+            .text(lines.join('\n'))
+            .show();
+    }
+
+    function completeRawMaterialsDialog(total, summary) {
         let count = Number(total) || 0;
         $('#raw-step-bar2').css('width', '100%');
         $('#raw-step-counter2').html(count + ' of ' + count);
         $('#raw-step2').removeClass('in-work');
+        if(summary) setRawMaterialsDialogResult(summary);
         $('#confirm-raw-materials').removeClass('disabled').addClass('default');
     }
 
@@ -3531,7 +3641,13 @@
     function addRawMaterialsToMBOM(mbomMaterials) {
         if(!Array.isArray(mbomMaterials) || mbomMaterials.length === 0) {
             console.info('MBOM custom: no MBOM parts with MATERIAL values available to add raw materials.');
-            $('#confirm-raw-materials').removeClass('disabled').addClass('default');
+            completeRawMaterialsSearchDialog(0);
+            completeRawMaterialsDialog(0, {
+                found   : 0,
+                added   : 0,
+                updated : 0,
+                skipped : 0
+            });
             return;
         }
 
@@ -3547,6 +3663,8 @@
         let searchResultsByMaterial = {};
         let searchDone = 0;
         let applyDone = 0;
+        let totalAdded = 0;
+        let totalUpdated = 0;
         let targetPreparationPromises = new Map();
 
         setRawMaterialsDialogTotals(uniqueMaterials.length, mbomMaterials.length);
@@ -3571,8 +3689,6 @@
 
         Promise.all(searchRequests).then(function() {
             completeRawMaterialsSearchDialog(uniqueMaterials.length);
-            let totalAdded = 0;
-            let totalUpdated = 0;
             let insertedByTarget = {};
             let chain = Promise.resolve();
 
@@ -3611,6 +3727,12 @@
                     }
 
                     return getRawMaterialInsertQuantity(entry, item).then(function(quantity) {
+                        if(Number.isNaN(quantity) || quantity <= 0) {
+                            applyDone++;
+                            updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
+                            return null;
+                        }
+
                         return targetPreparationPromises.get(entry).then(function(targetContext) {
                             if(targetContext) return targetContext;
                             return prepareRawMaterialTarget(entry, true);
@@ -3737,17 +3859,37 @@
             });
 
             return chain.then(function() {
+                let uomCheckedEntries = mbomMaterials.filter(function(entry) {
+                    return entry && entry.uomChecked === true;
+                });
+                let uomMismatches = mbomMaterials
+                    .filter(function(entry) { return entry && entry.uomMismatch; })
+                    .map(function(entry) { return entry.uomMismatch; });
+
                 console.log('MBOM custom: Add Raw Materials finished', {
-                    added   : totalAdded,
-                    updated : totalUpdated,
-                    total   : mbomMaterials.length
+                    added        : totalAdded,
+                    updated      : totalUpdated,
+                    total        : mbomMaterials.length,
+                    uomMismatches: uomMismatches.length
+                });
+
+                console.log('MBOM custom: Add Raw Materials UOM check finished', {
+                    checked    : uomCheckedEntries.length,
+                    matched    : uomCheckedEntries.length - uomMismatches.length,
+                    mismatches : uomMismatches
                 });
 
                 if(totalAdded === 0 && totalUpdated === 0) {
                     console.info('MBOM custom: no raw materials were added or updated. Check MATERIAL values and matching TITLE values in WS 57.');
                 }
 
-                completeRawMaterialsDialog(mbomMaterials.length);
+                completeRawMaterialsDialog(mbomMaterials.length, {
+                    found         : mbomMaterials.length,
+                    added         : totalAdded,
+                    updated       : totalUpdated,
+                    skipped       : Math.max(0, mbomMaterials.length - totalAdded - totalUpdated),
+                    uomMismatches : uomMismatches.length
+                });
 
                 if(button.length) {
                     button.removeClass('disabled');
@@ -3756,7 +3898,13 @@
             });
         }).catch(function(error) {
             console.warn('MBOM custom: raw material search failed', error);
-            completeRawMaterialsDialog(applyDone);
+            completeRawMaterialsDialog(applyDone, {
+                found   : mbomMaterials.length,
+                added   : totalAdded,
+                updated : totalUpdated,
+                skipped : Math.max(0, mbomMaterials.length - totalAdded - totalUpdated),
+                error   : true
+            });
             if(button.length) {
                 button.removeClass('disabled');
                 button.html('Dodaj Surowce');

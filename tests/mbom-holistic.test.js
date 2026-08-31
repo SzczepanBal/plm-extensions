@@ -33,6 +33,8 @@ const context = {
     Number,
     String,
     Math,
+    rawMaterialAccountingUnitFieldId : 'JEDNOSTKA_ROZLICZENIOWA',
+    rawMaterialAccountingQuantityFieldId : 'ILOSC_ROZLICZENIOWA',
     isBlank(value) {
         return value === null || typeof value === 'undefined' || value === '';
     },
@@ -43,6 +45,12 @@ const context = {
     },
     getPLMItemLevelLink(value) {
         return value;
+    },
+    getBOMPartFieldValue(part, fieldId) {
+        const field = Array.isArray(part.fields)
+            ? part.fields.find((candidate) => candidate.fieldId === fieldId)
+            : null;
+        return field ? field.value : null;
     },
     getAddProcessItemTitle(item) {
         return item && item.title ? item.title : '';
@@ -55,6 +63,13 @@ const context = {
 vm.createContext(context);
 [
     'normalizeComparisonValue',
+    'normalizeMBOMUnitOfMeasureValue',
+    'normalizeERPTechnologyUnitOfMeasure',
+    'normalizeRawMaterialUnitForComparison',
+    'rawMaterialUnitsMatch',
+    'getMBOMAccountingFieldValue',
+    'getMBOMAccountingUnit',
+    'getMBOMAccountingQuantity',
     'normalizeProcessLookupName',
     'findAddProcessWorkspaceItemByName',
     'parseNumericValue',
@@ -76,6 +91,28 @@ vm.createContext(context);
 });
 
 async function run() {
+    context.accountingPart = {
+        details : {
+            JEDNOSTKA_ROZLICZENIOWA : { title : 'Kilogram' },
+            ILOSC_ROZLICZENIOWA : '1,35'
+        }
+    };
+    assert.strictEqual(vm.runInContext('getMBOMAccountingUnit(accountingPart)', context), 'Kilogram');
+    assert.strictEqual(vm.runInContext('getMBOMAccountingQuantity(accountingPart)', context), 1.35);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('Kilogram', 'kg')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('m', 'Meter')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('m2', 'Square Meter')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('mm', 'Millimeter')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('cm2', 'Square Centimeter')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('m3', 'Cubic Meter')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('l', 'Liter')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('g', 'Gram')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('szt.', 'Each')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('min', 'Minute')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('piece', 'piece')", context), true);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('kg', 'meter')", context), false);
+    assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('', 'kg')", context), false);
+
     context.processItems = [
         { title : 'Gięcie' },
         { title : 'Cięcie' },
