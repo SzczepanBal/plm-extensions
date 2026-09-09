@@ -52,6 +52,18 @@ const context = {
             : null;
         return field ? field.value : null;
     },
+    getSectionFieldValue(sections, fieldId, defaultValue, property) {
+        for(const section of (Array.isArray(sections) ? sections : [])) {
+            const field = Array.isArray(section.fields)
+                ? section.fields.find((candidate) => candidate.id === fieldId)
+                : null;
+            if(!field || field.value === null || typeof field.value === 'undefined') continue;
+            if(typeof field.value !== 'object') return field.value;
+            if(property === 'object') return field.value;
+            return field.value[property];
+        }
+        return defaultValue;
+    },
     getAddProcessItemTitle(item) {
         return item && item.title ? item.title : '';
     },
@@ -67,9 +79,12 @@ vm.createContext(context);
     'normalizeERPTechnologyUnitOfMeasure',
     'normalizeRawMaterialUnitForComparison',
     'rawMaterialUnitsMatch',
+    'getValidatedRawMaterialInsertQuantity',
     'getMBOMAccountingFieldValue',
     'getMBOMAccountingUnit',
     'getMBOMAccountingQuantity',
+    'getMBOMAccountingUnitFromItemDetails',
+    'getRawMaterialUnitOfMeasureFromItemDetails',
     'normalizeProcessLookupName',
     'findAddProcessWorkspaceItemByName',
     'parseNumericValue',
@@ -112,6 +127,47 @@ async function run() {
     assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('piece', 'piece')", context), true);
     assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('kg', 'meter')", context), false);
     assert.strictEqual(vm.runInContext("rawMaterialUnitsMatch('', 'kg')", context), false);
+    assert.strictEqual(vm.runInContext("getValidatedRawMaterialInsertQuantity('2,5', 'kg', 'Kilogram')", context), 2.5);
+    assert.strictEqual(vm.runInContext("Number.isNaN(getValidatedRawMaterialInsertQuantity('2,5', 'kg', 'Meter'))", context), true);
+    assert.strictEqual(vm.runInContext("Number.isNaN(getValidatedRawMaterialInsertQuantity('2,5', '', 'kg'))", context), true);
+    assert.strictEqual(vm.runInContext("Number.isNaN(getValidatedRawMaterialInsertQuantity('', 'kg', 'kg'))", context), true);
+
+    context.rawMaterialDetails = {
+        sections : [{
+            fields : [
+                { id : 'JEDNOSTKA_ROZLICZENIOWA', value : { title : 'kg' } },
+                { id : 'UOM', value : { title : 'Kilogram' } }
+            ]
+        }]
+    };
+    assert.strictEqual(
+        vm.runInContext('getMBOMAccountingUnitFromItemDetails(rawMaterialDetails)', context),
+        'kg'
+    );
+    assert.strictEqual(
+        vm.runInContext('getRawMaterialUnitOfMeasureFromItemDetails(rawMaterialDetails)', context),
+        'Kilogram'
+    );
+    assert.strictEqual(
+        vm.runInContext("rawMaterialUnitsMatch(getMBOMAccountingUnitFromItemDetails(rawMaterialDetails), getRawMaterialUnitOfMeasureFromItemDetails(rawMaterialDetails))", context),
+        true
+    );
+
+    context.rawMaterialAccountingUnitDetails = {
+        sections : [{
+            fields : [
+                { id : 'JEDNOSTKA_ROZLICZENIOWA', value : { title : 'Kilogram' } }
+            ]
+        }]
+    };
+    assert.strictEqual(
+        vm.runInContext('getRawMaterialUnitOfMeasureFromItemDetails(rawMaterialAccountingUnitDetails)', context),
+        'Kilogram'
+    );
+    assert.strictEqual(
+        vm.runInContext("rawMaterialUnitsMatch('kg', getRawMaterialUnitOfMeasureFromItemDetails(rawMaterialAccountingUnitDetails))", context),
+        true
+    );
 
     context.processItems = [
         { title : 'Gięcie' },

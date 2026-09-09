@@ -1609,7 +1609,7 @@ const erpPropertyMappings = [
     ['KOLOR'       , 'Kolor'],
     ['POWLOKA'     , 'Powłoka'],
     ['MOC'         , 'Moc'],
-    ['MOC'         , 'Moc/Wielkość'],
+    ['MOC_WIELKOSC', 'Moc/Wielkość'],
     ['NAPICIE'     , 'Napięcie'],
     ['PRD'         , 'Prąd'],
     ['WYDAJNO'     , 'Wydajność'],

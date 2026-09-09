@@ -26,6 +26,8 @@
     let holisticStatusTimer = null;
     let holisticStatusRun = 0;
     let directAssemblyIndexEditor = false;
+    let mbomOperationTypeValue = '';
+    let mbomOperationTypePromise = null;
 
     function normalizeComparisonValue(value) {
         if(value === null || typeof value === 'undefined') return '';
@@ -81,7 +83,7 @@
     function getMBOMAccountingUnitFromItemDetails(itemDetails) {
         if(!itemDetails || !itemDetails.sections) return '';
         return normalizeMBOMUnitOfMeasureValue(
-            getSectionFieldValue(itemDetails.sections, rawMaterialAccountingUnitFieldId, '', null)
+            getSectionFieldValue(itemDetails.sections, rawMaterialAccountingUnitFieldId, '', 'object')
         );
     }
 
@@ -894,7 +896,7 @@
 
         for(let fieldId of candidateIds) {
             let value = normalizeMBOMUnitOfMeasureValue(
-                getSectionFieldValue(itemDetails.sections, fieldId, '', null)
+                getSectionFieldValue(itemDetails.sections, fieldId, '', 'object')
             );
             if(!isBlank(value)) return value;
         }
@@ -1013,6 +1015,15 @@
         return normalizedMBOMUnit !== '' &&
             normalizedRawMaterialUnit !== '' &&
             normalizedMBOMUnit === normalizedRawMaterialUnit;
+    }
+
+    function getValidatedRawMaterialInsertQuantity(accountingQuantity, accountingUnit, rawMaterialUnit) {
+        let quantity = parseNumericValue(accountingQuantity);
+
+        if(Number.isNaN(quantity) || quantity <= 0) return NaN;
+        if(!rawMaterialUnitsMatch(accountingUnit, rawMaterialUnit)) return NaN;
+
+        return quantity;
     }
 
     function normalizeMBOMUnitOfMeasureValue(value) {
@@ -1143,6 +1154,13 @@
         let accountingQuantity = entry ? entry.accountingQuantity : NaN;
 
         return resolveRawMaterialUnitOfMeasure(item).then(function(rawMaterialUnit) {
+            let unitsMatch = rawMaterialUnitsMatch(accountingUnit, rawMaterialUnit);
+            let insertQuantity = getValidatedRawMaterialInsertQuantity(
+                accountingQuantity,
+                accountingUnit,
+                rawMaterialUnit
+            );
+
             console.log('MBOM custom: raw material accounting quantity decision', {
                 mbomLink           : getPartItemLink(part),
                 partNumber         : getPartNumber(part),
@@ -1150,20 +1168,14 @@
                 accountingUnit     : accountingUnit,
                 accountingQuantity : accountingQuantity,
                 rawMaterialLink    : getSearchItemLink(item),
-                rawMaterialUOM     : rawMaterialUnit
+                rawMaterialUOM     : rawMaterialUnit,
+                unitsMatch         : unitsMatch,
+                insertQuantity     : insertQuantity
             });
-
-            if(Number.isNaN(accountingQuantity) || accountingQuantity <= 0) {
-                console.warn('MBOM custom: raw material skipped because MBOM ILOSC_ROZLICZENIOWA is missing or invalid', {
-                    mbomLink : getPartItemLink(part),
-                    value    : accountingQuantity
-                });
-                return NaN;
-            }
 
             if(entry) {
                 entry.uomChecked = true;
-                entry.uomMismatch = rawMaterialUnitsMatch(accountingUnit, rawMaterialUnit)
+                entry.uomMismatch = unitsMatch
                     ? null
                     : {
                         mbomLink        : getPartItemLink(part),
@@ -1175,7 +1187,26 @@
                     };
             }
 
-            return accountingQuantity;
+            if(Number.isNaN(accountingQuantity) || accountingQuantity <= 0) {
+                console.warn('MBOM custom: raw material skipped because MBOM ILOSC_ROZLICZENIOWA is missing or invalid', {
+                    mbomLink : getPartItemLink(part),
+                    value    : accountingQuantity
+                });
+                return NaN;
+            }
+
+            if(!unitsMatch) {
+                console.warn('MBOM custom: raw material skipped because JEDNOSTKA_ROZLICZENIOWA does not match the raw material UOM', {
+                    mbomLink        : getPartItemLink(part),
+                    material        : entry ? entry.material : '',
+                    accountingUnit  : accountingUnit,
+                    rawMaterialLink : getSearchItemLink(item),
+                    rawMaterialUOM  : rawMaterialUnit
+                });
+                return NaN;
+            }
+
+            return insertQuantity;
         });
     }
 
@@ -2635,6 +2666,8 @@
             }).then(function() {
                 return normalizeProcessCodesBeforeSave();
             }).then(function() {
+                return loadMBOMOperationTypeValue();
+            }).then(function() {
                 completeSaveCheckDialog(headers.length);
                 setSaveActions();
                 showSaveProcessingDialog();
@@ -3594,7 +3627,7 @@
         if(updated > 0) lines.push('Updated ' + updated + ' existing raw material' + (updated === 1 ? '' : 's') + '.');
         if(skipped > 0) lines.push('Not applied: ' + skipped + '. Check the browser log for details.');
         if(uomMismatches > 0) {
-            lines.push('UOM mismatches to review: ' + uomMismatches + '. The materials were still applied.');
+            lines.push('Skipped because JEDNOSTKA_ROZLICZENIOWA does not match the raw material UOM: ' + uomMismatches + '.');
         }
         if(result.error) lines.push('Processing stopped before all materials could be applied. Check the browser log.');
 
@@ -5913,9 +5946,22 @@
     function getMBOMPropertyRepairMappings() {
         if(typeof config === 'undefined' || !config.mbomRoot || !Array.isArray(config.mbomRoot.fieldsToCopy)) return [];
 
-        return config.mbomRoot.fieldsToCopy.filter(function(mapping) {
+        let mappings = config.mbomRoot.fieldsToCopy.filter(function(mapping) {
             return mapping && !isBlank(mapping.ebom) && !isBlank(mapping.mbom);
         });
+
+        [
+            rawMaterialAccountingUnitFieldId,
+            rawMaterialAccountingQuantityFieldId
+        ].forEach(function(fieldId) {
+            let exists = mappings.some(function(mapping) {
+                return mapping.ebom === fieldId && mapping.mbom === fieldId;
+            });
+
+            if(!exists) mappings.push({ ebom : fieldId, mbom : fieldId });
+        });
+
+        return mappings;
     }
 
     function getMBOMPropertyRepairSourceLink(detailsData) {
@@ -7331,18 +7377,132 @@
         };
     }
 
+    function getMBOMWorkspaceFieldSectionId(fieldId) {
+        if(isBlank(fieldId) || !wsMBOM || !Array.isArray(wsMBOM.sections)) return '';
+
+        for(let section of wsMBOM.sections) {
+            if(!section || !Array.isArray(section.fields)) continue;
+
+            for(let field of section.fields) {
+                if(!field) continue;
+
+                let fieldLink = field.link || field.__self__ || '';
+                if(String(fieldLink).split('/').pop() !== fieldId) continue;
+                if(!isBlank(section.id)) return String(section.id);
+
+                let sectionLink = section.__self__ || section.link || '';
+                return String(sectionLink).split('/').pop();
+            }
+        }
+
+        return '';
+    }
+
+    function loadMBOMOperationTypeValue() {
+        let hasNewOperation = false;
+
+        $('#mbom .item.process').each(function() {
+            if(isBlank($(this).attr('data-link'))) {
+                hasNewOperation = true;
+                return false;
+            }
+        });
+
+        if(!hasNewOperation || !isBlank(mbomOperationTypeValue)) {
+            return Promise.resolve(mbomOperationTypeValue);
+        }
+        if(mbomOperationTypePromise) return mbomOperationTypePromise;
+
+        let lookupLink = '/api/v3/lookups/CUSTOM_LOOKUP_ITEM_TYPES';
+        let configuredTypeValue = (config.mbomRoot && config.mbomRoot.typeValue)
+            ? String(config.mbomRoot.typeValue)
+            : '';
+        let optionsMarker = configuredTypeValue.indexOf('/options/');
+
+        if(optionsMarker > 0) lookupLink = configuredTypeValue.substring(0, optionsMarker);
+
+        mbomOperationTypePromise = $.get('/plm/picklist', {
+            link     : lookupLink,
+            limit    : 250,
+            offset   : 0,
+            useCache : false
+        }).then(function(response) {
+            let items = (response && response.data && Array.isArray(response.data.items))
+                ? response.data.items
+                : [];
+            let processType = items.find(function(item) {
+                return normalizeComparisonValue(item && (item.title || item.label || item.value)) === 'process';
+            });
+            let processTypeLink = processType
+                ? (processType.link || processType.__self__ || '')
+                : '';
+
+            if(isBlank(processTypeLink)) {
+                throw new Error('The Process option was not found in lookup CUSTOM_LOOKUP_ITEM_TYPES.');
+            }
+
+            mbomOperationTypeValue = processTypeLink;
+            return mbomOperationTypeValue;
+        }).always(function() {
+            mbomOperationTypePromise = null;
+        });
+
+        return mbomOperationTypePromise;
+    }
+
     if(typeof createNewItems === 'function') {
         let originalCreateNewItems = createNewItems;
         createNewItems = function() {
             let configuredNumberMatching = config.matchNewProcessNumber;
+            let originalPost = $.post;
 
             // Omit NUMBER from new operation payloads. The PLM workspace
             // auto-numbering scheme assigns the final item number.
             config.matchNewProcessNumber = '';
 
+            // The stock creator owns the operation payload. Intercept only
+            // that synchronous request so TYPE can be added from this custom
+            // script with the same explicit Basic section as TITLE.
+            $.post = function(url, data) {
+                if(url === '/plm/create' && data && Array.isArray(data.fields)) {
+                    let titleFieldId = config.workspaceMBOM.fieldIDs.title;
+                    let typeFieldId = config.workspaceMBOM.fieldIDs.type;
+                    let basicSectionId = getMBOMWorkspaceFieldSectionId(titleFieldId);
+                    let typeValue = mbomOperationTypeValue;
+
+                    for(let field of data.fields) {
+                        if(field.fieldId === titleFieldId && !isBlank(basicSectionId)) {
+                            field.sectionId = basicSectionId;
+                        }
+                    }
+
+                    let hasType = data.fields.some(function(field) {
+                        return field.fieldId === typeFieldId;
+                    });
+
+                    if(!hasType && !isBlank(typeFieldId) && !isBlank(typeValue)) {
+                        let typeField = {
+                            fieldId : typeFieldId,
+                            value   : { link : typeValue }
+                        };
+
+                        if(!isBlank(basicSectionId)) typeField.sectionId = basicSectionId;
+                        data.fields.push(typeField);
+                    }
+
+                    console.log('MBOM custom: creating operation item', {
+                        basicSectionId : basicSectionId,
+                        fields         : data.fields
+                    });
+                }
+
+                return originalPost.apply(this, arguments);
+            };
+
             try {
                 return originalCreateNewItems.apply(this, arguments);
             } finally {
+                $.post = originalPost;
                 config.matchNewProcessNumber = configuredNumberMatching;
             }
         };
