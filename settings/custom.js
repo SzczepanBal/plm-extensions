@@ -62,7 +62,7 @@ exports.common = {
     },
 
     viewer : {
-        numberProperties   : ['Part Number', 'Name', 'label', 'Artikelnummer', 'Bauteilnummer'],
+        numberProperties   : ['Part Number', 'Numer cz\u0119\u015bci', 'Name', 'label', 'Artikelnummer', 'Bauteilnummer'],
         suffixPrimaryFile  : ['.iam.dwf', '.iam.dwfx', '.ipt.dwf', '.ipt.dwfx'],
         extensionsIncluded : ['dwf', 'dwfx', 'nwd', 'ipt', 'stp', 'step', 'sldprt', 'pdf'],
     }
@@ -109,6 +109,8 @@ exports.applications = {
                 { ebom : 'DESCRIPTION', mbom : 'DESCRIPTION' },
                 { ebom : 'OPIS'       , mbom : 'OPIS'        },
                 { ebom : 'MATERIAL'   , mbom : 'MATERIAL'    },
+                { ebom : 'JEDNOSTKA_ROZLICZENIOWA', mbom : 'JEDNOSTKA_ROZLICZENIOWA' },
+                { ebom : 'ILOSC_ROZLICZENIOWA', mbom : 'ILOSC_ROZLICZENIOWA' },
                 { ebom : 'ITEM_WEIGHT', mbom : 'ITEM_WEIGHT' },
                 { ebom : 'LENGTH'     , mbom : 'LENGTH'      },
                 { ebom : 'WIDTH'      , mbom : 'WIDTH'       },

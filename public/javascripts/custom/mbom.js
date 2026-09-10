@@ -22,6 +22,7 @@
     let addProcessWorkspaceItemsCache = [];
     let rawMaterialTargetSequence = 0;
     let rawMaterialSearchPromises = {};
+    let rawMaterialCreationPromises = {};
     let holisticMBOMRequests = {};
     let holisticStatusTimer = null;
     let holisticStatusRun = 0;
@@ -94,6 +95,27 @@
         );
     }
 
+    function isMBOMHasBOM(value) {
+        return value === true || value === 1 || (typeof value === 'string' && /^(true|1)$/i.test(value.trim()));
+    }
+
+    async function getSourceEBOMHasChildren(ebomItemDetails) {
+        let response = await $.get('/plm/bom', {
+            link: ebomItemDetails.__self__, viewId: wsEBOM.viewId,
+            depth: 1, revisionBias: 'working', getBOMPartsList: true
+        });
+        if(!response || response.error || !response.data || !Array.isArray(response.data.bomPartsList)) {
+            throw new Error('Could not check source EBOM children. ' + getRawMaterialErrorMessage(response));
+        }
+        return response.data.bomPartsList.some(function(part) { return Number(part.level) === 1; });
+    }
+
+    function getRawMaterialSkipReason(entry) {
+        if(entry.detailsError) return 'MBOM details could not be read; HAS_BOM could not be checked.';
+        if(entry.hasBom) return 'Skipped: HAS_BOM is true (source EBOM has children).';
+        return '';
+    }
+
     function fetchMBOMPartMaterialsFromDetails(mbomParts) {
         let requests = mbomParts.map(function(part) {
             return new Promise(function(resolve) {
@@ -101,6 +123,7 @@
                 if(!link) {
                     return resolve({
                         part               : part,
+                        detailsError       : true,
                         material           : '',
                         accountingUnit     : '',
                         accountingQuantity : NaN
@@ -109,6 +132,11 @@
 
                 $.get('/plm/details', { link: link })
                     .done(function(response) {
+                        if(!response || response.error || !response.data) {
+                            resolve({ part: part, detailsError: true });
+                            return;
+                        }
+                        let hasBom = isMBOMHasBOM(getSectionFieldValue(response.data.sections, 'HAS_BOM', false));
                         let material = getMaterialValueFromItemDetails(response.data);
                         let accountingUnit = getMBOMAccountingUnitFromItemDetails(response.data);
                         let accountingQuantity = getMBOMAccountingQuantityFromItemDetails(response.data);
@@ -121,6 +149,7 @@
                         });
                         resolve({
                             part               : part,
+                            hasBom             : hasBom,
                             material           : material,
                             accountingUnit     : accountingUnit,
                             accountingQuantity : accountingQuantity
@@ -133,7 +162,8 @@
                         });
                         resolve({
                             part               : part,
-                            material           : '',
+                            detailsError       : true,
+                        material           : '',
                             accountingUnit     : '',
                             accountingQuantity : NaN
                         });
@@ -265,9 +295,8 @@
             return;
         }
 
-        // A linked engineering assembly already has its own mBOM. Standard
-        // eBOM assembly actions (add node, add children, create mBOM, etc.)
-        // are therefore not valid for this row; only the focus marker remains.
+        // Keep linked-assembly navigation and status separate from presence in
+        // the current parent. Existing linked MBOMs can still be added there.
         elemEBOMItem.addClass('linked-mbom-bom');
         elemEBOMItem.toggleClass('linked-mbom-check-pending', pending === true);
         if(pending === true) elemEBOMItem.removeAttr('data-linked-mbom-status-checked');
@@ -421,11 +450,63 @@
         }
     }
 
+    function addLinkedMBOMInsertAction(elemItem) {
+        if(!elemItem || elemItem.length === 0 || elemItem.hasClass('root')) return;
+        if(isBlank(getLinkedMBOMLinkFromEBOMElement(elemItem))) return;
+        let actions = elemItem.children('.item-head').children('.item-actions').first();
+        if(actions.length === 0 || actions.children('.item-action-add-linked-mbom').length > 0) return;
+        actions.children('.item-action-add').remove();
+        addAction('Add MBOM', actions)
+            .addClass('item-action-add item-action-add-linked-mbom')
+            .attr('title', 'Add the existing linked MBOM to the selected operation')
+            .click(function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                insertFromEBOMToMBOM($(this));
+                setStatusBar();
+                setStatusBarFilter();
+            });
+    }
+
+    function refreshMissingLinkedMBOMStatus() {
+        $('#ebom').find('.item').each(function() {
+            let elemItem = $(this);
+            if(elemItem.hasClass('root')) return;
+            let link = getLinkedMBOMLinkFromEBOMElement(elemItem);
+            if(isBlank(link)) return;
+            let missing = findRenderedMBOMItemByLink(link).length === 0;
+            elemItem.toggleClass('linked-mbom-missing', missing);
+            addLinkedMBOMInsertAction(elemItem);
+            if(missing) {
+                setLinkedEBOMBOMCheckPending(elemItem, false);
+                setHolisticItemState(elemItem, 'additional');
+                elemItem.children('.item-head').children('.item-head-status')
+                    .attr('title', 'Red: linked MBOM exists but is missing from the current manufacturing structure. Use Add MBOM.');
+            }
+        });
+    }
+
+    function insertLinkedMBOMWithoutEBOMChildren(elemAction, insert) {
+        let elemItem = elemAction.closest('.item');
+        let branch = elemItem.children('.item-bom').detach();
+        let wasLeaf = elemItem.hasClass('leaf');
+        // The existing insertion routine clones the source row and swaps its link to data-mbom.
+        // Do not clone engineering children into the manufacturing structure.
+        elemItem.addClass('leaf');
+        try {
+            return insert(elemAction);
+        } finally {
+            elemItem.toggleClass('leaf', wasLeaf);
+            elemItem.append(branch);
+        }
+    }
+
     function addLinkedMBOMMarker(elemItem, linkedMBOM) {
         if(!elemItem || elemItem.length === 0 || isBlank(linkedMBOM)) return $();
         if(elemItem.hasClass('root')) return $();
 
         elemItem.attr('data-mbom', linkedMBOM);
+        addLinkedMBOMInsertAction(elemItem);
 
         let elemHead = elemItem.children('.item-head').first();
         if(elemHead.length === 0) return $();
@@ -500,6 +581,40 @@
         // The collapse/expand pseudo-icon becomes a third grid item and hides
         // the open-in-new-tab shortcut. The inline shortcut handles toggling.
         elemToggle.removeClass('icon-collapse icon-expand');
+    }
+
+    function refreshNewLinkedMBOMControls() {
+        $('#mbom').find('.item').each(function() {
+            let elemItem = $(this);
+            if(elemItem.hasClass('root') || hasMBOMShortcut(elemItem)) return;
+
+            let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(elemItem);
+            if(isBlank(linkedMBOM)) return;
+
+            // Conversion clones an EBOM row without going through the MBOM
+            // renderer. Preserve its engineering identity and use the new
+            // manufacturing link for navigation and inline expansion.
+            let originalLink = elemItem.attr('data-link');
+            if(isBlank(elemItem.attr('data-ebom-root'))) {
+                elemItem.attr('data-ebom-root', elemItem.attr('data-root'));
+            }
+            if(isBlank(elemItem.attr('data-ebom')) &&
+                normalizePLMLink(originalLink) !== normalizePLMLink(linkedMBOM)) {
+                elemItem.attr('data-ebom', originalLink);
+            }
+            elemItem.attr('data-link', linkedMBOM).attr('data-link-mbom', linkedMBOM);
+            elemItem.removeClass('linked-mbom-bom linked-mbom-check-pending linked-mbom-missing ebom-make-item');
+
+            let elemHead = elemItem.children('.item-head').first();
+            elemHead.children('.linked-mbom-marker').remove();
+            elemHead.off('click');
+            elemHead.children('.item-toggle').first().off('click')
+                .removeClass('icon icon-expand icon-collapse');
+
+            ensureMBOMShortcutIcons(elemItem);
+            enableSubMBOMOperationTarget(elemItem);
+            attachCustomMBOMItemSelection(elemItem);
+        });
     }
 
     function getMBOMShortcutHeader(elemItem) {
@@ -707,6 +822,10 @@
         let searchPromise = new Promise(function(resolve) {
             $.get('/plm/search-bulk', params)
                 .done(function(response) {
+                    if(!response || response.error || !response.data || !Array.isArray(response.data.items)) {
+                        resolve({ material: material, items: [], query: query, error: true });
+                        return;
+                    }
                     let items = (response && response.data && response.data.items) ? response.data.items : [];
                     let filteredItems = items.filter(function(item) {
                         return itemLooksLikeMatchingRawMaterial(item, material);
@@ -738,12 +857,116 @@
                         textStatus : textStatus || '',
                         error      : errorThrown || ''
                     });
-                    resolve({ material: material, items: [], query: query });
+                    resolve({ material: material, items: [], query: query, error: true });
                 });
         });
 
         if(!isBlank(cacheKey)) rawMaterialSearchPromises[cacheKey] = searchPromise;
         return searchPromise;
+    }
+
+    function ensureRawMaterialSearchResult(result) {
+        if(result.error) throw new Error('Raw material search failed: ' + result.material);
+        if(result.items.length > 0) return Promise.resolve(result);
+        let key = normalizeComparisonValue(result.material);
+        if(!rawMaterialCreationPromises[key]) {
+            rawMaterialCreationPromises[key] = createRawMaterialItem(result.material).then(function(item) {
+                let createdResult = { material: result.material, items: [item], query: result.query };
+                rawMaterialSearchPromises[key] = Promise.resolve(createdResult);
+                return createdResult;
+            }).catch(function(error) {
+                delete rawMaterialCreationPromises[key];
+                throw error;
+            });
+        }
+        return rawMaterialCreationPromises[key];
+    }
+
+    async function createRawMaterialItem(material) {
+        if(isBlank(material)) throw new Error('Cannot create a raw material without MATERIAL.');
+        let responses = await Promise.all([
+            $.get('/plm/sections', { wsId: rawMaterialsWorkspaceId }),
+            $.get('/plm/fields', { wsId: rawMaterialsWorkspaceId })
+        ]);
+        if(responses.some(function(response) { return !response || response.error || !Array.isArray(response.data); })) {
+            throw new Error('Cannot load raw material workspace fields.');
+        }
+        let values = {
+            GRUPA_PRODUKTOWA: 'MHU', NUMBER: '', TITLE: material,
+            NAZWA: material, NAZWA_DEFRO: material, TYPE: rawMaterialTypeName,
+            TYP_CZESCI: 'S', RODZAJ: 'Surowiec', WARIANT: 'Surowiec', SPECYFIKACJA: 'Surowiec'
+        };
+        let fields = await Promise.all(Object.keys(values).map(async function(fieldId) {
+            let metadata = responses[1].data.find(function(field) {
+                return (field.__self__ || field.link || '').split('/').pop() === fieldId;
+            });
+            if(!metadata) throw new Error('Missing raw material field: ' + fieldId);
+            let value = values[fieldId];
+            if(fieldId === 'TYPE') {
+                // Match the existing MBOM/Process creation contract: TYPE is an option link.
+                let picklistLink = metadata.picklist || metadata.lookups;
+                if(isBlank(picklistLink)) {
+                    let configuredTypeValue = (typeof config !== 'undefined' && config.mbomRoot)
+                        ? String(config.mbomRoot.typeValue || '') : '';
+                    let optionsMarker = configuredTypeValue.indexOf('/options/');
+                    picklistLink = optionsMarker > 0
+                        ? configuredTypeValue.substring(0, optionsMarker)
+                        : '/api/v3/lookups/CUSTOM_LOOKUP_ITEM_TYPES';
+                }
+                let offset = 0;
+                let option;
+                while(!option) {
+                    let response = await $.get('/plm/picklist', { link: picklistLink, limit: 250, offset: offset, useCache: false });
+                    if(!response || response.error || !response.data || !Array.isArray(response.data.items)) {
+                        throw new Error('Cannot load raw material options: ' + fieldId);
+                    }
+                    let items = response.data.items;
+                    option = items.find(function(item) {
+                        return normalizeComparisonValue(item.title || item.label || item.value) === normalizeComparisonValue(value);
+                    });
+                    if(option || items.length < 250) break;
+                    offset += items.length;
+                }
+                if(!option || !(option.link || option.__self__)) throw new Error('Missing option for ' + fieldId + ': ' + value);
+                value = { link: option.link || option.__self__ };
+            }
+            return { fieldId: fieldId, value: value };
+        }));
+        let response = await $.post({
+            url: '/plm/create', contentType: 'application/json',
+            data: JSON.stringify({ wsId: rawMaterialsWorkspaceId, sections: responses[0].data, fields: fields })
+        });
+        if(!response || response.error) {
+            console.warn('MBOM custom: PLM rejected raw material creation', { material: material, response: response });
+            throw new Error('Failed to create raw material: ' + material + '. ' + getRawMaterialErrorMessage(response));
+        }
+        let link = response.data && response.data.__self__ ? response.data.__self__ : response.data;
+        if(typeof link !== 'string' || isBlank(link)) throw new Error('Created raw material returned no item link.');
+        return { __self__: link.replace(/^https?:\/\/[^/]+/i, ''), title: material };
+    }
+
+    function getRawMaterialErrorMessage(error) {
+        if(!error) return 'PLM returned no response.';
+        let response = error.responseJSON || error;
+        if(!isBlank(response.message)) return String(response.message);
+        if(!isBlank(response.responseText)) return String(response.responseText);
+        if(response.data && (!Array.isArray(response.data) || response.data.length > 0)) {
+            return typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        }
+        return 'PLM request failed' + (response.status ? ' (HTTP ' + response.status + ')' : '') + '.';
+    }
+
+    function resolveRawMaterialForBatch(material) {
+        return Promise.resolve().then(function() {
+            return searchRawMaterialItems(material);
+        }).then(ensureRawMaterialSearchResult).catch(function(error) {
+            // A failed material must not prevent unrelated branches from being applied.
+            // Re-query on the next attempt in case PLM created an item before a connection failed.
+            delete rawMaterialSearchPromises[normalizeComparisonValue(material)];
+            let message = getRawMaterialErrorMessage(error);
+            console.warn('MBOM custom: raw material could not be prepared', { material: material, error: error });
+            return { material: material, items: [], error: true, message: message };
+        });
     }
 
     function getSearchItemLink(item) {
@@ -1021,7 +1244,6 @@
         let quantity = parseNumericValue(accountingQuantity);
 
         if(Number.isNaN(quantity) || quantity <= 0) return NaN;
-        if(!rawMaterialUnitsMatch(accountingUnit, rawMaterialUnit)) return NaN;
 
         return quantity;
     }
@@ -1196,14 +1418,13 @@
             }
 
             if(!unitsMatch) {
-                console.warn('MBOM custom: raw material skipped because JEDNOSTKA_ROZLICZENIOWA does not match the raw material UOM', {
+                console.warn('MBOM custom: raw material unit warning: JEDNOSTKA_ROZLICZENIOWA does not match the raw material UOM; continuing with ILOSC_ROZLICZENIOWA', {
                     mbomLink        : getPartItemLink(part),
                     material        : entry ? entry.material : '',
                     accountingUnit  : accountingUnit,
                     rawMaterialLink : getSearchItemLink(item),
                     rawMaterialUOM  : rawMaterialUnit
                 });
-                return NaN;
             }
 
             return insertQuantity;
@@ -2392,6 +2613,7 @@
         $('#step0').addClass('in-work');
         $('.step-bar').removeClass('transition-stopper');
 
+        $('#step0 .step-label').text('Checking existing BOM entries');
         $('#step-counter0').html('0 of ' + count);
         $('#step-counter1').html('0 of 0');
         $('#step-counter2').html('0 of 0');
@@ -2704,6 +2926,41 @@
         });
     }
 
+    async function saveMBOMHasBOMMarker(link) {
+        let details = await loadMBOMPropertyRepairDetails(link, 'mBOM');
+        let sourceLink = getMBOMPropertyRepairSourceLink(details);
+        if(isBlank(sourceLink) || !isMBOMPropertyRepairTarget(details, link, sourceLink)) return;
+        let hasBom = await getSourceEBOMHasChildren({ __self__: sourceLink });
+        let savedValue = getSectionFieldValue(details.sections || [], 'HAS_BOM', null);
+        if(savedValue !== null && typeof savedValue !== 'undefined' && savedValue !== '' && isMBOMHasBOM(savedValue) === hasBom) return;
+        let response = await $.post('/plm/edit', {
+            link: link, sections: wsMBOM.sections,
+            fields: [{ fieldId: 'HAS_BOM', value: hasBom }]
+        });
+        if(!response || response.error) {
+            throw new Error('Could not save HAS_BOM for ' + link + '. ' + getRawMaterialErrorMessage(response));
+        }
+    }
+
+    async function saveMBOMHasBOMMarkersBeforeSave() {
+        let linksToUpdate = new Set();
+        $('#mbom .item').each(function() {
+            let elemItem = $(this);
+            if(!isMBOMTechnologyItem(elemItem)) return;
+            let link = getPLMItemLevelLink(getMBOMSaveLink(elemItem));
+            if(!isBlank(link)) linksToUpdate.add(link);
+        });
+        let pendingLinks = Array.from(linksToUpdate);
+        let batchSize = Math.max(1, Math.min(5, typeof maxRequests === 'number' ? maxRequests : 5));
+        let started = Date.now();
+        for(let offset = 0; offset < pendingLinks.length; offset += batchSize) {
+            let results = await Promise.allSettled(pendingLinks.slice(offset, offset + batchSize).map(saveMBOMHasBOMMarker));
+            let failure = results.find(function(result) { return result.status === 'rejected'; });
+            if(failure) throw failure.reason;
+        }
+        console.log('MBOM custom: HAS_BOM checks completed', { items: pendingLinks.length, durationMs: Date.now() - started });
+    }
+
     function attachCustomSaveGuard() {
         let elemSave = $('#save');
         if(elemSave.length === 0) return;
@@ -2720,10 +2977,13 @@
             initSaveCheckDialog(headers.length);
 
             syncExistingBOMStateBeforeSave().then(function() {
+                $('#step0 .step-label').text('Saving assembly properties');
                 return saveAssemblyIndexPropertiesBeforeSave();
             }).then(function() {
+                $('#step0 .step-label').text('Checking operation codes');
                 return normalizeProcessCodesBeforeSave();
             }).then(function() {
+                $('#step0 .step-label').text('Loading operation type');
                 return loadMBOMOperationTypeValue();
             }).then(function() {
                 completeSaveCheckDialog(headers.length);
@@ -2733,10 +2993,21 @@
             }).catch(function(error) {
                 console.warn('MBOM custom: failed to validate BOM state or process codes before save', error);
                 showErrorMessage('Error while preparing save', String(error && error.message ? error.message : 'Could not validate existing BOM entries before saving.'));
-            }).finally(function() {
                 elemButton.removeClass('disabled');
+                $('#confirm-saving').removeClass('disabled').addClass('default');
             });
         });
+    }
+
+    if(typeof endProcessing === 'function') {
+        let originalEndProcessing = endProcessing;
+        endProcessing = function() {
+            try {
+                return originalEndProcessing.apply(this, arguments);
+            } finally {
+                $('#save').removeClass('disabled');
+            }
+        };
     }
 
     if(typeof showSaveProcessingDialog === 'function') {
@@ -3199,7 +3470,8 @@
             hasChildren : false,
             isLeaf      : true
         });
-        let elemNode = insertBOMPartListNode('mbom', null, renderNode).appendTo(elemParent)
+        let elemNode = findMatchingDirectInlineChild(elemParent, node);
+        if(elemNode.length === 0) elemNode = insertBOMPartListNode('mbom', null, renderNode).appendTo(elemParent)
             .addClass('inline-submbom-injected')
             .attr('data-edge', node.edgeId || '')
             .attr('data-link-db', node.link || '')
@@ -3229,13 +3501,13 @@
         return elemNode;
     }
 
-    function hasMatchingDirectInlineChild(elemBOM, childPart) {
-        if(!elemBOM || elemBOM.length === 0 || !childPart) return false;
+    function findMatchingDirectInlineChild(elemBOM, childPart) {
+        if(!elemBOM || elemBOM.length === 0 || !childPart) return $();
 
         let normalizedLink = normalizePLMLink(childPart.link);
         let edgeId = isBlank(childPart.edgeId) ? '' : String(childPart.edgeId);
         let number = isBlank(childPart.number) ? '' : String(childPart.number);
-        let found = false;
+        let found = $();
 
         elemBOM.children('.item').each(function() {
             let elemChild = $(this);
@@ -3244,12 +3516,14 @@
             let childNumber = elemChild.attr('data-number-db') || elemChild.attr('data-number') || '';
 
             if(!isBlank(edgeId) && childEdgeId === edgeId) {
-                found = true;
+                found = elemChild;
                 return false;
             }
 
+            // Different saved relationships may legitimately use the same operation item.
+            if(!isBlank(edgeId) && !isBlank(childEdgeId)) return;
             if(!isBlank(normalizedLink) && childLink === normalizedLink && String(childNumber) === number) {
-                found = true;
+                found = elemChild;
                 return false;
             }
         });
@@ -3274,12 +3548,7 @@
         let directChildEdgeIds = [];
         while(index < children.length) {
             if(children[index].level === children[0].level) {
-                let alreadyRenderedAssemblyChild = elemItem.hasClass('assembly-index') &&
-                    hasMatchingDirectInlineChild(elemBOM, children[index]);
-
-                if(!alreadyRenderedAssemblyChild) {
-                    renderInlineSubMBOMBranch(elemBOM, children, index);
-                }
+                renderInlineSubMBOMBranch(elemBOM, children, index);
                 if(!isBlank(children[index].edgeId)) directChildEdgeIds.push(children[index].edgeId);
             }
             index++;
@@ -3536,21 +3805,45 @@
         return pendingPromise;
     }
 
-    function resolveMBOMMaterials(mbomParts) {
-        let mbomSourceParts = mbomParts.filter(function(part) {
-            let elemMBOMItem = getMBOMItemForPart(part);
-            let isMBOM = isMBOMTechnologyItem(elemMBOMItem);
-
-            if(!isMBOM) {
-                console.log('MBOM custom: skipping raw material source because the item is not an MBOM root', {
-                    link       : getPartItemLink(part),
-                    partNumber : getPartNumber(part),
-                    targetItem : describeMBOMItem(elemMBOMItem)
-                });
+    async function ensureRawMaterialTreeExpanded() {
+        let processed = new Set();
+        while(true) {
+            // Reuse ERP's expandable-item discovery, but include ERP-synced MBOMs too.
+            let candidates = getERPTechnologyExpandableItems().filter(function(elemItem) {
+                let key = getERPTechnologyElementLink(elemItem) || elemItem[0];
+                return !processed.has(key);
+            });
+            if(candidates.length === 0) return;
+            for(let elemItem of candidates) {
+                let link = getERPTechnologyElementLink(elemItem);
+                processed.add(link || elemItem[0]);
+                let expanded = await ensureInlineSubMBOMExpanded(elemItem);
+                $('#overlay').show();
+                if(!expanded && elemItem.attr('data-inline-submbom-loaded') !== 'empty') {
+                    throw new Error('Could not discover all nested MBOMs below ' + (link || 'an unsaved item') + '. Retry after this branch has loaded.');
+                }
             }
+        }
+    }
 
-            return isMBOM;
+    function getRawMaterialSourceParts(parts) {
+        let seen = new Set();
+        return parts.filter(function(part) {
+            if(!part || !isMBOMTechnologyItem(getMBOMItemForPart(part))) return false;
+            let key = normalizePLMLink(getPartItemLink(part));
+            if(!isBlank(key)) {
+                if(seen.has(key)) return false;
+                seen.add(key);
+            }
+            return true;
         });
+    }
+
+    async function resolveMBOMMaterials(mbomParts) {
+        await ensureRawMaterialTreeExpanded();
+        // Inline expansion appends newly discovered descendants to the live parts list.
+        let allParts = mbomParts.concat(Array.isArray(mbomPartsList) ? mbomPartsList : []);
+        let mbomSourceParts = getRawMaterialSourceParts(allParts);
 
         console.log('MBOM custom: raw material sources restricted to MBOM roots', {
             loadedItems : mbomParts.length,
@@ -3566,25 +3859,8 @@
             };
         });
 
-        let withMaterial = function() {
-            return mbomMaterials.filter(function(entry) { return !isBlank(entry.material); });
-        };
-
-        // Start material lookup and target preparation while any missing
-        // accounting fields are loaded from the mBOM item details.
-        withMaterial().forEach(function(entry) {
-            searchRawMaterialItems(entry.material);
-            entry.targetPreparationPromise = prepareRawMaterialTarget(entry);
-        });
-
-        let missingFallbackParts = mbomMaterials.filter(function(entry) {
-            return isBlank(entry.material) ||
-                isBlank(entry.accountingUnit) ||
-                Number.isNaN(entry.accountingQuantity) ||
-                entry.accountingQuantity <= 0;
-        });
-
-        if(missingFallbackParts.length === 0) return Promise.resolve(withMaterial());
+        // Read the marker from item details even when MATERIAL and quantity are already in the BOM view.
+        let missingFallbackParts = mbomMaterials;
 
         return fetchMBOMPartMaterialsFromDetails(missingFallbackParts.map(function(entry) { return entry.part; }))
             .then(function(results) {
@@ -3596,7 +3872,9 @@
 
             mbomMaterials.forEach(function(entry) {
                 let fallback = fallbackMap.get(getPartItemLink(entry.part));
-                if(!fallback) return;
+                if(!fallback) { entry.detailsError = true; return; }
+                entry.hasBom = fallback.hasBom === true;
+                entry.detailsError = fallback.detailsError === true;
 
                 if(isBlank(entry.material) && !isBlank(fallback.material)) entry.material = fallback.material;
                 if(isBlank(entry.accountingUnit) && !isBlank(fallback.accountingUnit)) {
@@ -3608,9 +3886,9 @@
                 }
                 });
 
-                return withMaterial();
+                return mbomMaterials;
             })
-            .catch(withMaterial);
+            .catch(function() { return mbomMaterials; });
     }
 
     function initRawMaterialsDialog(searchTotal, applyTotal) {
@@ -3672,27 +3950,55 @@
 
     function setRawMaterialsDialogResult(summary) {
         let result = summary || {};
-        let found = Math.max(0, Number(result.found) || 0);
-        let added = Math.max(0, Number(result.added) || 0);
-        let updated = Math.max(0, Number(result.updated) || 0);
-        let skipped = Math.max(0, Number(result.skipped) || 0);
-        let uomMismatches = Math.max(0, Number(result.uomMismatches) || 0);
-        let lines = [
-            'Found ' + found + ' mBOM' + (found === 1 ? '' : 's') + ' with materials.',
-            'Added ' + added + ' raw material' + (added === 1 ? '' : 's') + '.'
-        ];
-
-        if(updated > 0) lines.push('Updated ' + updated + ' existing raw material' + (updated === 1 ? '' : 's') + '.');
-        if(skipped > 0) lines.push('Not applied: ' + skipped + '. Check the browser log for details.');
-        if(uomMismatches > 0) {
-            lines.push('Skipped because JEDNOSTKA_ROZLICZENIOWA does not match the raw material UOM: ' + uomMismatches + '.');
+        let issues = getRawMaterialReportRows(result.entries);
+        let lines = [];
+        if(issues.length > 0) lines.push('Raw material not applied to ' + issues.length + ' MBOM(s):');
+        if(result.error) {
+            lines.push('Processing stopped before all materials could be applied.');
+            (result.materialErrors || []).forEach(function(failure) {
+                lines.push(failure.material + ': ' + failure.message);
+            });
         }
-        if(result.error) lines.push('Processing stopped before all materials could be applied. Check the browser log.');
-
+        if(lines.length === 0) lines.push('No issues.');
         $('#raw-material-results')
-            .toggleClass('with-warning', skipped > 0 || uomMismatches > 0 || result.error === true)
+            .toggleClass('with-warning', issues.length > 0 || result.error === true)
             .text(lines.join('\n'))
             .show();
+    }
+
+    function getRawMaterialReportRows(entries) {
+        return (entries || []).filter(function(entry) { return entry.hasBom !== true && entry.rawMaterialOutcome !== 'added' && entry.rawMaterialOutcome !== 'updated'; }).map(function(entry) {
+            let link = getPartItemLink(entry.part) || '';
+            let match = String(link).match(/workspaces\/(\d+)\/items\/(\d+)/);
+            let href = match && typeof tenant !== 'undefined'
+                ? 'https://' + tenant + '.autodeskplm360.net/plm/workspaces/' + match[1]
+                    + '/items/itemDetails?view=full&tab=details&mode=view&itemId=urn%60adsk,plm%60tenant,workspace,item%60'
+                    + encodeURIComponent(tenant + ',' + match[1] + ',' + match[2])
+                : '';
+            let warnings = (entry.rawMaterialWarnings || []).slice();
+            if(entry.uomMismatch) warnings.push('Unit mismatch: MBOM "' + (entry.uomMismatch.mbomUnit || 'empty')
+                + '", raw material "' + (entry.uomMismatch.rawMaterialUOM || 'empty') + '". Quantity used without conversion.');
+            return {
+                label: getPartNumber(entry.part) || link || 'Unsaved MBOM', href: href,
+                material: entry.material || '(empty)', outcome: entry.rawMaterialOutcome || 'not-added',
+                message: entry.rawMaterialMessage || 'Not processed.', warnings: warnings
+            };
+        });
+    }
+
+    function renderRawMaterialReport(entries) {
+        let rows = getRawMaterialReportRows(entries);
+        if(rows.length === 0) return;
+        let container = $('#raw-material-results');
+        $('<p></p>').text('Open an MBOM link below to review the issue.').appendTo(container);
+        let list = $('<ul></ul>').addClass('raw-material-report').appendTo(container);
+        rows.forEach(function(row) {
+            let item = $('<li></li>').appendTo(list);
+            if(row.href) $('<a></a>').attr({ href: row.href, target: '_blank', rel: 'noopener noreferrer' }).text(row.label).appendTo(item);
+            else $('<span></span>').text(row.label).appendTo(item);
+            $('<div></div>').text((row.outcome === 'not-added' ? 'Not added: ' : row.outcome === 'updated' ? 'Updated: ' : 'Added: ') + row.material + ' — ' + row.message).appendTo(item);
+            row.warnings.forEach(function(warning) { $('<div></div>').addClass('raw-material-warning').text(warning).appendTo(item); });
+        });
     }
 
     function completeRawMaterialsDialog(total, summary) {
@@ -3700,7 +4006,10 @@
         $('#raw-step-bar2').css('width', '100%');
         $('#raw-step-counter2').html(count + ' of ' + count);
         $('#raw-step2').removeClass('in-work');
-        if(summary) setRawMaterialsDialogResult(summary);
+        if(summary) {
+            setRawMaterialsDialogResult(summary);
+            renderRawMaterialReport(summary.entries);
+        }
         $('#confirm-raw-materials').removeClass('disabled').addClass('default');
     }
 
@@ -3721,6 +4030,7 @@
                 };
             });
         }).catch(function(error) {
+            entry.rawMaterialPreparationError = getRawMaterialErrorMessage(error);
             console.warn('MBOM custom: failed to prepare raw material target', {
                 mbomLink : getPartItemLink(entry.part),
                 error    : error
@@ -3750,7 +4060,12 @@
             button.html('Searching...');
         }
 
-        let uniqueMaterials = Array.from(new Set(mbomMaterials.map(function(entry) { return entry.material; })));
+        mbomMaterials.forEach(function(entry) {
+            entry.rawMaterialOutcome = 'not-added';
+            entry.rawMaterialMessage = getRawMaterialSkipReason(entry) || (isBlank(entry.material) ? 'MATERIAL is empty.' : 'No matching raw material was available.');
+            entry.rawMaterialWarnings = [];
+        });
+        let uniqueMaterials = Array.from(new Set(mbomMaterials.filter(function(entry) { return !getRawMaterialSkipReason(entry); }).map(function(entry) { return entry.material; }).filter(function(material) { return !isBlank(material); })));
         let searchResultsByMaterial = {};
         let searchDone = 0;
         let applyDone = 0;
@@ -3763,6 +4078,7 @@
         // Target expansion and duplicate checks do not depend on the search
         // result, so let them run while material searches are in progress.
         mbomMaterials.forEach(function(entry) {
+            if(getRawMaterialSkipReason(entry)) return;
             targetPreparationPromises.set(
                 entry,
                 entry.targetPreparationPromise || prepareRawMaterialTarget(entry)
@@ -3770,7 +4086,7 @@
         });
 
         let searchRequests = uniqueMaterials.map(function(material) {
-            return searchRawMaterialItems(material).then(function(result) {
+            return resolveRawMaterialForBatch(material).then(function(result) {
                 searchResultsByMaterial[material] = result;
                 searchDone++;
                 updateRawMaterialsSearchDialog(searchDone, uniqueMaterials.length);
@@ -3786,8 +4102,14 @@
             mbomMaterials.forEach(function(entry) {
                 chain = chain.then(function() {
                     let material = entry.material;
+                    if(getRawMaterialSkipReason(entry)) {
+                        applyDone++;
+                        updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
+                        return null;
+                    }
 
                     let result = searchResultsByMaterial[material];
+                    if(result && result.error) entry.rawMaterialMessage = result.message;
                     if(!result || !Array.isArray(result.items) || result.items.length === 0) {
                         console.warn('MBOM custom: no matching WS57 TITLE found for MATERIAL', {
                             material : material
@@ -3799,6 +4121,7 @@
 
                     let item = chooseRawMaterialItem(material, result.items);
                     if(!item) {
+                        entry.rawMaterialMessage = 'No exact TITLE match could be selected.';
                         console.warn('MBOM custom: TITLE match selection failed for MATERIAL', {
                             material : material
                         });
@@ -3809,6 +4132,7 @@
 
                     let link = getSearchItemLink(item);
                     if(isBlank(link)) {
+                        entry.rawMaterialMessage = 'The raw material has no usable item link.';
                         console.warn('MBOM custom: raw material match has no usable link', {
                             material : material
                         });
@@ -3819,6 +4143,7 @@
 
                     return getRawMaterialInsertQuantity(entry, item).then(function(quantity) {
                         if(Number.isNaN(quantity) || quantity <= 0) {
+                            entry.rawMaterialMessage = 'ILOSC_ROZLICZENIOWA is missing or invalid.';
                             applyDone++;
                             updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                             return null;
@@ -3829,6 +4154,7 @@
                             return prepareRawMaterialTarget(entry, true);
                         }).then(function(targetContext) {
                             if(!targetContext) {
+                                entry.rawMaterialMessage = entry.rawMaterialPreparationError || 'No operation could be prepared for this MBOM.';
                                 console.warn('MBOM custom: cannot find MBOM insertion target', {
                                     material : material,
                                     mbomLink  : getPartItemLink(entry.part)
@@ -3879,6 +4205,8 @@
 
                                     if(elemExisting.length > 0 && setRawMaterialQuantity(elemHeader, link, quantity)) {
                                         totalUpdated++;
+                                        entry.rawMaterialOutcome = 'updated';
+                                        entry.rawMaterialMessage = 'Raw material already present; quantity updated.';
                                         console.log('MBOM custom: raw material already exists, quantity set to resolved value', {
                                             material : material,
                                             link     : link,
@@ -3886,6 +4214,7 @@
                                             quantity : quantity
                                         });
                                     } else {
+                                        entry.rawMaterialMessage = 'Raw material already present, but its quantity could not be updated.';
                                         console.warn('MBOM custom: raw material exists but DOM row could not be updated', {
                                             material : material,
                                             link     : link,
@@ -3912,9 +4241,12 @@
                                     existingState.links.add(normalizedLink);
                                     existingState.children.set(normalizedLink, { link : link, quantity : quantity });
                                     totalAdded++;
+                                    entry.rawMaterialOutcome = 'added';
+                                    entry.rawMaterialMessage = 'Raw material added.';
 
                                     return waitForDirectChildItem(elemHeader, link).then(function(elemInserted) {
                                         if(elemInserted.length === 0) {
+                                            entry.rawMaterialWarnings.push('Inserted row was not found; verify its quantity before saving.');
                                             console.warn('MBOM custom: inserted raw material row was not found in DOM after insert', {
                                                 material : material,
                                                 link     : link,
@@ -3924,6 +4256,7 @@
                                         }
 
                                         if(!setRawMaterialQuantity(elemHeader, link, quantity)) {
+                                            entry.rawMaterialWarnings.push('The inserted quantity could not be set; verify it before saving.');
                                             console.warn('MBOM custom: inserted raw material quantity could not be set', {
                                                 material : material,
                                                 link     : link,
@@ -3946,6 +4279,11 @@
                             });
                         });
                     });
+                }).catch(function(error) {
+                    entry.rawMaterialMessage = getRawMaterialErrorMessage(error);
+                    console.warn('MBOM custom: failed to apply raw material', { entry: entry, error: error });
+                    applyDone++;
+                    updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                 });
             });
 
@@ -3979,7 +4317,9 @@
                     added         : totalAdded,
                     updated       : totalUpdated,
                     skipped       : Math.max(0, mbomMaterials.length - totalAdded - totalUpdated),
-                    uomMismatches : uomMismatches.length
+                    uomMismatches : uomMismatches.length,
+                    entries: mbomMaterials,
+                    materialErrors: Object.values(searchResultsByMaterial).filter(function(result) { return result.error; })
                 });
 
                 if(button.length) {
@@ -3994,7 +4334,8 @@
                 added   : totalAdded,
                 updated : totalUpdated,
                 skipped : Math.max(0, mbomMaterials.length - totalAdded - totalUpdated),
-                error   : true
+                error   : true,
+                entries : mbomMaterials
             });
             if(button.length) {
                 button.removeClass('disabled');
@@ -4004,6 +4345,18 @@
     }
 
     function addRawMaterialsFromMBOM() {
+        if($('#add-raw-materials').hasClass('disabled')) return;
+        $('#overlay, #dialog-confirm-raw-materials').show();
+        $('#cancel-add-raw-materials').off('click').on('click', function() {
+            $('#overlay, #dialog-confirm-raw-materials').hide();
+        });
+        $('#start-add-raw-materials').off('click').on('click', function() {
+            $('#dialog-confirm-raw-materials').hide();
+            startRawMaterialsFromMBOM();
+        }).trigger('focus');
+    }
+
+    function startRawMaterialsFromMBOM() {
         console.log('MBOM custom: Add Raw Materials button clicked');
         initRawMaterialsDialog(0, 0);
         setRawMaterialsDialogPendingState();
@@ -4014,7 +4367,7 @@
                 addRawMaterialsToMBOM(mbomMaterials);
             }).catch(function(error) {
                 console.warn('MBOM custom: failed while resolving MBOM materials', error);
-                $('#confirm-raw-materials').removeClass('disabled').addClass('default');
+                completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
             });
             return;
         }
@@ -4055,12 +4408,12 @@
                     addRawMaterialsToMBOM(mbomMaterials);
                 }).catch(function(error) {
                     console.warn('MBOM custom: failed while resolving fetched MBOM materials', error);
-                    $('#confirm-raw-materials').removeClass('disabled').addClass('default');
+                    completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
                 });
             })
-            .fail(function() {
+            .fail(function(error) {
                 console.warn('MBOM custom: failed to fetch MBOM data');
-                $('#confirm-raw-materials').removeClass('disabled').addClass('default');
+                completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
             });
     }
 
@@ -4075,8 +4428,8 @@
     ];
     const erpAssemblyIndexProductGroupId = assemblyIndexPLMDefaults.productGroup;
     const erpAssemblyIndexProductPropertyMappings = [
-        ['Opis', ['DESCRIPTION']],
-        ['Nazwa', ['DESCRIPTION', 'TITLE']],
+        ['Opis', ['OPIS']],
+        ['Nazwa', ['NAZWA']],
         ['Tytuł', ['TITLE']],
         ['Tutuł', ['TITLE']],
         ['Rewizja', ['REVISION']],
@@ -4094,8 +4447,8 @@
     const erpSubMBOMProductPropertyMappings = [
         ['Materiał', ['MATERIAL']],
         ['Masa', ['ITEM_WEIGHT']],
-        ['Opis', ['DESCRIPTION']],
-        ['Nazwa', ['DESCRIPTION', 'TITLE']],
+        ['Opis', ['OPIS']],
+        ['Nazwa', ['NAZWA']],
         ['Tytuł', ['TITLE']],
         ['Tutuł', ['TITLE']],
         ['Grupa produktowa', ['GRUPA_PRODUKTOWA']],
@@ -4412,7 +4765,8 @@
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
         let rawIndex = getERPTechnologySectionValue(sections, ['NUMBER'], '');
         let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
-        let description = getERPTechnologySectionValue(sections, ['DESCRIPTION'], title);
+        let description = getERPTechnologySectionValue(sections, ['OPIS'], title);
+        let partName = getERPTechnologySectionValue(sections, ['NAZWA_DEFRO'], title);
         let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], erpAssemblyIndexProductGroupId);
         let properties = [];
 
@@ -4420,7 +4774,6 @@
             let value = getERPTechnologySectionValue(sections, mapping[1], '');
             if(isBlank(value) && mapping.length > 2) value = mapping[2];
             if(mapping[0] === 'Grupa produktowa' && isBlank(value)) value = groupId;
-            if(mapping[0] === 'Nazwa' && isBlank(value)) value = title;
             if(mapping[0] === 'Opis' && isBlank(value)) value = description;
 
             if(mapping[0] === 'Specyfikacja') {
@@ -4442,7 +4795,7 @@
 
         return {
             indeks          : rawIndex,
-            nazwa_czesci    : description || title || rawIndex,
+            nazwa_czesci    : partName || title || rawIndex,
             id_grupy        : groupId || erpAssemblyIndexProductGroupId,
             jednostka_miary : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
             wlasnosci       : properties
@@ -4535,17 +4888,13 @@
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
         let rawIndex = getERPTechnologySectionValue(sections, ['NUMBER'], '');
         let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
-        let description = getERPTechnologySectionValue(sections, ['DESCRIPTION'], title);
+        let description = getERPTechnologySectionValue(sections, ['OPIS'], title);
+        let partName = getERPTechnologySectionValue(sections, ['NAZWA_DEFRO'], title);
         let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], '');
-        let itemType = getERPTechnologySectionValue(sections, ['RODZAJ'], '');
-        let partName = String(itemType).trim().toUpperCase() === 'SUROWIEC'
-            ? title
-            : description;
         let properties = [];
 
         erpSubMBOMProductPropertyMappings.forEach(function(mapping) {
             let value = getERPTechnologySectionValue(sections, mapping[1], '');
-            if(mapping[0] === 'Nazwa' && isBlank(value)) value = title;
             if(mapping[0] === 'Opis' && isBlank(value)) value = description;
             if(isBlank(value)) return;
 
@@ -4634,7 +4983,7 @@
 
     function buildERPTechnologyDescription(detailsData, part) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        let description = getERPTechnologySectionValue(sections, ['DESCRIPTION'], '');
+        let description = getERPTechnologySectionValue(sections, ['OPIS'], '');
         if(isBlank(description)) {
             description = getERPTechnologySectionValue(
                 sections,
@@ -4921,7 +5270,7 @@
             let alreadySynced = isERPTechnologySynced(detailsData);
             let payload = {
                 indeks          : normalizeERPTechnologyIndex(getERPTechnologySectionValue(sections, ['NUMBER'], '')),
-                nazwa_czesci    : getERPTechnologySectionValue(sections, ['TITLE'], detailsData.title || ''),
+                nazwa_czesci    : getERPTechnologySectionValue(sections, ['NAZWA_DEFRO', 'TITLE'], detailsData.title || ''),
                 opis            : buildERPTechnologyDescription(detailsData, itemPart),
                 rewizja         : getERPTechnologyRevision(detailsData),
                 czy_zatwierdzona: 'N',
@@ -5353,7 +5702,7 @@
         let missingFields = [];
 
         if(isBlank(payload.indeks)) missingFields.push('NUMBER -> indeks');
-        if(isBlank(payload.nazwa_czesci)) missingFields.push('DESCRIPTION/TITLE -> nazwa_czesci');
+        if(isBlank(payload.nazwa_czesci)) missingFields.push('NAZWA_DEFRO/TITLE -> nazwa_czesci');
         if(isBlank(payload.id_grupy)) missingFields.push('GRUPA_PRODUKTOWA -> id_grupy');
 
         if(missingFields.length > 0) {
@@ -6001,21 +6350,11 @@
     }
 
     function getMBOMPropertyRepairMappings() {
-        if(typeof config === 'undefined' || !config.mbomRoot || !Array.isArray(config.mbomRoot.fieldsToCopy)) return [];
+        let configuredMappings = (typeof config !== 'undefined' && config.mbomRoot && Array.isArray(config.mbomRoot.fieldsToCopy))
+            ? config.mbomRoot.fieldsToCopy : [];
 
-        let mappings = config.mbomRoot.fieldsToCopy.filter(function(mapping) {
+        let mappings = configuredMappings.filter(function(mapping) {
             return mapping && !isBlank(mapping.ebom) && !isBlank(mapping.mbom);
-        });
-
-        [
-            rawMaterialAccountingUnitFieldId,
-            rawMaterialAccountingQuantityFieldId
-        ].forEach(function(fieldId) {
-            let exists = mappings.some(function(mapping) {
-                return mapping.ebom === fieldId && mapping.mbom === fieldId;
-            });
-
-            if(!exists) mappings.push({ ebom : fieldId, mbom : fieldId });
         });
 
         return mappings;
@@ -6136,7 +6475,7 @@
             }
 
             return loadMBOMPropertyRepairDetails(targetLink, 'target mBOM');
-        }).then(function(targetData) {
+        }).then(async function(targetData) {
             if(!targetData) return;
 
             let verifiedTargetLink = getPLMItemLevelLink(targetData.__self__ || targetLink);
@@ -6147,11 +6486,10 @@
                 throw new Error('Safety check refused the target: it is not a distinct Manufacturing mBOM linked back to this eBOM.');
             }
 
-            let fields = buildMBOMPropertyRepairFields(sourceData.sections || [], mappings);
-            if(fields.length === 0) {
-                results.skipped++;
-                return;
-            }
+            let hasBom = await getSourceEBOMHasChildren(sourceData);
+            let fields = buildMBOMPropertyRepairFields(sourceData.sections || [], mappings)
+                .filter(function(field) { return field.fieldId !== 'HAS_BOM'; });
+            fields.push({ fieldId: 'HAS_BOM', value: hasBom });
 
             console.info('MBOM custom: repairing properties EBOM -> MBOM', {
                 sourceEBOM : sourceLink,
@@ -6182,7 +6520,7 @@
             return;
         }
 
-        if(!window.confirm('Copy the configured properties from each related eBOM to the current mBOM and all discovered sub-mBOMs?')) return;
+        if(!window.confirm('Copy the configured properties and refresh HAS_BOM from each related eBOM to the current mBOM and all discovered sub-mBOMs?')) return;
 
         let queue = [];
         let seenSources = new Set();
@@ -6714,6 +7052,60 @@
         applyHolisticTreeRollups('#mbom');
     }
 
+    function refreshCustomStatusSummary() {
+        let counts = { additional : 0, different : 0, match : 0 };
+        let modelStates = new Map();
+        let priority = { match : 1, different : 2, additional : 3 };
+
+        function includeItem(elemItem, state) {
+            if(!Object.prototype.hasOwnProperty.call(counts, state)) return;
+            counts[state]++;
+
+            let partNumber = elemItem.attr('data-part-number');
+            if(isBlank(partNumber)) return;
+            let previous = modelStates.get(partNumber);
+            if(!previous || priority[state] > priority[previous]) modelStates.set(partNumber, state);
+        }
+
+        // Count component rows after linked-MBOM mirroring and parent rollups.
+        // Structural parents repeat their children's state and are not extras.
+        $('#ebom').find('.item').each(function() {
+            let elemItem = $(this);
+            if(elemItem.hasClass('root') || elemItem.hasClass('item-has-bom') ||
+                elemItem.hasClass('linked-mbom-check-pending') ||
+                getRenderedDirectChildren(elemItem).length > 0) return;
+            includeItem(elemItem, getHolisticItemState(elemItem));
+        });
+
+        $('#mbom').find('.item.is-ebom-item').each(function() {
+            let elemItem = $(this);
+            if(elemItem.hasClass('mbom-only') || !isRenderedMBOMTerminal(elemItem)) return;
+            if(getHolisticItemState(elemItem) === 'additional') includeItem(elemItem, 'additional');
+        });
+
+        ['additional', 'different', 'match'].forEach(function(state) {
+            $('#status-' + state)
+                .css('flex', counts[state] + ' 1 0%')
+                .css('border-width', counts[state] === 0 ? '0px' : '5px');
+        });
+
+        if(typeof isViewerStarted === 'function' && isViewerStarted()) {
+            viewerResetColors();
+            if(viewerStatusColors) {
+                let modelColors = { additional : colors.vectors.red, different : colors.vectors.yellow, match : colors.vectors.green };
+                ['additional', 'different', 'match'].forEach(function(state) {
+                    let partNumbers = [];
+                    modelStates.forEach(function(modelState, partNumber) {
+                        if(modelState === state) partNumbers.push(partNumber);
+                    });
+                    viewerSetColors(partNumbers, { keepHidden : true, unhide : false, resetColors : false, color : modelColors[state] });
+                });
+            }
+        }
+
+        if($('.bar.selected').length > 0 && typeof setStatusBarFilter === 'function') setStatusBarFilter();
+    }
+
     function applyHolisticStatus(expected, actual, errors) {
         let allKeys = new Set(Object.keys(expected).concat(Object.keys(actual)));
         let counts = { additional : 0, different : 0, match : 0 };
@@ -6760,6 +7152,7 @@
         });
 
         applyHolisticTreeRollups('#mbom');
+        refreshMissingLinkedMBOMStatus();
 
         ['additional', 'different', 'match'].forEach(function(state) {
             let elemBar = $('#status-' + state);
@@ -6832,7 +7225,6 @@
         insertAddRawMaterialsButton();
         insertMBOMPropertyRepairButton();
         insertAddAssemblyIndexButton();
-        insertMBOMOverviewButtons();
         setupAddProcessPicker();
         setupCustomEBOMItemFocus();
         insertERPTab();
@@ -6846,6 +7238,8 @@
             let result = originalSetStatusBar.apply(this, arguments);
             mirrorStandardStatusToLinkedEBOMRows();
             applyImmediateStandardStatusRollups();
+            refreshMissingLinkedMBOMStatus();
+            refreshCustomStatusSummary();
             return result;
         };
     }
@@ -6863,7 +7257,13 @@
         insertFromEBOMToMBOM = function(elemAction) {
             if(!validateMBOMComponentTarget()) return false;
 
-            return originalInsertFromEBOMToMBOM.apply(this, arguments);
+            let source = elemAction.closest('.item');
+            let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(source);
+            let result = !isBlank(linkedMBOM)
+                ? insertLinkedMBOMWithoutEBOMChildren(elemAction, originalInsertFromEBOMToMBOM)
+                : originalInsertFromEBOMToMBOM.apply(this, arguments);
+            refreshNewLinkedMBOMControls();
+            return result;
         };
     }
 
@@ -7402,6 +7802,7 @@
                 $('#step4').removeClass('in-work');
                 $('#step-counter4').html(pendingActions[3] + ' of ' + pendingActions[3]);
 
+                refreshNewLinkedMBOMControls();
                 endProcessing();
 
             }
@@ -7428,7 +7829,6 @@
             }
 
             insertAddAssemblyIndexButton();
-            insertMBOMOverviewButtons();
             setupAddProcessPicker();
             $('#confirm-raw-materials').off('click').on('click', function() {
                 if($(this).hasClass('disabled')) return;
@@ -7582,6 +7982,21 @@
                         basicSectionId : basicSectionId,
                         fields         : data.fields
                     });
+
+                    return $.ajax({
+                        url: '/plm/create', method: 'POST', data: data, timeout: 60000
+                    }).done(function(response) {
+                        if(response && !response.error) return;
+                        $('#save, #confirm-saving').removeClass('disabled');
+                        $('#dialog-saving .in-work').removeClass('in-work');
+                    }).fail(function(xhr, status) {
+                        console.error('MBOM custom: operation creation request failed', { status: status, response: xhr.responseJSON || xhr.responseText });
+                        $('#save, #confirm-saving').removeClass('disabled');
+                        $('#dialog-saving .in-work').removeClass('in-work');
+                        showErrorMessage('Operation creation failed',
+                            (status === 'timeout' ? 'PLM did not respond within 60 seconds.' : getRawMaterialErrorMessage(xhr))
+                            + ' Reload the MBOM and check whether the item was created before retrying.');
+                    });
                 }
 
                 return originalPost.apply(this, arguments);
@@ -7597,7 +8012,14 @@
     }
 
     if(typeof createMBOMForEBOM === 'function') {
-        createMBOMForEBOM = function(ebomItemDetails, number, callback) {
+        createMBOMForEBOM = async function createMBOMForEBOM(ebomItemDetails, number, callback) {
+            let hasBom;
+            try {
+                hasBom = await getSourceEBOMHasChildren(ebomItemDetails);
+            } catch(error) {
+                showErrorMessage('Create MBOM', String(error.message || error));
+                return;
+            }
 
             let timestamp = new Date();
             let syncDate  = timestamp.getFullYear() + '-' + (timestamp.getMonth() + 1) + '-' + timestamp.getDate();
@@ -7620,7 +8042,7 @@
                 }]
             };
 
-            for(let fieldToCopy of config.mbomRoot.fieldsToCopy) {
+            for(let fieldToCopy of getMBOMPropertyRepairMappings()) {
                 params.fields.push({
                     fieldId : fieldToCopy.mbom,
                     value   : getSectionFieldValue(ebomItemDetails.sections, fieldToCopy.ebom)
@@ -7632,6 +8054,9 @@
                     params.fields.push({ fieldId : defaultValue[0], value : defaultValue[1] });
                 }
             }
+
+            params.fields = params.fields.filter(function(field) { return field.fieldId !== 'HAS_BOM'; });
+            params.fields.push({ fieldId: 'HAS_BOM', value: hasBom });
 
             if(!isBlank(config.mbomRoot.typeValue)) {
                 params.fields.push({

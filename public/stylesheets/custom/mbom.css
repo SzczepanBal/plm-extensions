@@ -246,11 +246,16 @@ body.details-on.no-viewer #tabs {
     background: var(--color-gray-400, #bbbbbb) !important;
 }
 
-/* Linked eBOM assemblies use the production-hall marker for navigation.
-   Standard add/convert/children actions would incorrectly imply that the
-   linked mBOM is missing. */
-#ebom .item.linked-mbom-bom > .item-head > .item-actions {
+/* Linked assemblies can insert their existing MBOM, without creating another one. */
+#ebom .item.linked-mbom-bom > .item-head > .item-actions > :not(.item-action-add-linked-mbom) {
     display: none !important;
+}
+#ebom .item.linked-mbom-missing > .item-head > .item-actions,
+#ebom .item.linked-mbom-missing > .item-head > .item-actions > .item-action-add-linked-mbom {
+    display: block !important;
+}
+#ebom .item.linked-mbom-missing > .item-head > .item-head-status {
+    background: var(--color-status-red) !important;
 }
 
 @keyframes linked-mbom-marker-spin {
@@ -301,4 +306,33 @@ body.details-on.no-viewer #tabs {
 /* MBOM-only objects are intentionally outside the EBOM alignment. */
 #mbom .item.mbom-only > .item-head > .item-head-status {
     background: var(--color-blue-500);
+}
+
+#dialog-confirm-raw-materials,
+#dialog-raw-materials {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(760px, calc(100vw - 40px));
+    height: min(660px, calc(100vh - 40px));
+}
+#dialog-confirm-raw-materials {
+    height: min(340px, calc(100vh - 40px));
+}
+#dialog-raw-materials .dialog-content,
+#dialog-confirm-raw-materials .dialog-content {
+    overflow-y: auto;
+}
+.raw-material-report { white-space: normal; padding-left: 20px; }
+.raw-material-report li { margin: 12px 0; }
+.raw-material-report a { text-decoration: underline; }
+.raw-material-warning { font-weight: 600; }
+#dialog-confirm-raw-materials .dialog-footer button { margin-left: 12px; }
+
+#dialog-confirm-raw-materials,
+#dialog-raw-materials { right: auto; bottom: auto; }
+#dialog-confirm-raw-materials .dialog-footer {
+    display: flex;
+    justify-content: flex-end;
 }

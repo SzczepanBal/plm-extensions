@@ -4063,7 +4063,7 @@ function createNewItems() {
 
         });
 
-        Promise.all(requests).then(function(responses) {
+        return Promise.all(requests).then(function(responses) {
 
             let index = 0;
 
@@ -4086,8 +4086,12 @@ function createNewItems() {
 
             }
 
-            createNewItems(); 
+            return createNewItems();
 
+        }).catch(function(error) {
+            console.error('MBOM: failed to create new items', error);
+            $('#save, #confirm-saving').removeClass('disabled');
+            $('#dialog-saving .in-work').removeClass('in-work');
         });
      
     } else { 

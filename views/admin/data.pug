@@ -239,7 +239,7 @@ block body
                                 .definition
                                     .label Payload
                                     .description
-                                        code { "indeks": "NUMBER", "nazwa_czesci": "TITLE", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [] }
+                                        code { "indeks": "NUMBER", "nazwa_czesci": "NAZWA_DEFRO (fallback: TITLE)", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [{ "Nazwa": "NAZWA_DEFRO (fallback: TITLE)" }, { "Opis": "OPIS" }] }
 
                         .action.ws-type-2#perform-transition  
                             .action-title Perform Workflow Transition

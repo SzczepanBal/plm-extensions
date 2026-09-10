@@ -220,6 +220,16 @@ block body
             .dialog-footer
                 #confirm-saving.button.disabled Close            
 
+        #dialog-confirm-raw-materials.dialog(role='dialog' aria-modal='true' aria-labelledby='raw-material-confirm-title')
+            #raw-material-confirm-title.dialog-header Add Raw Materials
+            .dialog-content
+                p Do you want to add raw materials?
+                p.raw-material-warning The current MBOM and all nested sub-MBOMs will be updated, including those below operations at every level.
+                p Missing raw materials will be created in PLM. Existing raw-material quantities may be updated.
+            .dialog-footer
+                button#cancel-add-raw-materials.button(type='button') Cancel
+                button#start-add-raw-materials.button.default(type='button') Add Raw Materials
+
         #dialog-raw-materials.dialog
             .dialog-header Adding Raw Materials
             .dialog-content
