@@ -1872,6 +1872,56 @@
         });
     }
 
+    function attachCustomMBOMDropGuard(elemItem) {
+        let elemHead = elemItem.children('.item-head').first();
+        if(elemHead.length === 0 || typeof elemHead.droppable !== 'function') return;
+        if(!elemHead.droppable('instance') || elemHead.data('custom-unsaved-drop-guard')) return;
+
+        let originalDrop = elemHead.droppable('option', 'drop');
+        if(typeof originalDrop !== 'function') return;
+
+        elemHead.data('custom-unsaved-drop-guard', true);
+        elemHead.droppable('option', 'drop', function(event, ui) {
+            let elemDragged = ui.draggable;
+            if(!elemDragged.hasClass('additional-item') && isBlank(elemDragged.attr('data-link'))) {
+                // Unsaved operations have no shared PLM identity. Move the
+                // whole row via sortable.stop without merging it into a peer.
+                let elemTargetBOM = $(this).next('.item-bom');
+                if(elemTargetBOM.length === 0 || elemDragged[0].contains(elemTargetBOM[0])) {
+                    elemBOMDropped = elemDragged.parent();
+                } else {
+                    elemBOMDropped = elemTargetBOM;
+                }
+                return;
+            }
+
+            return originalDrop.apply(this, arguments);
+        });
+    }
+
+    if(typeof moveItemInBOM === 'function') {
+        let originalMoveItemInBOM = moveItemInBOM;
+        moveItemInBOM = function(elemItem) {
+            // An empty link identifies a new row, not a duplicate PLM item.
+            if(isBlank(elemItem.attr('data-link'))) return;
+            return originalMoveItemInBOM.apply(this, arguments);
+        };
+    }
+
+    function validateMBOMComponentTarget() {
+        let elemTarget = $('#mbom .item.selected-target').first();
+        let isOperationTarget = elemTarget.length > 0 &&
+            elemTarget.hasClass('process') &&
+            !elemTarget.hasClass('root');
+
+        if(!isOperationTarget) {
+            showErrorMessage('Add Component', 'Select an operation in the Manufacturing BOM first. Components can only be added below operations.');
+            return false;
+        }
+
+        return true;
+    }
+
     function setupCustomEBOMItemFocus() {
         let elemEBOM = document.getElementById('ebom');
         if(!elemEBOM || elemEBOM.getAttribute('data-linked-focus-ready') === 'true') return;
@@ -1879,6 +1929,14 @@
         elemEBOM.setAttribute('data-linked-focus-ready', 'true');
         elemEBOM.addEventListener('click', function(e) {
             let elemTarget = $(e.target);
+
+            // Validate before the conversion click handler opens its dialog
+            // or creates a linked MBOM, including standard conversion actions.
+            if(elemTarget.closest('.item-action-convert').length > 0 && !validateMBOMComponentTarget()) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return;
+            }
 
             // Keep dedicated controls independent. The production-hall icon
             // retains its own load-and-focus behavior.
@@ -4613,10 +4671,9 @@
     }
 
     function getERPTechnologyProcessNumber(processItem, processPart, processDetailsData) {
-        let value = '';
+        let value = getERPTechnologySectionValue((processDetailsData && processDetailsData.sections) ? processDetailsData.sections : [], [config.workspaceMBOM.fieldIDs.code, 'PROCESS_CODE'], '');
 
-        if(processPart && !isBlank(processPart.code)) value = processPart.code;
-        if(isBlank(value)) value = getERPTechnologySectionValue((processDetailsData && processDetailsData.sections) ? processDetailsData.sections : [], [config.workspaceMBOM.fieldIDs.code, 'PROCESS_CODE'], '');
+        if(isBlank(value) && processPart && !isBlank(processPart.code)) value = processPart.code;
         if(isBlank(value) && processItem && processItem.length > 0) value = processItem.find('.item-code').first().text().trim();
 
         if(isBlank(value)) return '';
@@ -6275,6 +6332,7 @@
             .click(function(e) {
                 e.stopPropagation();
                 e.preventDefault();
+                if(!validateMBOMComponentTarget()) return;
 
                 $('#ebom').find('.item.to-convert').removeClass('to-convert');
 
@@ -6752,6 +6810,24 @@
         }, 25);
     }
 
+    function addRawMaterialsSearchToAddItems() {
+        if(typeof config === 'undefined' || !config) return;
+
+        let searches = Array.isArray(config.predefinedSearchesInAddItems)
+            ? config.predefinedSearchesInAddItems
+            : [];
+        let query = 'ITEM_DETAILS:TYPE%3D' + encodeURIComponent(rawMaterialTypeName);
+        let exists = searches.some(function(search) {
+            return search && (
+                normalizeComparisonValue(search.title) === 'surowce' ||
+                normalizeComparisonValue(search.query) === normalizeComparisonValue(query)
+            );
+        });
+
+        if(!exists) searches.push({ title : 'Surowce', query : query });
+        config.predefinedSearchesInAddItems = searches;
+    }
+
     $(document).ready(function() {
         insertAddRawMaterialsButton();
         insertMBOMPropertyRepairButton();
@@ -6774,18 +6850,18 @@
         };
     }
 
+    if(typeof insertSearchFilters === 'function') {
+        let originalInsertSearchFilters = insertSearchFilters;
+        insertSearchFilters = function() {
+            addRawMaterialsSearchToAddItems();
+            return originalInsertSearchFilters.apply(this, arguments);
+        };
+    }
+
     if(typeof insertFromEBOMToMBOM === 'function') {
         let originalInsertFromEBOMToMBOM = insertFromEBOMToMBOM;
         insertFromEBOMToMBOM = function(elemAction) {
-            let elemTarget = $('#mbom .item.selected-target').first();
-            let isOperationTarget = elemTarget.length > 0 &&
-                elemTarget.hasClass('process') &&
-                !elemTarget.hasClass('root');
-
-            if(!isOperationTarget) {
-                showErrorMessage('Add Component', 'Select an operation in the Manufacturing BOM first. Components can only be added below operations.');
-                return false;
-            }
+            if(!validateMBOMComponentTarget()) return false;
 
             return originalInsertFromEBOMToMBOM.apply(this, arguments);
         };
@@ -6973,6 +7049,7 @@
             if(bomType === 'mbom') {
                 enableSubMBOMOperationTarget(elemNode);
                 attachCustomMBOMItemSelection(elemNode);
+                attachCustomMBOMDropGuard(elemNode);
             }
 
             decorateMBOMQuantityWithUnit(elemNode, resolvedNode, bomType);
@@ -7141,7 +7218,7 @@
 
                 });
 
-                Promise.all(requests).then(function(responses) {
+                return Promise.all(requests).then(function(responses) {
                     console.log('MBOM custom: addBOMItems save batch completed', {
                         requests : responses.length
                     });
@@ -7158,7 +7235,7 @@
                         }
                     }
 
-                    Promise.all(requests).then(function(responses) {
+                    return Promise.all(requests).then(function(responses) {
 
                         let index = 0;
 
@@ -7183,10 +7260,14 @@
 
                         }
 
-                        addBOMItems();
+                        return addBOMItems();
 
                     });
                 
+                }).catch(function(error) {
+                    console.error('MBOM custom: BOM addition or saved-row lookup failed', error);
+                    showErrorMessage('Error while adding BOM items', 'Could not complete the BOM save. Some rows may already have been saved. Reload the BOM to check its saved state before retrying.');
+                    endProcessing();
                 });
 
             } else {
@@ -7196,7 +7277,7 @@
                 $('#step4').addClass('in-work');
                 $('#step-counter3').html(pendingActions[2] + ' of ' + pendingActions[2]);
 
-                updateBOMItems();
+                return updateBOMItems();
             }
         };
     }
@@ -7265,7 +7346,7 @@
 
                 });
 
-                Promise.all(requests).then(function(responses) {
+                return Promise.all(requests).then(function(responses) {
 
                     let index = 0;
                     let failed = false;
@@ -7307,8 +7388,12 @@
                         return;
                     }
 
-                    updateBOMItems();
+                    return updateBOMItems();
 
+                }).catch(function(error) {
+                    console.error('MBOM custom: BOM update request failed', error);
+                    showErrorMessage('Error while updating BOM items', 'Could not complete the BOM save. Some rows may already have been saved. Reload the BOM to check its saved state before retrying.');
+                    endProcessing();
                 });
 
             } else {
@@ -7328,6 +7413,9 @@
         initEditor = function() {
             refreshMBOMHierarchyFlags();
             originalInitEditor.apply(this, arguments);
+            $('#mbom .item').each(function() {
+                attachCustomMBOMDropGuard($(this));
+            });
 
             if(directAssemblyIndexEditor) {
                 $('#ebom-tree').empty();
