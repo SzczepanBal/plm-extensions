@@ -446,18 +446,31 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         $: { post(params) { payload = JSON.parse(params.data); } }
     };
     vm.createContext(copyContext);
-    ['getMBOMPropertyRepairMappings', 'createMBOMForEBOM'].forEach(name => {
+    ['getMBOMPropertyRepairMappings', 'buildMBOMPropertyRepairFields', 'createMBOMForEBOM'].forEach(name => {
         vm.runInContext(extractFunction(name), copyContext);
     });
     const source = {
         __self__: '/items/ebom', root: { link: '/items/root' },
-        sections: { TITLE: 'Part', JEDNOSTKA_ROZLICZENIOWA: '/api/v3/lookups/units/options/kg', ILOSC_ROZLICZENIOWA: 2.5 }
+        sections: {
+            TITLE: 'Part',
+            INDEKS_CZESCI: 'ERP-4711',
+            JEDNOSTKA_ROZLICZENIOWA: '/api/v3/lookups/units/options/kg',
+            ILOSC_ROZLICZENIOWA: 2.5
+        }
     };
     await copyContext.createMBOMForEBOM(source, '');
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'HAS_BOM').value, true);
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'JEDNOSTKA_ROZLICZENIOWA').value,
         source.sections.JEDNOSTKA_ROZLICZENIOWA);
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'ILOSC_ROZLICZENIOWA').value, 2.5);
+    assert.strictEqual(payload.fields.find(f => f.fieldId === 'INDEKS_CZESCI').value, 'ERP-4711',
+        'New mBOMs copy the ERP part index from their source eBOM');
+    const repairFields = copyContext.buildMBOMPropertyRepairFields(
+        source.sections,
+        copyContext.getMBOMPropertyRepairMappings()
+    );
+    assert.strictEqual(repairFields.find(f => f.fieldId === 'INDEKS_CZESCI').value, 'ERP-4711',
+        'Repair mBOM properties copies the ERP part index too');
     assert.deepStrictEqual(copyContext.config.mbomRoot.fieldsToCopy, configuredMappings, 'Do not mutate configured mappings');
     await copyContext.createMBOMForEBOM(source, '');
     assert.strictEqual(payload.fields.filter(f => f.fieldId === 'ILOSC_ROZLICZENIOWA').length, 1);
@@ -468,6 +481,89 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         'Fields must come only from the configured copy list');
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'HAS_BOM').value, false);
     console.log('MBOM accounting field creation tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(function testERPProductAndTechnologyMarkers() {
+    const markerContext = {
+        Promise,
+        isBlank: context.isBlank,
+        getSectionFieldValue: context.getSectionFieldValue,
+        config: { workspaceMBOM: { fieldIDs: { erpVersionId: 'ID_WERSJI' } } },
+        getERPTechnologySectionValue(sections, candidateIds, fallbackValue) {
+            for(const fieldId of candidateIds) {
+                if(Object.prototype.hasOwnProperty.call(sections, fieldId)) return String(sections[fieldId]);
+            }
+            return fallbackValue;
+        },
+        isERPTechnologyMainRootItem: () => false,
+        getERPTechnologyStoredPartIndex: (itemPart, detailsData) => detailsData.partIndex || ''
+    };
+    vm.createContext(markerContext);
+    ['normalizeERPBooleanText', 'isERPProductSynced', 'isERPTechnologySynced', 'needsERPSubMBOMProduct', 'buildERPAddProductName'].forEach(name => {
+        vm.runInContext(extractFunction(name), markerContext);
+    });
+
+    const subMBOMElement = { length: 1 };
+    assert.strictEqual(markerContext.isERPTechnologySynced({ sections: {} }), false);
+    assert.strictEqual(markerContext.isERPTechnologySynced({ sections: { ID_WERSJI: 4711 } }), true,
+        'ID_WERSJI marks an mBOM technology as already sent');
+    assert.strictEqual(markerContext.isERPProductSynced({
+        sections: [{ fields: [{ id: 'WYSLANE_DO_ERP', value: true }] }]
+    }), true, 'WYSLANE_DO_ERP marks the linked eBOM product as already sent');
+    assert.strictEqual(markerContext.needsERPSubMBOMProduct(subMBOMElement, {}, { partIndex: '' }), true,
+        'A missing INDEKS_CZESCI requires add-product');
+    assert.strictEqual(markerContext.needsERPSubMBOMProduct(subMBOMElement, {}, { partIndex: 'ERP-4711' }), false,
+        'INDEKS_CZESCI proves that the ERP product already exists');
+    assert.strictEqual(markerContext.buildERPAddProductName({ OPIS: 'Description', NAZWA_DEFRO: 'Defro name' }, 'Title', '100'),
+        'Description - Defro name');
+    assert.strictEqual(markerContext.buildERPAddProductName({ OPIS: '', NAZWA_DEFRO: 'Defro name' }, 'Title', '100'),
+        'Defro name');
+    assert.strictEqual(markerContext.buildERPAddProductName({}, 'Title', '100'), 'Title');
+    console.log('ERP product and technology marker tests passed');
+})();
+
+(async function testERPProductPrerequisiteUsesEBOM() {
+    let ebomDetails = {
+        partIndex: 'ERP-4711',
+        sections: [{ fields: [{ id: 'WYSLANE_DO_ERP', value: true }] }]
+    };
+    let payloadDetails = null;
+    const prerequisiteContext = {
+        Promise,
+        isBlank: context.isBlank,
+        needsERPSubMBOMProduct: (elemItem, itemPart, detailsData) => !detailsData.partIndex,
+        buildERPAssemblyIndexProductPayload: () => ({ assembly: true }),
+        getERPTechnologyElementLink: () => '/mbom',
+        getERPTechnologyEBOMLink: () => '/ebom',
+        getERPTechnologyItemDetails: async () => ebomDetails,
+        getERPTechnologyStoredPartIndex: (itemPart, detailsData) => detailsData.partIndex || '',
+        isERPProductSynced: detailsData => detailsData.sections[0].fields[0].value === true,
+        buildERPSubMBOMProductPayload: (elemItem, itemPart, detailsData) => {
+            payloadDetails = detailsData;
+            return { source: 'ebom' };
+        }
+    };
+    vm.createContext(prerequisiteContext);
+    vm.runInContext(extractFunction('resolveERPProductPrerequisite'), prerequisiteContext);
+
+    const elemItem = { length: 1 };
+    let state = await prerequisiteContext.resolveERPProductPrerequisite(elemItem, {}, { partIndex: 'ERP-1' }, false, false);
+    assert.strictEqual(state.required, false, 'A copied mBOM ERP index avoids the linked eBOM request');
+
+    state = await prerequisiteContext.resolveERPProductPrerequisite(elemItem, {}, { partIndex: '' }, false, false);
+    assert.strictEqual(state.required, false, 'An already sent eBOM avoids add-product');
+    assert.strictEqual(state.indexToCopy, 'ERP-4711');
+
+    ebomDetails = {
+        partIndex: '',
+        sections: [{ fields: [{ id: 'WYSLANE_DO_ERP', value: false }] }]
+    };
+    state = await prerequisiteContext.resolveERPProductPrerequisite(elemItem, {}, { partIndex: '' }, false, false);
+    assert.strictEqual(state.required, true, 'An unsent eBOM requires add-product');
+    assert.strictEqual(state.sourceLink, '/ebom');
+    assert.strictEqual(state.payload.source, 'ebom');
+    assert.strictEqual(payloadDetails, ebomDetails, 'The add-product payload is built from eBOM details');
+    console.log('ERP eBOM product prerequisite tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
 (function testRawMaterialScopeReportAndConfirmation() {
@@ -520,6 +616,7 @@ async function testRecursiveRawMaterialDiscovery() {
     let visible = [{ link: '/sub', attr: () => 'true' }];
     const traversalContext = {
         Set, isBlank: context.isBlank,
+        inlineSubMBOMBulkExpansionActive: false,
         normalizePLMLink: value => value,
         getPartItemLink: part => part.link,
         getMBOMItemForPart: part => part,
@@ -527,6 +624,8 @@ async function testRecursiveRawMaterialDiscovery() {
         getERPTechnologyExpandableItems: () => visible,
         getERPTechnologyElementLink: item => item.link,
         $: () => ({ show() {} }),
+        updateMBOMNumbers() {},
+        setStatusBar() {},
         async ensureInlineSubMBOMExpanded(item) {
             expanded.push(item.link);
             if(item.link === '/sub') {
@@ -554,6 +653,19 @@ async function testRecursiveRawMaterialDiscovery() {
     visible = [{ link: '/failed', attr: () => undefined }];
     traversalContext.ensureInlineSubMBOMExpanded = async () => false;
     await assert.rejects(traversalContext.ensureRawMaterialTreeExpanded(), /Could not discover all nested MBOMs/);
+
+    let activeExpansions = 0;
+    let maximumActiveExpansions = 0;
+    visible = Array.from({ length: 14 }, (_, index) => ({ link: '/parallel-' + index, attr: () => 'true' }));
+    traversalContext.ensureInlineSubMBOMExpanded = async () => {
+        activeExpansions++;
+        maximumActiveExpansions = Math.max(maximumActiveExpansions, activeExpansions);
+        await new Promise(resolve => setTimeout(resolve, 2));
+        activeExpansions--;
+        return true;
+    };
+    await traversalContext.ensureRawMaterialTreeExpanded();
+    assert.strictEqual(maximumActiveExpansions, 6, 'Expand linked MBOMs with six bounded workers');
     console.log('Recursive raw material discovery tests passed');
 }
 testRecursiveRawMaterialDiscovery().catch(error => { console.error(error); process.exitCode = 1; });
@@ -657,16 +769,19 @@ testRepairRefreshesHasBOM().catch(error => { console.error(error); process.exitC
     let pending;
     let state;
     let missing;
+    let addActionRemoved = false;
     const row = {
         hasClass: () => false,
         toggleClass(name, value) { missing = value; },
-        children() { return this; }, attr() { return this; }
+        children() { return this; },
+        attr() { return this; },
+        remove() { addActionRemoved = true; }
     };
     Object.assign(ctx, {
         isBlank: context.isBlank,
         $(value) { return value === '#ebom' ? { find: () => ({ each: cb => cb.call(row) }) } : value; },
         getLinkedMBOMLinkFromEBOMElement: () => '/api/v3/workspaces/57/items/123',
-        findRenderedMBOMItemByLink: () => ({ length: present ? 1 : 0 }),
+        findLinkedMBOMItemForEBOM: () => ({ length: present ? 1 : 0 }),
         addLinkedMBOMInsertAction() {},
         setLinkedEBOMBOMCheckPending(item, value) { pending = value; },
         setHolisticItemState(item, value) { state = value; }
@@ -680,6 +795,7 @@ testRepairRefreshesHasBOM().catch(error => { console.error(error); process.exitC
     state = 'match';
     ctx.refreshMissingLinkedMBOMStatus();
     assert.strictEqual(missing, false);
+    assert.strictEqual(addActionRemoved, true, 'Remove stale Add MBOM action after nested MBOM is found');
     assert.strictEqual(state, 'match', 'Do not override comparison status when linked MBOM is present');
     console.log('Existing linked MBOM insertion and status tests passed');
 })();
@@ -755,3 +871,114 @@ testSaveMBOMHasBOMMarker().catch(error => { console.error(error); process.exitCo
         'Use item and position when one edge ID is unavailable');
     console.log('Inline operation deduplication tests passed');
 })();
+
+async function testRawMaterialSourceRefreshCaches() {
+    let detailRequests = 0;
+    const cacheContext = {
+        Promise,
+        Object,
+        console,
+        rawMaterialDetailsPromises: {},
+        mbomPartsList: [{ link: '/mbom/1', root: '/root/1' }],
+        normalizePLMLink: value => value || '',
+        isBlank: context.isBlank,
+        getPartItemLink: part => part.link,
+        getPartNumber: part => part.number || '',
+        isMBOMHasBOM: value => value === true,
+        getSectionFieldValue: context.getSectionFieldValue,
+        getMaterialValueFromItemDetails: () => 'S355',
+        getMBOMAccountingUnitFromItemDetails: () => 'kg',
+        getMBOMAccountingQuantityFromItemDetails: () => 2,
+        $: {
+            get() {
+                detailRequests++;
+                const deferred = {
+                    done(callback) {
+                        callback({ data: { sections: [] } });
+                        return deferred;
+                    },
+                    fail() { return deferred; }
+                };
+                return deferred;
+            }
+        }
+    };
+    vm.createContext(cacheContext);
+    ['fetchMBOMPartMaterialsFromDetails', 'getRawMaterialPartKey', 'mergeRawMaterialPartsIntoList']
+        .forEach(name => vm.runInContext(extractFunction(name), cacheContext));
+
+    const first = { link: '/mbom/2', root: '/root/2', number: '2' };
+    const secondOccurrence = { link: '/mbom/2', root: '/root/3', number: '2' };
+    const results = await cacheContext.fetchMBOMPartMaterialsFromDetails([first, first]);
+    assert.strictEqual(detailRequests, 1, 'Fetch MBOM details once per normalized item link');
+    assert.strictEqual(results[0].part, first);
+    assert.strictEqual(results[1].material, 'S355');
+
+    cacheContext.mergeRawMaterialPartsIntoList([first, first, secondOccurrence]);
+    assert.strictEqual(cacheContext.mbomPartsList.length, 3,
+        'Merge newly expanded MBOM occurrences while removing exact duplicates');
+    console.log('Raw material source refresh cache tests passed');
+}
+testRawMaterialSourceRefreshCaches().catch(error => { console.error(error); process.exitCode = 1; });
+
+(function testEmptyRawMaterialSourcesAreFiltered() {
+    const filterContext = {
+        Array,
+        console: { log() {} },
+        isBlank(value) {
+            return value === null || typeof value === 'undefined' || String(value).trim() === '';
+        }
+    };
+    vm.createContext(filterContext);
+    vm.runInContext(extractFunction('filterRawMaterialEntriesWithMaterial'), filterContext);
+    const filtered = filterContext.filterRawMaterialEntriesWithMaterial([
+        { material: '' },
+        { material: '   ' },
+        { material: 'Steel' }
+    ]);
+    assert.deepStrictEqual(Array.from(filtered, entry => entry.material), ['Steel']);
+    console.log('Empty raw material source filter tests passed');
+})();
+
+async function testBoundedERPPLMRequests() {
+    const plmContext = {
+        Promise,
+        Array,
+        Math,
+        Number,
+        erpTechnologyPLMActiveRequests: 0,
+        erpTechnologyPLMRequestQueue: []
+    };
+    vm.createContext(plmContext);
+    ['mapPLMRequestsWithConcurrency', 'runERPTechnologyPLMRequest']
+        .forEach(name => vm.runInContext(extractFunction(name), plmContext));
+
+    let activeMapped = 0;
+    let maximumMapped = 0;
+    const mapped = await plmContext.mapPLMRequestsWithConcurrency(
+        Array.from({ length: 11 }, (_, index) => index),
+        4,
+        async value => {
+            activeMapped++;
+            maximumMapped = Math.max(maximumMapped, activeMapped);
+            await new Promise(resolve => setTimeout(resolve, 2));
+            activeMapped--;
+            return value * 2;
+        }
+    );
+    assert.strictEqual(maximumMapped, 4);
+    assert.deepStrictEqual(Array.from(mapped), Array.from({ length: 11 }, (_, index) => index * 2),
+        'Bounded PLM mapping must preserve source order');
+
+    let activeRequests = 0;
+    let maximumRequests = 0;
+    await Promise.all(Array.from({ length: 14 }, () => plmContext.runERPTechnologyPLMRequest(async () => {
+        activeRequests++;
+        maximumRequests = Math.max(maximumRequests, activeRequests);
+        await new Promise(resolve => setTimeout(resolve, 2));
+        activeRequests--;
+    })));
+    assert.strictEqual(maximumRequests, 6, 'ERP payload preparation must limit PLM API requests to six');
+    console.log('Bounded ERP PLM request tests passed');
+}
+testBoundedERPPLMRequests().catch(error => { console.error(error); process.exitCode = 1; });

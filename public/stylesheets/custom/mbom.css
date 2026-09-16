@@ -336,3 +336,15 @@ body.details-on.no-viewer #tabs {
     display: flex;
     justify-content: flex-end;
 }
+
+/* Keep the full-BOM action next to the red/yellow/green comparison line. */
+#ebom-status { align-items: center; }
+#load-full-mbom {
+    flex: 0 0 auto;
+    margin: 0 5px;
+    padding: 0 8px;
+    height: 22px;
+    line-height: 20px;
+    font-size: 11px;
+    white-space: nowrap;
+}

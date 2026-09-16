@@ -109,6 +109,7 @@ exports.applications = {
                 { ebom : 'DESCRIPTION', mbom : 'DESCRIPTION' },
                 { ebom : 'OPIS'       , mbom : 'OPIS'        },
                 { ebom : 'MATERIAL'   , mbom : 'MATERIAL'    },
+                { ebom : 'INDEKS_CZESCI', mbom : 'INDEKS_CZESCI' },
                 { ebom : 'JEDNOSTKA_ROZLICZENIOWA', mbom : 'JEDNOSTKA_ROZLICZENIOWA' },
                 { ebom : 'ILOSC_ROZLICZENIOWA', mbom : 'ILOSC_ROZLICZENIOWA' },
                 { ebom : 'ITEM_WEIGHT', mbom : 'ITEM_WEIGHT' },
