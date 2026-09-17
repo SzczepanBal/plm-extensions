@@ -568,12 +568,15 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
 
 (function testRawMaterialScopeReportAndConfirmation() {
     const handlers = {};
-    let starts = 0;
+    const starts = [];
     const reportContext = {
         tenant: 'TEST',
+        rawMaterialApplyModes: {
+            addMissing: 'add-missing', updateQuantity: 'update-quantity', overwrite: 'overwrite'
+        },
         getPartItemLink: part => part.link,
         getPartNumber: part => part.number,
-        startRawMaterialsFromMBOM: () => { starts++; },
+        startRawMaterialsFromMBOM: mode => { starts.push(mode); },
         $(selector) {
             return {
                 hasClass: () => false, show() { return this; }, hide() { return this; },
@@ -597,12 +600,14 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.ok(rows[0].href.endsWith('TEST%2C57%2C21675'));
     assert.match(rows[0].warnings[0], /without conversion/);
     reportContext.addRawMaterialsFromMBOM();
-    assert.strictEqual(starts, 0, 'Opening confirmation must not start processing');
+    assert.strictEqual(starts.length, 0, 'Opening confirmation must not start processing');
     handlers['#cancel-add-raw-materials']();
-    assert.strictEqual(starts, 0, 'Cancel must not start processing');
+    assert.strictEqual(starts.length, 0, 'Cancel must not start processing');
     reportContext.addRawMaterialsFromMBOM();
-    handlers['#start-add-raw-materials']();
-    assert.strictEqual(starts, 1);
+    handlers['#start-add-missing-raw-materials']();
+    handlers['#start-update-raw-material-quantities']();
+    handlers['#start-overwrite-raw-materials']();
+    assert.deepStrictEqual(starts, ['add-missing', 'update-quantity', 'overwrite']);
     console.log('Raw material scope, report and confirmation tests passed');
 })();
 
@@ -982,3 +987,36 @@ async function testBoundedERPPLMRequests() {
     console.log('Bounded ERP PLM request tests passed');
 }
 testBoundedERPPLMRequests().catch(error => { console.error(error); process.exitCode = 1; });
+
+async function testERPTechnologyDiscoveryUsesShallowDepth() {
+    const requestedDepths = [];
+    const item = { link: '/sub', attr() { return ''; } };
+    const discoveryContext = {
+        console: { log() {}, warn() {} },
+        Promise, Set, Date,
+        erpTechnologyDiscoveryDepth: 2,
+        inlineSubMBOMBulkExpansionActive: false,
+        isBlank: context.isBlank,
+        getERPTechnologyExpandableItems: () => [item],
+        getERPTechnologyElementLink: elemItem => elemItem.link,
+        shouldExpandERPTechnologySubMBOM: async () => true,
+        getERPTechnologyDescriptor: () => 'Sub MBOM',
+        getElementLevel: () => 2,
+        ensureInlineSubMBOMExpanded: async (elemItem, depth) => {
+            requestedDepths.push(depth);
+            return true;
+        },
+        updateMBOMNumbers() {},
+        setStatusBar() {}
+    };
+    vm.createContext(discoveryContext);
+    ['mapPLMRequestsWithConcurrency', 'ensureERPTechnologyTreeExpanded'].forEach(name => {
+        vm.runInContext(extractFunction(name), discoveryContext);
+    });
+
+    await discoveryContext.ensureERPTechnologyTreeExpanded();
+    assert.deepStrictEqual(requestedDepths, [2], 'ERP discovery loads only operation and component levels');
+    assert.strictEqual(discoveryContext.inlineSubMBOMBulkExpansionActive, false);
+    console.log('Shallow ERP technology discovery tests passed');
+}
+testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(error); process.exitCode = 1; });

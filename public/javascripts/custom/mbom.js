@@ -8,6 +8,12 @@
     const rawMaterialAccountingQuantityFieldId = 'ILOSC_ROZLICZENIOWA';
     const rawMaterialTypeName = 'Surowiec';
     const rawMaterialTypeQueryValue = 'SUROWIEC';
+    const rawMaterialApplyModes = {
+        addMissing     : 'add-missing',
+        updateQuantity : 'update-quantity',
+        overwrite      : 'overwrite'
+    };
+    const erpTechnologyDiscoveryDepth = 2;
     const erpStatusProxyUrl = '/plm/custom-erp-status';
     const assemblyIndexPLMDefaults = {
         productGroup : 'PCP',
@@ -1026,10 +1032,12 @@
         return 'PLM request failed' + (response.status ? ' (HTTP ' + response.status + ')' : '') + '.';
     }
 
-    function resolveRawMaterialForBatch(material) {
+    function resolveRawMaterialForBatch(material, allowCreate) {
         return Promise.resolve().then(function() {
             return searchRawMaterialItems(material);
-        }).then(ensureRawMaterialSearchResult).catch(function(error) {
+        }).then(function(result) {
+            return allowCreate === false ? result : ensureRawMaterialSearchResult(result);
+        }).catch(function(error) {
             // A failed material must not prevent unrelated branches from being applied.
             // Re-query on the next attempt in case PLM created an item before a connection failed.
             delete rawMaterialSearchPromises[normalizeComparisonValue(material)];
@@ -3270,8 +3278,10 @@
         });
     }
 
-    function fetchInlineSubMBOMChildren(part, linkOverride, isAssemblyIndex) {
+    function fetchInlineSubMBOMChildren(part, linkOverride, isAssemblyIndex, depthOverride) {
         let primaryLink = linkOverride || part.link;
+        let requestDepth = Number(depthOverride);
+        if(!Number.isFinite(requestDepth) || requestDepth < 1) requestDepth = getCustomMBOMDepth();
         let requestsToTry = [];
         let requestKeys = new Set();
 
@@ -3322,7 +3332,7 @@
             let candidate = requestsToTry[candidateIndex];
             let params = {
                 viewId          : wsMBOM.viewId,
-                depth           : getCustomMBOMDepth(),
+                depth           : requestDepth,
                 revisionBias    : 'working',
                 getBOMPartsList : true
             };
@@ -3346,6 +3356,7 @@
                 console.info('MBOM custom: inline sub-MBOM fetch result', {
                     link       : requestLink,
                     attempt    : candidateIndex + 1,
+                    depth      : requestDepth,
                     partsCount : parts.length,
                     edgesCount : response && response.data && Array.isArray(response.data.edges) ? response.data.edges.length : 0,
                     root       : response && response.data ? response.data.root : null
@@ -3678,10 +3689,15 @@
         setInlineSubMBOMToggleState(elemItem, !elemBOM.hasClass('hidden'));
     }
 
-    function ensureInlineSubMBOMExpanded(elemItem) {
+    function ensureInlineSubMBOMExpanded(elemItem, depthOverride) {
         if(!elemItem || elemItem.length === 0) return Promise.resolve(false);
 
-        if(elemItem.attr('data-inline-submbom-loaded') === 'true') {
+        let requestedDepth = Number(depthOverride);
+        if(!Number.isFinite(requestedDepth) || requestedDepth < 1) requestedDepth = getCustomMBOMDepth();
+        let loadedDepth = Number(elemItem.attr('data-inline-submbom-depth'));
+        let loadedDepthSatisfiesRequest = !Number.isFinite(loadedDepth) || loadedDepth >= requestedDepth;
+
+        if(elemItem.attr('data-inline-submbom-loaded') === 'true' && loadedDepthSatisfiesRequest) {
             let elemBOM = ensureInlineSubMBOMContainer(elemItem);
             elemBOM.removeClass('hidden');
 
@@ -3697,10 +3713,13 @@
         }
 
         let elemExistingBOM = elemItem.children('.item-bom').first();
-        if(elemItem.hasClass('assembly-index') && elemExistingBOM.children('.item').length > 0) {
+        if(elemItem.attr('data-inline-submbom-loaded') !== 'true' &&
+           elemItem.hasClass('assembly-index') &&
+           elemExistingBOM.children('.item').length > 0) {
             elemExistingBOM.children('.inline-submbom-status').remove();
             elemExistingBOM.removeClass('hidden');
             elemItem.attr('data-inline-submbom-loaded', 'true');
+            elemItem.attr('data-inline-submbom-depth', getCustomMBOMDepth());
             setInlineSubMBOMToggleState(elemItem, true);
             completeLinkedEBOMBOMCheckForMBOM(elemItem);
 
@@ -3747,15 +3766,17 @@
                 clickedItemLink : elemItem.attr('data-link'),
                 expansionLink   : expansionLink,
                 root            : elemItem.attr('data-root'),
-                level           : part.level
+                level           : part.level,
+                depth           : requestedDepth
             });
 
-            return fetchInlineSubMBOMChildren(part, expansionLink, elemItem.hasClass('assembly-index')).then(function(children) {
+            return fetchInlineSubMBOMChildren(part, expansionLink, elemItem.hasClass('assembly-index'), requestedDepth).then(function(children) {
                 $('#overlay').hide();
 
                 if(children.length === 0) {
                     console.info('MBOM custom: no inline sub-MBOM children found for', expansionLink);
                     elemItem.attr('data-inline-submbom-loaded', 'empty');
+                    elemItem.attr('data-inline-submbom-depth', requestedDepth);
                     setInlineSubMBOMStatus(elemItem, 'No sub-MBOM children were returned for this item.', true);
                     setInlineSubMBOMToggleState(elemItem, false);
                     return false;
@@ -3769,6 +3790,7 @@
 
                 appendInlineSubMBOMChildren(elemItem, children);
                 elemItem.attr('data-inline-submbom-loaded', 'true');
+                elemItem.attr('data-inline-submbom-depth', requestedDepth);
                 setInlineSubMBOMToggleState(elemItem, true);
                 completeLinkedEBOMBOMCheckForMBOM(elemItem);
                 if(!inlineSubMBOMBulkExpansionActive && typeof setStatusBar === 'function') setStatusBar();
@@ -4212,7 +4234,12 @@
     }
 
     function getRawMaterialReportRows(entries) {
-        return (entries || []).filter(function(entry) { return entry.hasBom !== true && entry.rawMaterialOutcome !== 'added' && entry.rawMaterialOutcome !== 'updated'; }).map(function(entry) {
+        return (entries || []).filter(function(entry) {
+            return entry.hasBom !== true &&
+                entry.rawMaterialOutcome !== 'added' &&
+                entry.rawMaterialOutcome !== 'updated' &&
+                entry.rawMaterialOutcome !== 'unchanged';
+        }).map(function(entry) {
             let link = getPartItemLink(entry.part) || '';
             let match = String(link).match(/workspaces\/(\d+)\/items\/(\d+)/);
             let href = match && typeof tenant !== 'undefined'
@@ -4284,7 +4311,16 @@
         });
     }
 
-    function addRawMaterialsToMBOM(mbomMaterials) {
+    function normalizeRawMaterialApplyMode(mode) {
+        if(mode === rawMaterialApplyModes.addMissing || mode === rawMaterialApplyModes.updateQuantity) return mode;
+        return rawMaterialApplyModes.overwrite;
+    }
+
+    function addRawMaterialsToMBOM(mbomMaterials, applyMode) {
+        let mode = normalizeRawMaterialApplyMode(applyMode);
+        let addMissing = mode !== rawMaterialApplyModes.updateQuantity;
+        let updateQuantity = mode !== rawMaterialApplyModes.addMissing;
+
         if(!Array.isArray(mbomMaterials) || mbomMaterials.length === 0) {
             console.info('MBOM custom: no MBOM parts with MATERIAL values available to add raw materials.');
             completeRawMaterialsSearchDialog(0);
@@ -4297,7 +4333,11 @@
             return Promise.resolve();
         }
 
-        console.log('MBOM custom: Found', mbomMaterials.length, 'MBOM part(s) with MATERIAL values.');
+        console.log('MBOM custom: Found', mbomMaterials.length, 'MBOM part(s) with MATERIAL values.', {
+            mode           : mode,
+            addMissing     : addMissing,
+            updateQuantity : updateQuantity
+        });
 
         let button = $('#add-raw-materials');
         if(button.length) {
@@ -4331,7 +4371,7 @@
         });
 
         let searchRequests = uniqueMaterials.map(function(material) {
-            return resolveRawMaterialForBatch(material).then(function(result) {
+            return resolveRawMaterialForBatch(material, addMissing).then(function(result) {
                 searchResultsByMaterial[material] = result;
                 searchDone++;
                 updateRawMaterialsSearchDialog(searchDone, uniqueMaterials.length);
@@ -4407,7 +4447,7 @@
 
                         return targetPreparationPromises.get(entry).then(function(targetContext) {
                             if(targetContext) return targetContext;
-                            return prepareRawMaterialTarget(entry, true);
+                            return prepareRawMaterialTarget(entry, addMissing);
                         }).then(function(targetContext) {
                             if(!targetContext) {
                                 entry.rawMaterialMessage = entry.rawMaterialPreparationError || 'No operation could be prepared for this MBOM.';
@@ -4448,6 +4488,14 @@
                                         targetKey: targetKey
                                     });
 
+                                    if(!updateQuantity) {
+                                        entry.rawMaterialOutcome = 'unchanged';
+                                        entry.rawMaterialMessage = 'Surowiec już istnieje; ilość pozostawiono bez zmian.';
+                                        applyDone++;
+                                        updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
+                                        return null;
+                                    }
+
                                     let elemExisting = getDirectChildItemByLink(elemHeader, link);
                                     if(elemExisting.length === 0) {
                                         let existingPart = existingState.children.get(normalizedLink);
@@ -4472,6 +4520,14 @@
                                             targetKey: targetKey
                                         });
                                     }
+                                    applyDone++;
+                                    updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
+                                    return null;
+                                }
+
+                                if(!addMissing) {
+                                    entry.rawMaterialOutcome = 'unchanged';
+                                    entry.rawMaterialMessage = 'Brakującego surowca nie dodano w trybie aktualizacji ilości.';
                                     applyDone++;
                                     updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                                     return null;
@@ -4612,21 +4668,36 @@
         $('#cancel-add-raw-materials').off('click').on('click', function() {
             $('#overlay, #dialog-confirm-raw-materials').hide();
         });
-        $('#start-add-raw-materials').off('click').on('click', function() {
-            $('#dialog-confirm-raw-materials').hide();
-            startRawMaterialsFromMBOM();
-        }).trigger('focus');
+        let modeButtons = [{
+            selector : '#start-add-missing-raw-materials',
+            mode     : rawMaterialApplyModes.addMissing
+        }, {
+            selector : '#start-update-raw-material-quantities',
+            mode     : rawMaterialApplyModes.updateQuantity
+        }, {
+            selector : '#start-overwrite-raw-materials',
+            mode     : rawMaterialApplyModes.overwrite
+        }];
+
+        modeButtons.forEach(function(option) {
+            $(option.selector).off('click').on('click', function() {
+                $('#dialog-confirm-raw-materials').hide();
+                startRawMaterialsFromMBOM(option.mode);
+            });
+        });
+        $('#start-add-missing-raw-materials').trigger('focus');
     }
 
-    function startRawMaterialsFromMBOM() {
-        console.log('MBOM custom: Add Raw Materials button clicked');
+    function startRawMaterialsFromMBOM(applyMode) {
+        let mode = normalizeRawMaterialApplyMode(applyMode);
+        console.log('MBOM custom: Add Raw Materials button clicked', { mode: mode });
         initRawMaterialsDialog(0, 0);
         setRawMaterialsDialogPendingState();
 
         if(Array.isArray(mbomPartsList) && mbomPartsList.length > 0) {
             console.log('MBOM custom: Using loaded mbomPartsList with', mbomPartsList.length, 'items');
             return resolveMBOMMaterials(mbomPartsList).then(function(mbomMaterials) {
-                return addRawMaterialsToMBOM(mbomMaterials);
+                return addRawMaterialsToMBOM(mbomMaterials, mode);
             }).catch(function(error) {
                 console.warn('MBOM custom: failed while resolving MBOM materials', error);
                 completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
@@ -4667,7 +4738,7 @@
                 }
 
                 return resolveMBOMMaterials(fetchedMBOMParts).then(function(mbomMaterials) {
-                    return addRawMaterialsToMBOM(mbomMaterials);
+                    return addRawMaterialsToMBOM(mbomMaterials, mode);
                 }).catch(function(error) {
                     console.warn('MBOM custom: failed while resolving fetched MBOM materials', error);
                     completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
@@ -4959,11 +5030,15 @@
 
     async function ensureERPTechnologyTreeExpanded() {
         let processed = new Set();
+        let expandedCount = 0;
+        let rounds = 0;
+        let started = Date.now();
         let ownsBulkExpansion = !inlineSubMBOMBulkExpansionActive;
         if(ownsBulkExpansion) inlineSubMBOMBulkExpansionActive = true;
 
         try {
             while(true) {
+                rounds++;
                 let expandableItems = getERPTechnologyExpandableItems().filter(function(elemItem) {
                     let link = getERPTechnologyElementLink(elemItem) || '';
                     if(isBlank(link)) return elemItem.attr('data-inline-submbom-loaded') !== 'true' && elemItem.attr('data-inline-submbom-loaded') !== 'empty';
@@ -4992,7 +5067,8 @@
                             level      : getElementLevel(elemItem)
                         });
 
-                        return ensureInlineSubMBOMExpanded(elemItem).catch(function(error) {
+                        expandedCount++;
+                        return ensureInlineSubMBOMExpanded(elemItem, erpTechnologyDiscoveryDepth).catch(function(error) {
                             console.warn('MBOM custom: failed to expand linked sub-MBOM during ERP technology discovery', {
                                 link  : link,
                                 error : error
@@ -5003,6 +5079,13 @@
                 });
             }
         } finally {
+            console.log('MBOM custom: ERP technology tree discovery completed', {
+                inspected     : processed.size,
+                expanded      : expandedCount,
+                rounds        : rounds,
+                depthPerMBOM  : erpTechnologyDiscoveryDepth,
+                durationMs    : Date.now() - started
+            });
             if(ownsBulkExpansion) {
                 inlineSubMBOMBulkExpansionActive = false;
                 if(typeof updateMBOMNumbers === 'function') updateMBOMNumbers();

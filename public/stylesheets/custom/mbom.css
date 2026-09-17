@@ -318,7 +318,8 @@ body.details-on.no-viewer #tabs {
     height: min(660px, calc(100vh - 40px));
 }
 #dialog-confirm-raw-materials {
-    height: min(340px, calc(100vh - 40px));
+    height: auto;
+    max-height: calc(100vh - 40px);
 }
 #dialog-raw-materials .dialog-content,
 #dialog-confirm-raw-materials .dialog-content {
@@ -328,7 +329,45 @@ body.details-on.no-viewer #tabs {
 .raw-material-report li { margin: 12px 0; }
 .raw-material-report a { text-decoration: underline; }
 .raw-material-warning { font-weight: 600; }
-#dialog-confirm-raw-materials .dialog-footer button { margin-left: 12px; }
+#dialog-confirm-raw-materials .raw-material-mode-options {
+    display: grid;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+#dialog-confirm-raw-materials .raw-material-mode-options > .button {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    height: auto;
+    line-height: 1.35;
+    min-height: 58px;
+    padding: 10px 14px;
+    text-align: left;
+    white-space: normal;
+    width: 100%;
+}
+
+#dialog-confirm-raw-materials .raw-material-mode-options > .button strong,
+#dialog-confirm-raw-materials .raw-material-mode-options > .button span {
+    display: block;
+}
+
+#dialog-confirm-raw-materials .raw-material-mode-options > .button span {
+    font-size: 12px;
+    font-weight: normal;
+    opacity: 0.85;
+}
+
+#dialog-confirm-raw-materials .dialog-footer > .button {
+    box-sizing: border-box;
+    height: 36px;
+    line-height: 34px;
+    margin: 0;
+    min-width: 100px;
+    padding: 0 18px;
+}
 
 #dialog-confirm-raw-materials,
 #dialog-raw-materials { right: auto; bottom: auto; }

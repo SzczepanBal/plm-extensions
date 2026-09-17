@@ -1691,14 +1691,19 @@ function buildERPSyncPayload(details, erpCallName) {
     let sections   = (details && details.sections) ? details.sections : [];
     let properties = [];
     let payload = {};
-    let partName = getERPFieldValue(sections, 'NAZWA_DEFRO') || getERPFieldValue(sections, 'TITLE');
+    let partNumber = getERPFieldValue(sections, 'NUMBER');
+    let description = getERPFieldValue(sections, 'OPIS');
+    let defroName = getERPFieldValue(sections, 'NAZWA_DEFRO');
+    let partName = [description, defroName].filter(function(value) {
+        return !isBlank(value);
+    }).join(' - ') || getERPFieldValue(sections, 'TITLE') || partNumber;
 
     for(let mapping of erpPropertyMappings) {
         addERPProperty(properties, sections, mapping[0], mapping[1]);
     }
 
     payload = {
-        indeks          : getERPFieldValue(sections, 'NUMBER'),
+        indeks          : partNumber,
         nazwa_czesci    : partName,
         id_grupy        : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
         jednostka_miary : getERPUnitOfMeasure(sections),
@@ -1818,7 +1823,7 @@ function genUpdateRequests(responses) {
             let missingFields = [];
 
             if(isBlank(payload.indeks))       missingFields.push('NUMBER -> indeks');
-            if(isBlank(payload.nazwa_czesci)) missingFields.push('NAZWA_DEFRO/TITLE -> nazwa_czesci');
+            if(isBlank(payload.nazwa_czesci)) missingFields.push('OPIS + NAZWA_DEFRO/TITLE/NUMBER -> nazwa_czesci');
             if(isBlank(payload.id_grupy))     missingFields.push('GRUPA_PRODUKTOWA -> id_grupy');
 
             if(missingFields.length > 0) {

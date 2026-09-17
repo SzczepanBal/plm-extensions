@@ -221,28 +221,36 @@ block body
                 #confirm-saving.button.disabled Close            
 
         #dialog-confirm-raw-materials.dialog(role='dialog' aria-modal='true' aria-labelledby='raw-material-confirm-title')
-            #raw-material-confirm-title.dialog-header Add Raw Materials
+            #raw-material-confirm-title.dialog-header Surowce
             .dialog-content
-                p Do you want to add raw materials?
-                p.raw-material-warning The current MBOM and all nested sub-MBOMs will be updated, including those below operations at every level.
-                p Missing raw materials will be created in PLM. Existing raw-material quantities may be updated.
+                p Wybierz sposób aktualizacji surowców w bieżącym mBOM i wszystkich zagnieżdżonych sub-mBOM.
+                p.raw-material-warning Dane materiału i ilości pochodzą z pól MATERIAL oraz ILOSC_ROZLICZENIOWA.
+                .raw-material-mode-options
+                    button#start-add-missing-raw-materials.button.default(type='button')
+                        strong Dodaj tylko brakujące surowce
+                        span Istniejące surowce i ich ilości pozostaną bez zmian.
+                    button#start-update-raw-material-quantities.button(type='button')
+                        strong Aktualizuj tylko ilości
+                        span Zmień ilości istniejących surowców zgodnie z ILOSC_ROZLICZENIOWA. Nie dodawaj brakujących.
+                    button#start-overwrite-raw-materials.button(type='button')
+                        strong Nadpisz bieżące danymi z Vault
+                        span Dodaj brakujące surowce i zaktualizuj ilości istniejących.
             .dialog-footer
-                button#cancel-add-raw-materials.button(type='button') Cancel
-                button#start-add-raw-materials.button.default(type='button') Add Raw Materials
+                button#cancel-add-raw-materials.button(type='button') Anuluj
 
         #dialog-raw-materials.dialog
-            .dialog-header Adding Raw Materials
+            .dialog-header Przetwarzanie surowców
             .dialog-content
                 #raw-step1.step
-                    .step-label Searching raw materials
+                    .step-label Wyszukiwanie surowców
                     .step-progress
                         #raw-step-bar1.step-bar
                     #raw-step-counter1.step-counter
                 #raw-step2.step
-                    .step-label Applying to MBOM
+                    .step-label Aktualizacja mBOM
                     .step-progress
                         #raw-step-bar2.step-bar
                     #raw-step-counter2.step-counter
                 #raw-material-results
             .dialog-footer
-                #confirm-raw-materials.button.disabled Close
+                #confirm-raw-materials.button.disabled Zamknij
