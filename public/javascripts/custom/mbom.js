@@ -2700,8 +2700,21 @@
         return headers;
     }
 
+    function ensureSaveProcessStep() {
+        if($('#step-process').length > 0) return;
+
+        $('<div>', { id : 'step-process', class : 'step' })
+            .append($('<div>', { class : 'step-label', text : 'Creating/Updating Process:' }))
+            .append($('<div>', { class : 'step-progress' })
+                .append($('<div>', { id : 'step-bar-process', class : 'step-bar' })))
+            .append($('<div>', { id : 'step-counter-process', class : 'step-counter' }))
+            .insertAfter('#step0');
+    }
+
     function initSaveCheckDialog(total) {
         let count = Number(total) || 0;
+
+        ensureSaveProcessStep();
 
         $('.step-bar').addClass('transition-stopper');
         $('.step-bar').css('width', '0%');
@@ -2713,6 +2726,7 @@
 
         $('#step0 .step-label').text('Checking existing BOM entries');
         $('#step-counter0').html('0 of ' + count);
+        $('#step-counter-process').html('0 of 3');
         $('#step-counter1').html('0 of 0');
         $('#step-counter2').html('0 of 0');
         $('#step-counter3').html('0 of 0');
@@ -2737,8 +2751,25 @@
         $('#step-counter0').html(count + ' of ' + count);
     }
 
-    function syncExistingBOMStateBeforeSave() {
-        let headers = collectMBOMParentsForSaveSync();
+    function startSaveProcessStep() {
+        $('#step-process').addClass('in-work');
+        $('#step-bar-process').css('width', '0%');
+        $('#step-counter-process').html('0 of 3');
+    }
+
+    function updateSaveProcessStep(completed) {
+        let done = Math.max(0, Math.min(3, Number(completed) || 0));
+        $('#step-bar-process').css('width', (done * 100 / 3) + '%');
+        $('#step-counter-process').html(done + ' of 3');
+    }
+
+    function completeSaveProcessStep() {
+        updateSaveProcessStep(3);
+        $('#step-process').removeClass('in-work');
+    }
+
+    function syncExistingBOMStateBeforeSave(headers) {
+        headers = Array.isArray(headers) ? headers : collectMBOMParentsForSaveSync();
         let started = Date.now();
 
         console.log('MBOM custom: preparing BOM save state sync', {
@@ -3073,17 +3104,18 @@
 
             initSaveCheckDialog(headers.length);
 
-            syncExistingBOMStateBeforeSave().then(function() {
-                $('#step0 .step-label').text('Saving assembly properties');
+            syncExistingBOMStateBeforeSave(headers).then(function() {
+                completeSaveCheckDialog(headers.length);
+                startSaveProcessStep();
                 return saveAssemblyIndexPropertiesBeforeSave();
             }).then(function() {
-                $('#step0 .step-label').text('Checking operation codes');
+                updateSaveProcessStep(1);
                 return normalizeProcessCodesBeforeSave();
             }).then(function() {
-                $('#step0 .step-label').text('Loading operation type');
+                updateSaveProcessStep(2);
                 return loadMBOMOperationTypeValue();
             }).then(function() {
-                completeSaveCheckDialog(headers.length);
+                completeSaveProcessStep();
                 setSaveActions();
                 showSaveProcessingDialog();
                 createNewItems();
@@ -3111,11 +3143,16 @@
         let originalShowSaveProcessingDialog = showSaveProcessingDialog;
         showSaveProcessingDialog = function() {
             let checkFinished = $('#step-counter0').length > 0 && !$('#step0').hasClass('in-work');
+            let processFinished = $('#step-counter-process').length > 0 && !$('#step-process').hasClass('in-work');
 
             originalShowSaveProcessingDialog.apply(this, arguments);
 
             if(checkFinished) {
                 $('#step-bar0').addClass('transition-stopper').css('width', '100%').removeClass('transition-stopper');
+            }
+            if(processFinished) {
+                $('#step-bar-process').addClass('transition-stopper').css('width', '100%').removeClass('transition-stopper');
+                $('#step-counter-process').html('3 of 3');
             }
         };
     }
@@ -6977,7 +7014,7 @@
         return fields;
     }
 
-    function repairMBOMPropertiesFromEBOM(sourceEBOMLink, mappings, results) {
+    function repairMBOMPropertiesFromEBOM(sourceEBOMLink, mappings, results, options) {
         let sourceData;
         let sourceLink;
         let targetLink;
@@ -7007,10 +7044,19 @@
                 throw new Error('Safety check refused the target: it is not a distinct Manufacturing mBOM linked back to this eBOM.');
             }
 
-            let hasBom = await getSourceEBOMHasChildren(sourceData);
-            let fields = buildMBOMPropertyRepairFields(sourceData.sections || [], mappings)
-                .filter(function(field) { return field.fieldId !== 'HAS_BOM'; });
-            fields.push({ fieldId: 'HAS_BOM', value: hasBom });
+            let fields = buildMBOMPropertyRepairFields(sourceData.sections || [], mappings);
+            if(options && options.copiedFieldsOnly) {
+                let copiedFieldIds = new Set(mappings.map(function(mapping) { return mapping.mbom; }));
+                fields = fields.filter(function(field) { return copiedFieldIds.has(field.fieldId); });
+                if(fields.length === 0) {
+                    results.skipped++;
+                    return;
+                }
+            } else {
+                let hasBom = await getSourceEBOMHasChildren(sourceData);
+                fields = fields.filter(function(field) { return field.fieldId !== 'HAS_BOM'; });
+                fields.push({ fieldId: 'HAS_BOM', value: hasBom });
+            }
 
             console.info('MBOM custom: repairing properties EBOM -> MBOM', {
                 sourceEBOM : sourceLink,
@@ -7027,6 +7073,44 @@
                     throw new Error(response.message || 'PLM rejected the property update.');
                 }
                 results.updated++;
+            });
+        });
+    }
+
+    function saveMBOMCopiedPropertiesBeforeSave() {
+        let mappings = getMBOMPropertyRepairMappings();
+        if(mappings.length === 0) return Promise.resolve();
+
+        let queue = [];
+        let seenSources = new Set();
+        function enqueueSource(link) {
+            let normalizedLink = normalizePLMLink(link);
+            if(isBlank(normalizedLink) || seenSources.has(normalizedLink)) return;
+            seenSources.add(normalizedLink);
+            queue.push(link);
+        }
+
+        enqueueSource((typeof links !== 'undefined') ? links.ebom : '');
+        if(Array.isArray(ebomPartsList)) {
+            ebomPartsList.forEach(function(part) {
+                if(!part || isBlank(part.link) || isBlank(getLoadedMBOMPropertyRepairTarget(part))) return;
+                enqueueSource(part.link);
+            });
+        }
+
+        let results = { updated : 0, skipped : 0 };
+        let concurrency = Math.max(1, Math.min(5, typeof maxRequests === 'number' ? maxRequests : 5));
+        let started = Date.now();
+
+        return mapPLMRequestsWithConcurrency(queue, concurrency, function(sourceEBOMLink) {
+            return repairMBOMPropertiesFromEBOM(sourceEBOMLink, mappings, results, { copiedFieldsOnly : true });
+        }).then(function() {
+            console.log('MBOM custom: configured eBOM properties synchronized before save', {
+                updated    : results.updated,
+                skipped    : results.skipped,
+                sourceCount: queue.length,
+                concurrency: concurrency,
+                durationMs : Date.now() - started
             });
         });
     }
@@ -7847,7 +7931,6 @@
         insertAddRawMaterialsButton();
         insertLoadFullMBOMButton();
         insertAddLeafMBOMsAndMaterialsButton();
-        insertMBOMPropertyRepairButton();
         insertAddAssemblyIndexButton();
         setupAddProcessPicker();
         setupCustomEBOMItemFocus();
@@ -8322,6 +8405,507 @@
         };
     }
 
+    function getMBOMChangeOrderWorkspaceId() {
+        if(typeof common === 'undefined' || !common.workspaceIds) return '';
+        return common.workspaceIds.changeOrders || '';
+    }
+
+    function getMBOMTechnologyItemNumber(elemItem) {
+        let itemNumber = elemItem.attr('data-part-number') || elemItem.attr('data-number-db')
+            || elemItem.attr('data-number') || '';
+        let descriptor = elemItem.find('.item-head-descriptor').first().text().trim();
+        return isBlank(itemNumber) ? descriptor.split(' - ')[0].trim() : String(itemNumber).trim();
+    }
+
+    function getSavedMBOMItems() {
+        let items = [];
+        let seen = {};
+
+        $('#mbom .item').each(function() {
+            let elemItem = $(this);
+            if(!isMBOMTechnologyItem(elemItem)) return;
+
+            let link = getPLMItemLevelLink(getMBOMSaveLink(elemItem));
+            let key = normalizePLMLink(link);
+            if(isBlank(link) || isBlank(key) || seen[key]) return;
+
+            seen[key] = true;
+            items.push({
+                link       : link,
+                itemNumber : getMBOMTechnologyItemNumber(elemItem)
+            });
+        });
+
+        return items;
+    }
+
+    function getSavedMBOMItemLinks() {
+        return getSavedMBOMItems().map(function(item) { return item.link; });
+    }
+
+    function getCurrentMBOMItemNumber() {
+        let elemRoot = $('#mbom-tree').children('.item').first();
+        return getMBOMTechnologyItemNumber(elemRoot);
+    }
+
+    function getMBOMChangeOrderTitle(itemNumber) {
+        return 'Release WF for ' + (isBlank(itemNumber) ? getCurrentMBOMItemNumber() : itemNumber);
+    }
+
+    function getMBOMChangeOrderFieldId(field) {
+        let reference = field ? (field.__self__ || field.link || field.urn || '') : '';
+        return String(reference).split(/[\/:.]/).pop();
+    }
+
+    function findMBOMChangeOrderField(fields, fieldId, fieldName) {
+        let normalizedName = normalizeComparisonValue(fieldName);
+        return fields.find(function(field) {
+            return getMBOMChangeOrderFieldId(field) === fieldId
+                || normalizeComparisonValue(field && (field.name || field.title || field.displayName)) === normalizedName;
+        });
+    }
+
+    function resolveMBOMChangeOrderPicklistValue(field, requestedTitle) {
+        let picklist = field ? (field.picklist || field.lookups) : '';
+        let picklistLink = (picklist && typeof picklist === 'object')
+            ? (picklist.link || picklist.__self__ || '')
+            : picklist;
+
+        if(isBlank(picklistLink)) {
+            return Promise.reject(new Error('The Change Template field has no picklist definition.'));
+        }
+
+        let offset = 0;
+        function loadPage() {
+            return $.get('/plm/picklist', {
+                link     : picklistLink,
+                limit    : 250,
+                offset   : offset,
+                useCache : true
+            }).then(function(response) {
+                let items = response && response.data && Array.isArray(response.data.items)
+                    ? response.data.items : [];
+                let option = items.find(function(item) {
+                    return normalizeComparisonValue(item && (item.title || item.label || item.value))
+                        === normalizeComparisonValue(requestedTitle);
+                });
+
+                if(option) {
+                    let optionLink = option.link || option.__self__;
+                    if(isBlank(optionLink)) throw new Error('The Fast Track change template returned no option link.');
+                    return { link : optionLink };
+                }
+                if(items.length < 250) {
+                    throw new Error('The Fast Track option was not found in the Change Template picklist.');
+                }
+
+                offset += items.length;
+                return loadPage();
+            });
+        }
+
+        return loadPage();
+    }
+
+    let mbomChangeOrderStateByLink = {};
+
+    function getMBOMChangeOrderProcessState(process) {
+        let workflowState = process && process['workflow-state'] ? process['workflow-state'] : null;
+        let state = workflowState && (workflowState.title || workflowState.name)
+            ? (workflowState.title || workflowState.name)
+            : (process && process.item ? process.item.currentState : '');
+        if(state && typeof state === 'object') state = state.title || state.name || state.link || state.__self__ || '';
+        return String(state || '');
+    }
+
+    function rememberMBOMChangeOrderState(process) {
+        let link = process && process.item ? getPLMItemLevelLink(process.item.link) : '';
+        if(!isBlank(link)) mbomChangeOrderStateByLink[normalizePLMLink(link)] = getMBOMChangeOrderProcessState(process);
+    }
+
+    function findExistingMBOMChangeOrder(rootLink, workspaceId, expectedTitle) {
+        return $.get('/plm/changes', { link : rootLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Could not load the change orders linked to the root mBOM.');
+            }
+
+            let workspaceSegment = '/workspaces/' + String(workspaceId) + '/';
+            let matches = response.data.filter(function(process) {
+                let itemLink = process && process.item ? process.item.link : '';
+                let workflowState = process && process['workflow-state'] ? process['workflow-state'].title : '';
+                let itemState = process && process.item ? process.item.currentState : '';
+                let state = normalizeComparisonValue(workflowState || itemState);
+                return String(itemLink).indexOf(workspaceSegment) >= 0 && state.indexOf('cancel') < 0;
+            });
+
+            matches.sort(function(left, right) {
+                let leftHistory = left && left['last-workflow-history'];
+                let rightHistory = right && right['last-workflow-history'];
+                let leftDate = leftHistory && leftHistory.created ? leftHistory.created : '';
+                let rightDate = rightHistory && rightHistory.created ? rightHistory.created : '';
+                return String(rightDate).localeCompare(String(leftDate));
+            });
+            matches.forEach(rememberMBOMChangeOrderState);
+
+            if(matches.length === 0 || isBlank(expectedTitle)) {
+                return matches.length > 0 ? getPLMItemLevelLink(matches[0].item.link) : '';
+            }
+
+            return mapPLMRequestsWithConcurrency(matches, 5, function(process) {
+                let processLink = getPLMItemLevelLink(process.item.link);
+                return loadMBOMPropertyRepairDetails(processLink, 'change order').then(function(details) {
+                    let title = getSectionFieldValue(details.sections || [], 'TITLE', details.title || '');
+                    let normalizedTitle = normalizeComparisonValue(title);
+                    let normalizedExpected = normalizeComparisonValue(expectedTitle);
+                    return normalizedTitle === normalizedExpected || normalizedTitle.indexOf(normalizedExpected) >= 0
+                        ? processLink : '';
+                });
+            }).then(function(links) {
+                return links.find(function(link) { return !isBlank(link); }) || '';
+            });
+        });
+    }
+
+    function findActiveMBOMChangeOrders(itemLink, workspaceId, excludedLink) {
+        return $.get('/plm/changes', { link : itemLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Could not load active change orders for affected-item transfer.');
+            }
+
+            let workspaceSegment = '/workspaces/' + String(workspaceId) + '/';
+            let excludedKey = normalizePLMLink(excludedLink);
+            let seen = {};
+            let links = [];
+
+            response.data.forEach(function(process) {
+                let processLink = process && process.item ? getPLMItemLevelLink(process.item.link) : '';
+                let processKey = normalizePLMLink(processLink);
+                let state = normalizeComparisonValue(getMBOMChangeOrderProcessState(process));
+                if(isBlank(processLink) || String(processLink).indexOf(workspaceSegment) < 0) return;
+                if(state.indexOf('cancel') >= 0 || processKey === excludedKey || seen[processKey]) return;
+
+                rememberMBOMChangeOrderState(process);
+                seen[processKey] = true;
+                links.push(processLink);
+            });
+
+            return links;
+        });
+    }
+
+    function createMBOMChangeOrder(workspaceId, itemNumber) {
+        let requiredFieldLabels = [];
+
+        return Promise.all([
+            $.get('/plm/sections', { wsId : workspaceId, useCache : true }),
+            $.get('/plm/fields', { wsId : workspaceId, useCache : true })
+        ]).then(function(responses) {
+            if(responses.some(function(response) {
+                return !response || response.error || !Array.isArray(response.data);
+            })) {
+                throw new Error('Could not load the WS_CHANGE_ORDERS workspace definition.');
+            }
+
+            requiredFieldLabels = responses[1].data.filter(function(field) {
+                let validators = field ? (field.validations || field.fieldValidators || []) : [];
+                return validators.some(function(validator) {
+                    return validator.validatorName === 'required' || validator.validatorName === 'dropDownSelection';
+                });
+            }).map(function(field) {
+                return field.name || field.title || field.displayName || field.urn || 'Unknown field';
+            });
+
+            let workspaceFields = responses[1].data;
+            let titleField = findMBOMChangeOrderField(workspaceFields, 'TITLE', 'Title');
+            let descriptionField = findMBOMChangeOrderField(workspaceFields, 'DESCRIPTION', 'Description');
+            let templateField = findMBOMChangeOrderField(workspaceFields, 'CHANGE_TEMPLATE', 'Change Template');
+
+            if(!titleField || !descriptionField || !templateField) {
+                throw new Error('Could not identify Title, Description, and Change Template in WS_CHANGE_ORDERS.');
+            }
+
+            return resolveMBOMChangeOrderPicklistValue(templateField, 'Fast Track').then(function(templateValue) {
+                let fields = [{
+                    fieldId : getMBOMChangeOrderFieldId(titleField),
+                    value   : getMBOMChangeOrderTitle(itemNumber)
+                }, {
+                    fieldId : getMBOMChangeOrderFieldId(descriptionField),
+                    value   : 'Automatic Release created from mBOM Editor'
+                }, {
+                    fieldId : getMBOMChangeOrderFieldId(templateField),
+                    value   : templateValue
+                }];
+
+                return $.post({
+                    url         : '/plm/create',
+                    contentType : 'application/json',
+                    data        : JSON.stringify({
+                        wsId       : workspaceId,
+                        sections   : responses[0].data,
+                        fields     : fields
+                    })
+                });
+            });
+        }).then(function(response) {
+            if(!response || response.error) {
+                let message = getRawMaterialErrorMessage(response);
+                if(requiredFieldLabels.length > 0) {
+                    message += ' Required WS_CHANGE_ORDERS fields: ' + requiredFieldLabels.join(', ') + '.';
+                }
+                throw new Error(message);
+            }
+
+            let link = response.data && response.data.__self__ ? response.data.__self__ : response.data;
+            link = getPLMItemLevelLink(link);
+            if(isBlank(link)) throw new Error('The new change order returned no item link.');
+
+            return link;
+        });
+    }
+
+    function addMBOMAffectedItems(changeOrderLink, mbomLinks) {
+        if(mbomLinks.length === 0) return Promise.resolve({ changeOrderLink : changeOrderLink, added : 0 });
+
+        return $.post('/plm/add-managed-items', {
+            link  : changeOrderLink,
+            items : mbomLinks
+        }).then(function(response) {
+            if(!response || response.error) {
+                throw new Error(getRawMaterialErrorMessage(response));
+            }
+            return { changeOrderLink : changeOrderLink, added : mbomLinks.length };
+        });
+    }
+
+    function addMissingMBOMAffectedItems(changeOrderLink, mbomLinks) {
+        return $.get('/plm/manages', { link : changeOrderLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Could not load the affected items of the change order.');
+            }
+
+            let affected = {};
+            response.data.forEach(function(entry) {
+                let link = entry && entry.item ? entry.item.link : '';
+                let key = normalizePLMLink(getPLMItemLevelLink(link));
+                if(!isBlank(key)) affected[key] = true;
+            });
+
+            let missing = mbomLinks.filter(function(link) {
+                return !affected[normalizePLMLink(link)];
+            });
+
+            return addMBOMAffectedItems(changeOrderLink, missing);
+        });
+    }
+
+    function getMBOMReleaseAffectedItemLinks(changeOrderLink) {
+        return $.get('/plm/manages', { link : changeOrderLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Could not load affected items before cancelling the change order.');
+            }
+
+            let seen = {};
+            return response.data.map(function(entry) {
+                return entry && entry.item ? getPLMItemLevelLink(entry.item.link) : '';
+            }).filter(function(link) {
+                let key = normalizePLMLink(link);
+                if(isBlank(link) || isBlank(key) || seen[key]) return false;
+                seen[key] = true;
+                return true;
+            });
+        });
+    }
+
+    function getMBOMMotherItems(rootLink) {
+        return $.get('/plm/where-used', {
+            link     : rootLink,
+            depth    : 1,
+            useCache : false
+        }).then(function(response) {
+            let data = response && response.data ? response.data : null;
+            if(!response || response.error || !data || !Array.isArray(data.edges) || !Array.isArray(data.nodes)) {
+                throw new Error('Could not load where-used data for the root mBOM.');
+            }
+
+            let parentUrns = {};
+            data.edges.forEach(function(edge) {
+                if(edge && !isBlank(edge.child)) parentUrns[edge.child] = true;
+            });
+
+            let rootWorkspaceId = String(rootLink).split('/')[4];
+            let candidates = data.nodes.filter(function(node) {
+                let item = node && node.item ? node.item : null;
+                let itemLink = item ? getPLMItemLevelLink(item.link) : '';
+                return item && parentUrns[item.urn]
+                    && normalizePLMLink(itemLink) !== normalizePLMLink(rootLink)
+                    && String(itemLink).split('/')[4] === rootWorkspaceId;
+            });
+
+            return mapPLMRequestsWithConcurrency(candidates, 5, function(node) {
+                let itemLink = getPLMItemLevelLink(node.item.link);
+                return loadMBOMPropertyRepairDetails(itemLink, 'mother mBOM').then(function(details) {
+                    let typeValue = getSectionFieldValue(
+                        details.sections || [],
+                        config.workspaceMBOM.fieldIDs.type,
+                        '',
+                        'object'
+                    );
+                    if(!isMBOMPropertyRepairManufacturingType(typeValue)) return null;
+
+                    let itemNumber = getSectionFieldValue(
+                        details.sections || [],
+                        config.workspaceMBOM.fieldIDs.number,
+                        ''
+                    );
+                    if(isBlank(itemNumber)) itemNumber = String(node.item.title || '').split(' - ')[0].trim();
+
+                    return { link : itemLink, itemNumber : itemNumber, title : node.item.title || '' };
+                });
+            }).then(function(items) {
+                let seen = {};
+                return items.filter(function(item) {
+                    let key = item ? normalizePLMLink(item.link) : '';
+                    if(!item || isBlank(key) || seen[key]) return false;
+                    seen[key] = true;
+                    return true;
+                });
+            });
+        });
+    }
+
+    function cancelMBOMRelease(changeOrderLink) {
+        if(isBlank(changeOrderLink)) return Promise.resolve({ cancelled : false });
+
+        let state = mbomChangeOrderStateByLink[normalizePLMLink(changeOrderLink)] || '';
+        let normalizedState = String(state).trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+        let transitionId = '';
+        if(normalizedState === 'KONTROLA_TECHNOLOGII') transitionId = '1159';
+        if(normalizedState === 'OPRACOWANIE_TECHNOLOGII') transitionId = '551';
+        if(isBlank(transitionId)) {
+            return Promise.reject(new Error(
+                'The sub-mBOM release cannot be cancelled from state "' + (state || 'unknown') + '".'
+            ));
+        }
+
+        return $.get('/plm/transitions', { link : changeOrderLink }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Could not load workflow actions for the sub-mBOM release.');
+            }
+
+            let transition = response.data.find(function(action) {
+                let actionLink = action ? (action.__self__ || action.link || '') : '';
+                return String(actionLink).split('/').pop().toUpperCase() === transitionId;
+            });
+            if(!transition) {
+                throw new Error(transitionId + ' is not available for the sub-mBOM release in state "' + state + '".');
+            }
+
+            let transitionLink = transition.__self__ || transition.link;
+            return $.post('/plm/transition', {
+                link       : changeOrderLink,
+                transition : transitionLink,
+                comment    : 'Cancelled automatically because this mBOM is released through its mother mBOM.'
+            }).then(function(transitionResponse) {
+                if(!transitionResponse || transitionResponse.error) {
+                    throw new Error(getRawMaterialErrorMessage(transitionResponse));
+                }
+                return { changeOrderLink : changeOrderLink, cancelled : true };
+            });
+        });
+    }
+
+    function getOrCreateMBOMRelease(ownerItem, workspaceId) {
+        let releaseTitle = getMBOMChangeOrderTitle(ownerItem.itemNumber);
+        return findExistingMBOMChangeOrder(ownerItem.link, workspaceId, releaseTitle).then(function(releaseLink) {
+            if(!isBlank(releaseLink)) {
+                return addMissingMBOMAffectedItems(releaseLink, [ownerItem.link]).then(function() {
+                    return releaseLink;
+                });
+            }
+
+            return createMBOMChangeOrder(workspaceId, ownerItem.itemNumber).then(function(createdLink) {
+                return addMBOMAffectedItems(createdLink, [ownerItem.link]).then(function() {
+                    return createdLink;
+                });
+            });
+        });
+    }
+
+    function moveMBOMsToReleaseInOrder(items, targetReleaseLink, workspaceId) {
+        let results = [];
+        let transferredChangeOrders = {};
+        return items.reduce(function(sequence, item) {
+            return sequence.then(function() {
+                return findActiveMBOMChangeOrders(item.link, workspaceId, targetReleaseLink);
+            }).then(function(sourceReleaseLinks) {
+                let linksToTransfer = [item.link];
+                let cancelled = [];
+
+                return sourceReleaseLinks.reduce(function(cancelSequence, sourceReleaseLink) {
+                    let sourceKey = normalizePLMLink(sourceReleaseLink);
+                    if(transferredChangeOrders[sourceKey]) return cancelSequence;
+
+                    return cancelSequence.then(function() {
+                        return getMBOMReleaseAffectedItemLinks(sourceReleaseLink);
+                    }).then(function(affectedLinks) {
+                        linksToTransfer = linksToTransfer.concat(affectedLinks);
+                        return cancelMBOMRelease(sourceReleaseLink);
+                    }).then(function(cancelResult) {
+                        transferredChangeOrders[sourceKey] = true;
+                        cancelled.push(cancelResult);
+                    });
+                }, Promise.resolve()).then(function() {
+                    return addMissingMBOMAffectedItems(targetReleaseLink, linksToTransfer);
+                }).then(function(addResult) {
+                    results.push({ item : item, cancelled : cancelled, add : addResult });
+                });
+            });
+        }, Promise.resolve()).then(function() {
+            return results;
+        });
+    }
+
+    function syncMBOMChangeOrderAfterSave() {
+        let workspaceId = getMBOMChangeOrderWorkspaceId();
+        let mbomItems = getSavedMBOMItems();
+        let mbomLinks = mbomItems.map(function(item) { return item.link; });
+
+        if(isBlank(workspaceId)) {
+            return Promise.reject(new Error('WS_CHANGE_ORDERS is not configured in common.workspaceIds.changeOrders.'));
+        }
+        if(mbomLinks.length === 0) {
+            return Promise.reject(new Error('No saved mBOM item link was found.'));
+        }
+
+        let rootItem = mbomItems[0];
+        let nestedSubMBOMItems = mbomItems.slice(1);
+
+        return getMBOMMotherItems(rootItem.link).then(function(motherItems) {
+            if(motherItems.length > 1) {
+                console.warn('MBOM custom: multiple mother mBOMs found; using the first direct mother', motherItems);
+            }
+
+            if(motherItems.length === 0) {
+                return getOrCreateMBOMRelease(rootItem, workspaceId).then(function(rootReleaseLink) {
+                    return moveMBOMsToReleaseInOrder(nestedSubMBOMItems, rootReleaseLink, workspaceId).then(function(moved) {
+                        return { release : rootReleaseLink, owner : rootItem, moved : moved };
+                    });
+                });
+            }
+
+            let motherItem = motherItems[0];
+            return getOrCreateMBOMRelease(motherItem, workspaceId).then(function(motherReleaseLink) {
+                let itemsToMove = [rootItem].concat(nestedSubMBOMItems);
+                return moveMBOMsToReleaseInOrder(itemsToMove, motherReleaseLink, workspaceId).then(function(moved) {
+                    return { release : motherReleaseLink, owner : motherItem, moved : moved };
+                });
+            });
+        }).then(function(result) {
+            console.log('MBOM custom: change order affected items synchronized', result);
+            return result;
+        });
+    }
+
     if(typeof updateBOMItems === 'function') {
         updateBOMItems = function() {
             let pending  = $('.pending-update').length;
@@ -8447,7 +9031,16 @@
                     rawMaterialStructuralSavePending = false;
                 }
                 refreshNewLinkedMBOMControls();
-                endProcessing();
+                return syncMBOMChangeOrderAfterSave().then(function() {
+                    endProcessing();
+                }).catch(function(error) {
+                    console.error('MBOM custom: change order synchronization failed', error);
+                    endProcessing();
+                    showErrorMessage(
+                        'mBOM saved, change order update failed',
+                        String(error && error.message ? error.message : error)
+                    );
+                });
 
             }
         };

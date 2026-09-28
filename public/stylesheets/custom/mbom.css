@@ -310,16 +310,16 @@ body.details-on.no-viewer #tabs {
 
 #dialog-confirm-raw-materials,
 #dialog-raw-materials {
+    box-sizing: border-box;
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: min(760px, calc(100vw - 40px));
-    height: min(660px, calc(100vh - 40px));
+    width: min(960px, calc(100vw - 48px));
+    height: min(780px, calc(100vh - 48px));
 }
 #dialog-confirm-raw-materials {
-    height: auto;
-    max-height: calc(100vh - 40px);
+    height: min(620px, calc(100vh - 48px));
 }
 #dialog-raw-materials .dialog-content,
 #dialog-confirm-raw-materials .dialog-content {
@@ -386,4 +386,8 @@ body.details-on.no-viewer #tabs {
     line-height: 20px;
     font-size: 11px;
     white-space: nowrap;
+}
+#dialog-saving {
+    height : 384px;
+    top    : calc(50% - 192px);
 }
