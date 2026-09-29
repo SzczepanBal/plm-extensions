@@ -328,7 +328,7 @@ async function testRawMaterialCreation() {
         isBlank: context.isBlank
     };
     const expected = {
-        GRUPA_PRODUKTOWA: 'MHU', NUMBER: '', TITLE: 'Steel', NAZWA: 'Steel',
+        GRUPA_PRODUKTOWA: 'RAW-GROUP', NUMBER: '', TITLE: 'Steel', NAZWA: 'Steel',
         NAZWA_DEFRO: 'Steel', TYPE: 'Surowiec', TYP_CZESCI: 'S',
         RODZAJ: 'Surowiec', WARIANT: 'Surowiec', SPECYFIKACJA: 'Surowiec'
     };
@@ -357,8 +357,8 @@ async function testRawMaterialCreation() {
     });
     const missing = { material: 'Steel', items: [] };
     const results = await Promise.all([
-        rawContext.ensureRawMaterialSearchResult(missing),
-        rawContext.ensureRawMaterialSearchResult({ material: ' steel ', items: [] })
+        rawContext.ensureRawMaterialSearchResult(missing, 'RAW-GROUP'),
+        rawContext.ensureRawMaterialSearchResult({ material: ' steel ', items: [] }, 'RAW-GROUP')
     ]);
     assert.strictEqual(posts.length, 1, 'Repeated materials must reuse one creation');
     assert.strictEqual(results[0].items[0].__self__, '/api/v3/workspaces/57/items/123');
@@ -366,7 +366,7 @@ async function testRawMaterialCreation() {
     assert.deepStrictEqual(Object.fromEntries(posts[0].fields.map(field => [field.fieldId, field.value])), {
         ...expected, ...Object.fromEntries(dropdowns.map(fieldId => [fieldId, { link: '/options/' + fieldId }]))
     });
-    assert.throws(() => rawContext.ensureRawMaterialSearchResult({ ...missing, error: true }), /search failed/);
+    assert.throws(() => rawContext.ensureRawMaterialSearchResult({ ...missing, error: true }), /nie powiodło się/);
     const existing = { material: 'Other', items: [{ title: 'Other' }] };
     assert.strictEqual(await rawContext.ensureRawMaterialSearchResult(existing), existing);
     assert.strictEqual(posts.length, 1);
@@ -377,7 +377,7 @@ async function testRawMaterialCreation() {
         if(url === '/plm/fields') response.data.forEach(field => { delete field.picklist; });
         return response;
     };
-    await rawContext.createRawMaterialItem('Steel');
+    await rawContext.createRawMaterialItem('Steel', 'RAW-GROUP');
     assert.deepStrictEqual(posts.pop().fields.find(field => field.fieldId === 'TYPE').value,
         { link: '/options/TYPE' }, 'TYPE must resolve through the MBOM lookup even without picklist metadata');
     rawContext.$.get = originalGet;
@@ -387,7 +387,7 @@ async function testRawMaterialCreation() {
         material === 'Other' ? existing : { material, items: [] }
     );
     const batch = await Promise.all([
-        rawContext.resolveRawMaterialForBatch('Rejected material'),
+        rawContext.resolveRawMaterialForBatch('Rejected material', true, 'RAW-GROUP'),
         rawContext.resolveRawMaterialForBatch('Other')
     ]);
     assert.strictEqual(batch[0].error, true);
@@ -396,7 +396,7 @@ async function testRawMaterialCreation() {
     assert.strictEqual(rawContext.rawMaterialCreationPromises['rejected material'], undefined);
     assert.strictEqual(rawContext.rawMaterialSearchPromises['rejected material'], undefined);
     rawContext.$.post = originalPost;
-    assert.strictEqual((await rawContext.resolveRawMaterialForBatch('Rejected material')).items.length, 1,
+    assert.strictEqual((await rawContext.resolveRawMaterialForBatch('Rejected material', true, 'RAW-GROUP')).items.length, 1,
         'A failed material can be retried');
     rawContext.searchRawMaterialItems = () => Promise.reject({ responseJSON: { message: 'Search unavailable' } });
     const failedSearch = await rawContext.resolveRawMaterialForBatch('Search failure');
@@ -455,7 +455,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
             TITLE: 'Part',
             INDEKS_CZESCI: 'ERP-4711',
             JEDNOSTKA_ROZLICZENIOWA: '/api/v3/lookups/units/options/kg',
-            ILOSC_ROZLICZENIOWA: 2.5
+            ILOSC_ROZLICZENIOWA: 2.5,
+            GRUPA_PRODUKTOWA_SUROWCOW: 'RAW-GROUP'
         }
     };
     await copyContext.createMBOMForEBOM(source, '');
@@ -465,6 +466,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'ILOSC_ROZLICZENIOWA').value, 2.5);
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'INDEKS_CZESCI').value, 'ERP-4711',
         'New mBOMs copy the ERP part index from their source eBOM');
+    assert.strictEqual(payload.fields.find(f => f.fieldId === 'GRUPA_PRODUKTOWA_SUROWCOW').value, 'RAW-GROUP',
+        'New mBOMs copy the raw-material product group from their source eBOM');
     const repairFields = copyContext.buildMBOMPropertyRepairFields(
         source.sections,
         copyContext.getMBOMPropertyRepairMappings()
@@ -591,14 +594,14 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     });
     const rows = reportContext.getRawMaterialReportRows([{
         part: { link: '/api/v3/workspaces/57/items/21675', number: 'P00000473-M' },
-        material: '', rawMaterialMessage: 'MATERIAL is empty.',
+        material: '', rawMaterialMessage: 'Pole MATERIAL jest puste.',
         uomMismatch: { mbomUnit: 'kg', rawMaterialUOM: 'm' }
     }]);
     assert.strictEqual(rows[0].outcome, 'not-added');
-    assert.strictEqual(rows[0].message, 'MATERIAL is empty.');
+    assert.strictEqual(rows[0].message, 'Pole MATERIAL jest puste.');
     assert.ok(rows[0].href.startsWith('https://TEST.autodeskplm360.net/plm/workspaces/57/items/itemDetails?'));
     assert.ok(rows[0].href.endsWith('TEST%2C57%2C21675'));
-    assert.match(rows[0].warnings[0], /without conversion/);
+    assert.match(rows[0].warnings[0], /bez przeliczenia/);
     reportContext.addRawMaterialsFromMBOM();
     assert.strictEqual(starts.length, 0, 'Opening confirmation must not start processing');
     handlers['#cancel-add-raw-materials']();
@@ -698,7 +701,7 @@ async function testHasBOMMarker() {
     assert.strictEqual(markerContext.isMBOMHasBOM(undefined), false);
     assert.match(markerContext.getRawMaterialSkipReason({ hasBom: true }), /HAS_BOM/);
     assert.strictEqual(markerContext.getRawMaterialSkipReason({ hasBom: false }), '');
-    assert.match(markerContext.getRawMaterialSkipReason({ detailsError: true }), /could not be checked/);
+    assert.match(markerContext.getRawMaterialSkipReason({ detailsError: true }), /nie można sprawdzić/);
     console.log('HAS_BOM marker tests passed');
 }
 testHasBOMMarker().catch(error => { console.error(error); process.exitCode = 1; });
@@ -884,6 +887,7 @@ async function testRawMaterialSourceRefreshCaches() {
         Object,
         console,
         rawMaterialDetailsPromises: {},
+        rawMaterialProductGroupFieldId: 'GRUPA_PRODUKTOWA_SUROWCOW',
         mbomPartsList: [{ link: '/mbom/1', root: '/root/1' }],
         normalizePLMLink: value => value || '',
         isBlank: context.isBlank,

@@ -6,6 +6,7 @@
     const rawMaterialFallbackProcessName = 'Ciecie';
     const rawMaterialAccountingUnitFieldId = 'JEDNOSTKA_ROZLICZENIOWA';
     const rawMaterialAccountingQuantityFieldId = 'ILOSC_ROZLICZENIOWA';
+    const rawMaterialProductGroupFieldId = 'GRUPA_PRODUKTOWA_SUROWCOW';
     const rawMaterialTypeName = 'Surowiec';
     const rawMaterialTypeQueryValue = 'SUROWIEC';
     const rawMaterialApplyModes = {
@@ -175,8 +176,8 @@
     }
 
     function getRawMaterialSkipReason(entry) {
-        if(entry.detailsError) return 'MBOM details could not be read; HAS_BOM could not be checked.';
-        if(entry.hasBom) return 'Skipped: HAS_BOM is true (source EBOM has children).';
+        if(entry.detailsError) return 'Nie udało się odczytać szczegółów mBOM; nie można sprawdzić pola HAS_BOM.';
+        if(entry.hasBom) return 'Pominięto: pole HAS_BOM ma wartość true (źródłowy eBOM ma elementy podrzędne).';
         return '';
     }
 
@@ -189,7 +190,8 @@
                     detailsError       : true,
                     material           : '',
                     accountingUnit     : '',
-                    accountingQuantity : NaN
+                    accountingQuantity : NaN,
+                    productGroup       : ''
                 });
             }
 
@@ -207,18 +209,21 @@
                         let material = getMaterialValueFromItemDetails(response.data);
                         let accountingUnit = getMBOMAccountingUnitFromItemDetails(response.data);
                         let accountingQuantity = getMBOMAccountingQuantityFromItemDetails(response.data);
+                        let productGroup = getSectionFieldValue(response.data.sections, rawMaterialProductGroupFieldId, '', null);
                         console.log('MBOM custom: fetched MBOM fallback details for raw material resolution', {
                             mbomLink           : link,
                             partNumber         : getPartNumber(part),
                             material           : material,
                             accountingUnit     : accountingUnit,
-                            accountingQuantity : accountingQuantity
+                            accountingQuantity : accountingQuantity,
+                            productGroup       : productGroup
                         });
                         resolve({
                             hasBom             : hasBom,
                             material           : material,
                             accountingUnit     : accountingUnit,
-                            accountingQuantity : accountingQuantity
+                            accountingQuantity : accountingQuantity,
+                            productGroup       : productGroup
                         });
                     })
                     .fail(function() {
@@ -231,7 +236,8 @@
                             detailsError       : true,
                             material           : '',
                             accountingUnit     : '',
-                            accountingQuantity : NaN
+                            accountingQuantity : NaN,
+                            productGroup       : ''
                         });
                     });
                 });
@@ -941,12 +947,12 @@
         return searchPromise;
     }
 
-    function ensureRawMaterialSearchResult(result) {
-        if(result.error) throw new Error('Raw material search failed: ' + result.material);
+    function ensureRawMaterialSearchResult(result, productGroup) {
+        if(result.error) throw new Error('Wyszukiwanie surowca nie powiodło się: ' + result.material);
         if(result.items.length > 0) return Promise.resolve(result);
         let key = normalizeComparisonValue(result.material);
         if(!rawMaterialCreationPromises[key]) {
-            rawMaterialCreationPromises[key] = createRawMaterialItem(result.material).then(function(item) {
+            rawMaterialCreationPromises[key] = createRawMaterialItem(result.material, productGroup).then(function(item) {
                 let createdResult = { material: result.material, items: [item], query: result.query };
                 rawMaterialSearchPromises[key] = Promise.resolve(createdResult);
                 return createdResult;
@@ -958,17 +964,18 @@
         return rawMaterialCreationPromises[key];
     }
 
-    async function createRawMaterialItem(material) {
-        if(isBlank(material)) throw new Error('Cannot create a raw material without MATERIAL.');
+    async function createRawMaterialItem(material, productGroup) {
+        if(isBlank(material)) throw new Error('Nie można utworzyć surowca bez wartości pola MATERIAL.');
+        if(isBlank(productGroup)) throw new Error('Nie można utworzyć surowca „' + material + '” bez wartości pola GRUPA_PRODUKTOWA_SUROWCOW.');
         let responses = await Promise.all([
             $.get('/plm/sections', { wsId: rawMaterialsWorkspaceId }),
             $.get('/plm/fields', { wsId: rawMaterialsWorkspaceId })
         ]);
         if(responses.some(function(response) { return !response || response.error || !Array.isArray(response.data); })) {
-            throw new Error('Cannot load raw material workspace fields.');
+            throw new Error('Nie można wczytać pól obszaru roboczego surowców.');
         }
         let values = {
-            GRUPA_PRODUKTOWA: 'MHU', NUMBER: '', TITLE: material,
+            GRUPA_PRODUKTOWA: productGroup, NUMBER: '', TITLE: material,
             NAZWA: material, NAZWA_DEFRO: material, TYPE: rawMaterialTypeName,
             TYP_CZESCI: 'S', RODZAJ: 'Surowiec', WARIANT: 'Surowiec', SPECYFIKACJA: 'Surowiec'
         };
@@ -976,7 +983,7 @@
             let metadata = responses[1].data.find(function(field) {
                 return (field.__self__ || field.link || '').split('/').pop() === fieldId;
             });
-            if(!metadata) throw new Error('Missing raw material field: ' + fieldId);
+            if(!metadata) throw new Error('Brak pola surowca: ' + fieldId);
             let value = values[fieldId];
             if(fieldId === 'TYPE') {
                 // Match the existing MBOM/Process creation contract: TYPE is an option link.
@@ -994,7 +1001,7 @@
                 while(!option) {
                     let response = await $.get('/plm/picklist', { link: picklistLink, limit: 250, offset: offset, useCache: false });
                     if(!response || response.error || !response.data || !Array.isArray(response.data.items)) {
-                        throw new Error('Cannot load raw material options: ' + fieldId);
+                        throw new Error('Nie można wczytać opcji pola surowca: ' + fieldId);
                     }
                     let items = response.data.items;
                     option = items.find(function(item) {
@@ -1003,7 +1010,7 @@
                     if(option || items.length < 250) break;
                     offset += items.length;
                 }
-                if(!option || !(option.link || option.__self__)) throw new Error('Missing option for ' + fieldId + ': ' + value);
+                if(!option || !(option.link || option.__self__)) throw new Error('Brak opcji dla pola ' + fieldId + ': ' + value);
                 value = { link: option.link || option.__self__ };
             }
             return { fieldId: fieldId, value: value };
@@ -1014,10 +1021,10 @@
         });
         if(!response || response.error) {
             console.warn('MBOM custom: PLM rejected raw material creation', { material: material, response: response });
-            throw new Error('Failed to create raw material: ' + material + '. ' + getRawMaterialErrorMessage(response));
+            throw new Error('Nie udało się utworzyć surowca: ' + material + '. ' + getRawMaterialErrorMessage(response));
         }
         let link = response.data && response.data.__self__ ? response.data.__self__ : response.data;
-        if(typeof link !== 'string' || isBlank(link)) throw new Error('Created raw material returned no item link.');
+        if(typeof link !== 'string' || isBlank(link)) throw new Error('Utworzony surowiec nie zwrócił odnośnika do elementu.');
         return { __self__: link.replace(/^https?:\/\/[^/]+/i, ''), title: material };
     }
 
@@ -1029,14 +1036,14 @@
         if(response.data && (!Array.isArray(response.data) || response.data.length > 0)) {
             return typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
         }
-        return 'PLM request failed' + (response.status ? ' (HTTP ' + response.status + ')' : '') + '.';
+        return 'Żądanie PLM nie powiodło się' + (response.status ? ' (HTTP ' + response.status + ')' : '') + '.';
     }
 
-    function resolveRawMaterialForBatch(material, allowCreate) {
+    function resolveRawMaterialForBatch(material, allowCreate, productGroup) {
         return Promise.resolve().then(function() {
             return searchRawMaterialItems(material);
         }).then(function(result) {
-            return allowCreate === false ? result : ensureRawMaterialSearchResult(result);
+            return allowCreate === false ? result : ensureRawMaterialSearchResult(result, productGroup);
         }).catch(function(error) {
             // A failed material must not prevent unrelated branches from being applied.
             // Re-query on the next attempt in case PLM created an item before a connection failed.
@@ -1227,13 +1234,13 @@
 
     function getRawMaterialItemDetails(link) {
         let cacheKey = normalizePLMLink(link);
-        if(isBlank(cacheKey)) return Promise.reject(new Error('Raw material item link is empty.'));
+        if(isBlank(cacheKey)) return Promise.reject(new Error('Odnośnik do surowca jest pusty.'));
         if(rawMaterialItemDetailsPromises[cacheKey]) return rawMaterialItemDetailsPromises[cacheKey];
 
         rawMaterialItemDetailsPromises[cacheKey] = $.get('/plm/details', { link : link })
             .then(function(response) {
                 if(!response || response.error || !response.data) {
-                    throw new Error('Raw material item details could not be loaded.');
+                    throw new Error('Nie udało się wczytać szczegółów surowca.');
                 }
                 return response.data;
             })
@@ -4159,7 +4166,8 @@
                 part               : part,
                 material           : getMaterialValue(part),
                 accountingUnit     : getMBOMAccountingUnit(part),
-                accountingQuantity : getMBOMAccountingQuantity(part)
+                accountingQuantity : getMBOMAccountingQuantity(part),
+                productGroup       : getMBOMAccountingFieldValue(part, rawMaterialProductGroupFieldId)
             };
         });
 
@@ -4188,6 +4196,9 @@
                     !Number.isNaN(fallback.accountingQuantity) && fallback.accountingQuantity > 0) {
                     entry.accountingQuantity = fallback.accountingQuantity;
                 }
+                if(isBlank(entry.productGroup) && !isBlank(fallback.productGroup)) {
+                    entry.productGroup = fallback.productGroup;
+                }
                 });
 
                 return filterRawMaterialEntriesWithMaterial(mbomMaterials);
@@ -4214,8 +4225,8 @@
     }
 
     function setRawMaterialsDialogPendingState() {
-        $('#raw-step-counter1').html('Preparing...');
-        $('#raw-step-counter2').html('Waiting...');
+        $('#raw-step-counter1').html('Przygotowywanie…');
+        $('#raw-step-counter2').html('Oczekiwanie…');
     }
 
     function setRawMaterialsDialogTotals(searchTotal, applyTotal) {
@@ -4243,6 +4254,45 @@
         $('#raw-step2').addClass('in-work');
     }
 
+    function requestRawMaterialCreationConfirmation(materials) {
+        if(!Array.isArray(materials) || materials.length === 0) return Promise.resolve(true);
+
+        return new Promise(function(resolve) {
+            let container = $('#raw-material-results').empty().removeClass('with-warning').show();
+            $('<p></p>')
+                .text('Poniższe surowce nie istnieją w PLM. Potwierdź ich utworzenie, aby kontynuować:')
+                .appendTo(container);
+
+            let list = $('<ul></ul>').addClass('raw-material-creation-list').appendTo(container);
+            materials.forEach(function(entry) {
+                let group = isBlank(entry.productGroup) ? 'brak wartości GRUPA_PRODUKTOWA_SUROWCOW' : entry.productGroup;
+                $('<li></li>').text(entry.material + ' — grupa produktowa: ' + group).appendTo(list);
+            });
+
+            let actions = $('<div></div>').addClass('raw-material-confirm-actions').appendTo(container);
+            let skip = $('<button type="button"></button>')
+                .addClass('button')
+                .text('Pomiń tworzenie')
+                .appendTo(actions);
+            let create = $('<button type="button"></button>')
+                .addClass('button default')
+                .text('Utwórz surowce (' + materials.length + ')')
+                .appendTo(actions);
+
+            $('#raw-step-counter1').text('Oczekiwanie na potwierdzenie');
+
+            function finish(confirmed) {
+                skip.off('click');
+                create.off('click');
+                container.empty().hide();
+                resolve(confirmed);
+            }
+
+            skip.one('click', function() { finish(false); });
+            create.one('click', function() { finish(true); });
+        });
+    }
+
     function updateRawMaterialsApplyDialog(current, total) {
         let done = Number(current) || 0;
         let count = Number(total) || 0;
@@ -4256,14 +4306,14 @@
         let result = summary || {};
         let issues = getRawMaterialReportRows(result.entries);
         let lines = [];
-        if(issues.length > 0) lines.push('Raw material not applied to ' + issues.length + ' MBOM(s):');
+        if(issues.length > 0) lines.push('Nie zastosowano surowca w ' + issues.length + ' mBOM:');
         if(result.error) {
-            lines.push('Processing stopped before all materials could be applied.');
+            lines.push('Przetwarzanie zatrzymano przed zastosowaniem wszystkich surowców.');
             (result.materialErrors || []).forEach(function(failure) {
                 lines.push(failure.material + ': ' + failure.message);
             });
         }
-        if(lines.length === 0) lines.push('No issues.');
+        if(lines.length === 0) lines.push('Brak problemów.');
         $('#raw-material-results')
             .toggleClass('with-warning', issues.length > 0 || result.error === true)
             .text(lines.join('\n'))
@@ -4285,8 +4335,8 @@
                     + encodeURIComponent(tenant + ',' + match[1] + ',' + match[2])
                 : '';
             let warnings = (entry.rawMaterialWarnings || []).slice();
-            if(entry.uomMismatch) warnings.push('Unit mismatch: MBOM "' + (entry.uomMismatch.mbomUnit || 'empty')
-                + '", raw material "' + (entry.uomMismatch.rawMaterialUOM || 'empty') + '". Quantity used without conversion.');
+            if(entry.uomMismatch) warnings.push('Niezgodność jednostek: mBOM „' + (entry.uomMismatch.mbomUnit || 'brak')
+                + '”, surowiec „' + (entry.uomMismatch.rawMaterialUOM || 'brak') + '”. Ilość zastosowano bez przeliczenia.');
             return {
                 label: getPartNumber(entry.part) || link || 'Unsaved MBOM', href: href,
                 material: entry.material || '(empty)', outcome: entry.rawMaterialOutcome || 'not-added',
@@ -4299,13 +4349,13 @@
         let rows = getRawMaterialReportRows(entries);
         if(rows.length === 0) return;
         let container = $('#raw-material-results');
-        $('<p></p>').text('Open an MBOM link below to review the issue.').appendTo(container);
+        $('<p></p>').text('Otwórz poniższy mBOM, aby sprawdzić problem.').appendTo(container);
         let list = $('<ul></ul>').addClass('raw-material-report').appendTo(container);
         rows.forEach(function(row) {
             let item = $('<li></li>').appendTo(list);
             if(row.href) $('<a></a>').attr({ href: row.href, target: '_blank', rel: 'noopener noreferrer' }).text(row.label).appendTo(item);
             else $('<span></span>').text(row.label).appendTo(item);
-            $('<div></div>').text((row.outcome === 'not-added' ? 'Not added: ' : row.outcome === 'updated' ? 'Updated: ' : 'Added: ') + row.material + ' — ' + row.message).appendTo(item);
+            $('<div></div>').text((row.outcome === 'not-added' ? 'Nie dodano: ' : row.outcome === 'updated' ? 'Zaktualizowano: ' : 'Dodano: ') + row.material + ' — ' + row.message).appendTo(item);
             row.warnings.forEach(function(warning) { $('<div></div>').addClass('raw-material-warning').text(warning).appendTo(item); });
         });
     }
@@ -4379,15 +4429,20 @@
         let button = $('#add-raw-materials');
         if(button.length) {
             button.addClass('disabled');
-            button.html('Searching...');
+            button.html('Wyszukiwanie…');
         }
 
         mbomMaterials.forEach(function(entry) {
             entry.rawMaterialOutcome = 'not-added';
-            entry.rawMaterialMessage = getRawMaterialSkipReason(entry) || (isBlank(entry.material) ? 'MATERIAL is empty.' : 'No matching raw material was available.');
+            entry.rawMaterialMessage = getRawMaterialSkipReason(entry) || (isBlank(entry.material) ? 'Pole MATERIAL jest puste.' : 'Nie znaleziono pasującego surowca.');
             entry.rawMaterialWarnings = [];
         });
         let uniqueMaterials = Array.from(new Set(mbomMaterials.filter(function(entry) { return !getRawMaterialSkipReason(entry); }).map(function(entry) { return entry.material; }).filter(function(material) { return !isBlank(material); })));
+        let productGroupsByMaterial = {};
+        mbomMaterials.forEach(function(entry) {
+            if(isBlank(entry.material) || isBlank(entry.productGroup) || !isBlank(productGroupsByMaterial[entry.material])) return;
+            productGroupsByMaterial[entry.material] = entry.productGroup;
+        });
         let searchResultsByMaterial = {};
         let searchDone = 0;
         let applyDone = 0;
@@ -4408,7 +4463,7 @@
         });
 
         let searchRequests = uniqueMaterials.map(function(material) {
-            return resolveRawMaterialForBatch(material, addMissing).then(function(result) {
+            return resolveRawMaterialForBatch(material, false, productGroupsByMaterial[material]).then(function(result) {
                 searchResultsByMaterial[material] = result;
                 searchDone++;
                 updateRawMaterialsSearchDialog(searchDone, uniqueMaterials.length);
@@ -4417,6 +4472,45 @@
         });
 
         return Promise.all(searchRequests).then(function() {
+            let missingMaterials = uniqueMaterials.filter(function(material) {
+                let result = searchResultsByMaterial[material];
+                return result && !result.error && Array.isArray(result.items) && result.items.length === 0;
+            }).map(function(material) {
+                return { material : material, productGroup : productGroupsByMaterial[material] || '' };
+            });
+
+            if(!addMissing || missingMaterials.length === 0) return true;
+
+            return requestRawMaterialCreationConfirmation(missingMaterials).then(function(confirmed) {
+                if(!confirmed) {
+                    missingMaterials.forEach(function(entry) {
+                        let result = searchResultsByMaterial[entry.material];
+                        result.creationDeclined = true;
+                        result.message = 'Utworzenie surowca nie zostało potwierdzone.';
+                    });
+                    return false;
+                }
+
+                $('#raw-step-counter1').text('Tworzenie: 0 z ' + missingMaterials.length);
+                let created = 0;
+                return Promise.all(missingMaterials.map(function(entry) {
+                    let result = searchResultsByMaterial[entry.material];
+                    return ensureRawMaterialSearchResult(result, entry.productGroup).then(function(createdResult) {
+                        searchResultsByMaterial[entry.material] = createdResult;
+                    }).catch(function(error) {
+                        searchResultsByMaterial[entry.material] = {
+                            material : entry.material,
+                            items    : [],
+                            error    : true,
+                            message  : getRawMaterialErrorMessage(error)
+                        };
+                    }).then(function() {
+                        created++;
+                        $('#raw-step-counter1').text('Tworzenie: ' + created + ' z ' + missingMaterials.length);
+                    });
+                })).then(function() { return true; });
+            });
+        }).then(function() {
             completeRawMaterialsSearchDialog(uniqueMaterials.length);
             let insertedByTarget = {};
             let targetWorkPromises = {};
@@ -4443,6 +4537,7 @@
 
                     let result = searchResultsByMaterial[material];
                     if(result && result.error) entry.rawMaterialMessage = result.message;
+                    if(result && result.creationDeclined) entry.rawMaterialMessage = result.message;
                     if(!result || !Array.isArray(result.items) || result.items.length === 0) {
                         console.warn('MBOM custom: no matching WS57 TITLE found for MATERIAL', {
                             material : material
@@ -4454,7 +4549,7 @@
 
                     let item = chooseRawMaterialItem(material, result.items);
                     if(!item) {
-                        entry.rawMaterialMessage = 'No exact TITLE match could be selected.';
+                        entry.rawMaterialMessage = 'Nie udało się wybrać dokładnego dopasowania pola TITLE.';
                         console.warn('MBOM custom: TITLE match selection failed for MATERIAL', {
                             material : material
                         });
@@ -4465,7 +4560,7 @@
 
                     let link = getSearchItemLink(item);
                     if(isBlank(link)) {
-                        entry.rawMaterialMessage = 'The raw material has no usable item link.';
+                        entry.rawMaterialMessage = 'Surowiec nie ma prawidłowego odnośnika do elementu.';
                         console.warn('MBOM custom: raw material match has no usable link', {
                             material : material
                         });
@@ -4476,7 +4571,7 @@
 
                     return getRawMaterialInsertQuantity(entry, item).then(function(quantity) {
                         if(Number.isNaN(quantity) || quantity <= 0) {
-                            entry.rawMaterialMessage = 'ILOSC_ROZLICZENIOWA is missing or invalid.';
+                        entry.rawMaterialMessage = 'Brak wartości pola ILOSC_ROZLICZENIOWA lub wartość jest nieprawidłowa.';
                             applyDone++;
                             updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                             return null;
@@ -4487,7 +4582,7 @@
                             return prepareRawMaterialTarget(entry, addMissing);
                         }).then(function(targetContext) {
                             if(!targetContext) {
-                                entry.rawMaterialMessage = entry.rawMaterialPreparationError || 'No operation could be prepared for this MBOM.';
+                                entry.rawMaterialMessage = entry.rawMaterialPreparationError || 'Nie udało się przygotować operacji dla tego mBOM.';
                                 console.warn('MBOM custom: cannot find MBOM insertion target', {
                                     material : material,
                                     mbomLink  : getPartItemLink(entry.part)
@@ -4542,7 +4637,7 @@
                                     if(elemExisting.length > 0 && setRawMaterialQuantity(elemHeader, link, quantity)) {
                                         totalUpdated++;
                                         entry.rawMaterialOutcome = 'updated';
-                                        entry.rawMaterialMessage = 'Raw material already present; quantity updated.';
+                                        entry.rawMaterialMessage = 'Surowiec już istnieje; ilość została zaktualizowana.';
                                         console.log('MBOM custom: raw material already exists, quantity set to resolved value', {
                                             material : material,
                                             link     : link,
@@ -4550,7 +4645,7 @@
                                             quantity : quantity
                                         });
                                     } else {
-                                        entry.rawMaterialMessage = 'Raw material already present, but its quantity could not be updated.';
+                                        entry.rawMaterialMessage = 'Surowiec już istnieje, ale nie udało się zaktualizować jego ilości.';
                                         console.warn('MBOM custom: raw material exists but DOM row could not be updated', {
                                             material : material,
                                             link     : link,
@@ -4584,18 +4679,18 @@
                                     });
                                 }).then(function(elemInserted) {
                                     if(!elemInserted || elemInserted.length === 0) {
-                                        throw new Error('Raw material item could not be inserted into the MBOM tree.');
+                                        throw new Error('Nie udało się wstawić surowca do struktury mBOM.');
                                     }
 
                                     existingState.links.add(normalizedLink);
                                     existingState.children.set(normalizedLink, { link : link, quantity : quantity });
                                     totalAdded++;
                                     entry.rawMaterialOutcome = 'added';
-                                    entry.rawMaterialMessage = 'Raw material added.';
+                                    entry.rawMaterialMessage = 'Surowiec został dodany.';
 
                                     return waitForDirectChildItem(elemHeader, link).then(function(elemInserted) {
                                         if(elemInserted.length === 0) {
-                                            entry.rawMaterialWarnings.push('Inserted row was not found; verify its quantity before saving.');
+                                            entry.rawMaterialWarnings.push('Nie znaleziono wstawionego wiersza; sprawdź ilość przed zapisaniem.');
                                             console.warn('MBOM custom: inserted raw material row was not found in DOM after insert', {
                                                 material : material,
                                                 link     : link,
@@ -4605,7 +4700,7 @@
                                         }
 
                                         if(!setRawMaterialQuantity(elemHeader, link, quantity)) {
-                                            entry.rawMaterialWarnings.push('The inserted quantity could not be set; verify it before saving.');
+                                            entry.rawMaterialWarnings.push('Nie udało się ustawić ilości; sprawdź ją przed zapisaniem.');
                                             console.warn('MBOM custom: inserted raw material quantity could not be set', {
                                                 material : material,
                                                 link     : link,
@@ -4810,11 +4905,11 @@
 
         let candidates = getMissingLeafLinkedMBOMs();
         if(candidates.length === 0) {
-            showErrorMessage('Add leaf MBOMs', 'No missing linked MBOM was found on an EBOM item without children.');
+            showErrorMessage('Dodawanie mBOM-ów liści', 'Nie znaleziono brakującego połączonego mBOM dla elementu eBOM bez elementów podrzędnych.');
             return;
         }
 
-        elemButton.addClass('disabled').text('Adding MBOMs...');
+        elemButton.addClass('disabled').text('Dodawanie mBOM-ów…');
         $('#overlay').show();
         try {
             let materialParts = [];
@@ -4826,16 +4921,16 @@
             setTotalQuantities();
             setStatusBar();
 
-            elemButton.text('Adding raw materials...');
+            elemButton.text('Dodawanie surowców…');
             initRawMaterialsDialog(0, 0);
             setRawMaterialsDialogPendingState();
             let mbomMaterials = await resolveMBOMMaterials(materialParts);
             await addRawMaterialsToMBOM(mbomMaterials);
         } catch(error) {
             console.warn('MBOM custom: adding leaf MBOMs and raw materials failed', error);
-            showErrorMessage('Add leaf MBOMs', String(error && error.message ? error.message : error));
+            showErrorMessage('Dodawanie mBOM-ów liści', String(error && error.message ? error.message : error));
         } finally {
-            elemButton.removeClass('disabled').text('Add leaf MBOMs + Materials');
+            elemButton.removeClass('disabled').text('Dodaj mBOM-y liści i surowce');
             $('#overlay').hide();
         }
     }
@@ -4845,8 +4940,8 @@
         $('<div></div>')
             .attr('id', 'add-leaf-mboms-and-materials')
             .addClass('button')
-            .attr('title', 'Add missing linked MBOMs for leaf EBOM items, then add their raw materials under Ciecie')
-            .text('Add leaf MBOMs + Materials')
+            .attr('title', 'Dodaj brakujące połączone mBOM-y dla elementów liści eBOM, a następnie dodaj ich surowce w operacji Cięcie')
+            .text('Dodaj mBOM-y liści i surowce')
             .on('click', addLeafMBOMsAndRawMaterials)
             .insertAfter('#add-all');
     }
@@ -7311,8 +7406,8 @@
         let button = $('<div></div>')
             .attr('id', 'add-raw-materials')
             .addClass('button default')
-            .attr('title', 'Add raw materials found by MBOM MATERIAL values')
-            .html('Dodaj Surowce')
+            .attr('title', 'Dodaj surowce znalezione na podstawie wartości pola MATERIAL w mBOM')
+            .html('Dodaj surowce')
             .click(addRawMaterialsFromMBOM);
 
         if($('#header-toolbar').length) {
@@ -8197,7 +8292,7 @@
 
                 if(isProcess == 'true') {
                     if(knownLeaf) {
-                        throw new Error('Raw material unexpectedly resolved to a process item.');
+                        throw new Error('Surowiec został nieoczekiwanie rozpoznany jako element procesu.');
                     }
 
                     mBOM = responses[1].data;
@@ -9254,7 +9349,7 @@
             try {
                 hasBom = await getSourceEBOMHasChildren(ebomItemDetails);
             } catch(error) {
-                showErrorMessage('Create MBOM', String(error.message || error));
+                showErrorMessage('Tworzenie mBOM', String(error.message || error));
                 return;
             }
 

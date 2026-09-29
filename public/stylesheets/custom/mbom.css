@@ -218,6 +218,68 @@ body.details-on.no-viewer #tabs {
     border-left-color: var(--color-status-yellow);
 }
 
+#dialog-raw-materials .step {
+    gap: 12px;
+}
+
+#dialog-raw-materials .step-label {
+    flex: 0 0 210px;
+    width: auto;
+}
+
+#dialog-raw-materials .step-progress {
+    flex: 1 1 auto;
+    min-width: 120px;
+    width: auto;
+}
+
+#dialog-raw-materials .step-counter {
+    flex: 0 0 190px;
+    overflow: visible;
+    padding-left: 0;
+    text-overflow: clip;
+    width: auto;
+}
+
+#dialog-raw-materials .raw-material-creation-list {
+    margin: 10px 0 14px;
+    padding-left: 22px;
+    white-space: normal;
+}
+
+#dialog-raw-materials .raw-material-confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+    white-space: normal;
+}
+
+#dialog-raw-materials .raw-material-confirm-actions > .button {
+    box-sizing: border-box;
+    height: 34px;
+    line-height: 32px;
+    margin: 0;
+    min-width: 150px;
+    padding: 0 16px;
+    text-align: center;
+}
+
+@media only screen and (max-width: 720px) {
+    #dialog-raw-materials .step {
+        flex-wrap: wrap;
+        height: auto;
+    }
+
+    #dialog-raw-materials .step-label {
+        flex-basis: 100%;
+    }
+
+    #dialog-raw-materials .step-counter {
+        flex-basis: 150px;
+    }
+}
+
 #ebom .linked-mbom-marker.error {
     color: var(--color-gray-600);
 }

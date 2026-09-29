@@ -116,6 +116,7 @@ exports.applications = {
                 { ebom : 'LENGTH'     , mbom : 'LENGTH'      },
                 { ebom : 'WIDTH'      , mbom : 'WIDTH'       },
                 { ebom : 'HEIGHT'     , mbom : 'HEIGHT'      },
+                { ebom : 'GRUPA_PRODUKTOWA_SUROWCOW'     , mbom : 'GRUPA_PRODUKTOWA_SUROWCOW'      },
                 { ebom : 'SREDNICA'   , mbom : 'SREDNICA'    }
             ]
         }
