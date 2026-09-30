@@ -646,6 +646,9 @@ exports.applications = {
                 lastMBOMUser : 'LAST_MBOM_USER',
                 erpVersionId : 'ID_WERSJI',
                 erpPartIndex : 'INDEKS_CZESCI',
+                erpHash      : 'ERP_HASH',
+                erpSyncDate  : 'ERP_SYNC_DATE',
+                erpSyncStatus: 'ERP_SYNC_STATUS',
             },
             bomFieldIDs : {
                 makeOrBuy  : 'BOM_MAKE_OR_BUY',

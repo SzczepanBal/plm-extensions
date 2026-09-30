@@ -1694,9 +1694,7 @@ function buildERPSyncPayload(details, erpCallName) {
     let partNumber = getERPFieldValue(sections, 'NUMBER');
     let description = getERPFieldValue(sections, 'OPIS');
     let defroName = getERPFieldValue(sections, 'NAZWA_DEFRO');
-    let partName = [description, defroName].filter(function(value) {
-        return !isBlank(value);
-    }).join(' - ') || getERPFieldValue(sections, 'TITLE') || partNumber;
+    let partName = defroName || getERPFieldValue(sections, 'TITLE') || partNumber;
 
     for(let mapping of erpPropertyMappings) {
         addERPProperty(properties, sections, mapping[0], mapping[1]);
@@ -1704,7 +1702,7 @@ function buildERPSyncPayload(details, erpCallName) {
 
     payload = {
         indeks          : partNumber,
-        nazwa_czesci    : partName,
+        nazwa_czesci    : getERPFieldValue(sections, 'NAZWA_DEFRO'),
         id_grupy        : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
         jednostka_miary : getERPUnitOfMeasure(sections),
         wlasnosci       : properties
@@ -1718,29 +1716,34 @@ function buildERPSyncPayload(details, erpCallName) {
     return payload;
 
 }
-function isERPSynced(details) {
+function getERPSyncStatus(details) {
 
     let sections = (details && details.sections) ? details.sections : [];
-    let value = getSectionFieldValue(sections, 'WYSLANE_DO_ERP', '', null);
+    let value = getSectionFieldValue(sections, 'ERP_SYNC_STATUS', '', null);
 
-    if(value === true) return true;
-    if(value === false || value === null) return false;
-    if(typeof value === 'number') return value !== 0;
+    return isBlank(value) ? '' : String(value).trim().toUpperCase();
 
-    if(typeof value === 'string') {
-        let normalized = value.trim().toLowerCase();
-        return ['true', '1', 'yes', 'y'].includes(normalized);
-    }
+}
+function getERPProductCallName(syncStatus) {
 
-    if(typeof value === 'object' && value !== null) {
-        if(typeof value.value === 'boolean') return value.value;
-        if(typeof value.value === 'string') {
-            let normalized = value.value.trim().toLowerCase();
-            return ['true', '1', 'yes', 'y'].includes(normalized);
-        }
-    }
+    if(syncStatus === 'NOT_SYNCED')  return 'add-product';
+    if(syncStatus === 'OUT_OF_DATE') return 'modify-product';
 
-    return false;
+    return '';
+
+}
+function requestERPHash(payload) {
+
+    return $.ajax({
+        url         : '/plm/custom-erp/hash',
+        method      : 'POST',
+        contentType : 'application/json',
+        data        : JSON.stringify({ type : 'product', product : payload })
+    }).then(function(response) {
+        let hash = response && response.data ? response.data.hash : '';
+        if(isBlank(hash)) throw new Error('Serwer nie zwrócił skrótu danych ERP.');
+        return String(hash);
+    });
 
 }
 function addERPResponseDumpLink(response) {
@@ -1818,12 +1821,34 @@ function genUpdateRequests(responses) {
 
         } else if(run.actionId === 'sync-to-erp') {
 
-            let erpCallName = isERPSynced(response.data) ? 'modify-product' : 'add-product';
+            let erpSyncStatus = getERPSyncStatus(response.data);
+
+            if(erpSyncStatus === 'UP_TO_DATE') {
+                requests.push(Promise.resolve({
+                    params        : params,
+                    erpSkipped    : true,
+                    erpSyncStatus : erpSyncStatus
+                }));
+                continue;
+            }
+
+            let erpCallName = getERPProductCallName(erpSyncStatus);
+
+            if(isBlank(erpCallName)) {
+                let displayedStatus = isBlank(erpSyncStatus) ? '(brak wartości)' : erpSyncStatus;
+                addLogEntry('Pominięto synchronizację ERP dla ' + params.descriptor + ', ponieważ ERP_SYNC_STATUS ma nieobsługiwaną wartość: ' + displayedStatus + '.', 'error');
+                run.errors.push({
+                    link       : params.link,
+                    descriptor : params.descriptor
+                });
+                continue;
+            }
+
             let payload = buildERPSyncPayload(response.data, erpCallName);
             let missingFields = [];
 
             if(isBlank(payload.indeks))       missingFields.push('NUMBER -> indeks');
-            if(isBlank(payload.nazwa_czesci)) missingFields.push('OPIS + NAZWA_DEFRO/TITLE/NUMBER -> nazwa_czesci');
+            if(isBlank(payload.nazwa_czesci)) missingFields.push('NAZWA_DEFRO/TITLE/NUMBER -> nazwa_czesci');
             if(isBlank(payload.id_grupy))     missingFields.push('GRUPA_PRODUKTOWA -> id_grupy');
 
             if(missingFields.length > 0) {
@@ -1848,19 +1873,20 @@ function genUpdateRequests(responses) {
 
             let request = null;
 
-            if(options.testRun) {
-                request = $.post('/plm/custom-erp/export-request/' + erpCallName, payload, null, 'json');
-            } else {
-                request = $.post('/plm/custom-erp/' + erpCallName, payload, null, 'json');
-            }
+            requests.push(requestERPHash(payload).then(function(erpHash) {
+                if(options.testRun) {
+                    request = $.post('/plm/custom-erp/export-request/' + erpCallName, payload, null, 'json');
+                } else {
+                    request = $.post('/plm/custom-erp/' + erpCallName, payload, null, 'json');
+                }
 
-            requests.push(
-                request.then(function(erpResponse) {
+                return request.then(function(erpResponse) {
                     erpResponse.params = params;
                     erpResponse.erpCallName = erpCallName;
+                    erpResponse.erpHash = erpHash;
                     return erpResponse;
-                })
-            );
+                });
+            }));
                 
         } else if(run.actionId === 'delete-attachments') {
 
@@ -1974,12 +2000,21 @@ function genCompletionRequests(limit, responses) {
             run.success++;;
 
             if(run.actionId === 'sync-to-erp') {
-                let erpActionLabel = (erpResponse && erpResponse.erpCallName) ? erpResponse.erpCallName : 'ERP';
-                let message = options.testRun
-                    ? 'ERP test-run JSON exported for ' + erpActionLabel + ' on <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>'
-                    : 'ERP ' + erpActionLabel + ' succeeded for <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>';
-                addLogEntry(message, 'success');
-                if(erpResponse) addERPDumpLinks(erpResponse);
+                if(erpResponse && erpResponse.erpSkipped) {
+                    addLogEntry('Pominięto synchronizację ERP dla <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>, ponieważ ERP_SYNC_STATUS = UP_TO_DATE.', 'notice');
+                } else {
+                    let erpActionLabel = (erpResponse && erpResponse.erpCallName) ? erpResponse.erpCallName : 'ERP';
+                    let message = options.testRun
+                        ? 'ERP test-run JSON exported for ' + erpActionLabel + ' on <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>'
+                        : 'ERP ' + erpActionLabel + ' succeeded for <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>';
+                    addLogEntry(message, 'success');
+                    if(erpResponse) addERPDumpLinks(erpResponse);
+                    if(options.testRun && erpResponse && !isBlank(erpResponse.erpHash)) {
+                        addLogEntry('Wyliczony ERP_HASH: ' + erpResponse.erpHash, 'indent');
+                        addLogEntry('Symulacja onEdit: ERP_SYNC_STATUS = UP_TO_DATE, ERP_SYNC_DATE = bieżąca data i czas.', 'indent');
+                        addLogEntry('Tryb testowy nie zmienił żadnych pól w PLM.', 'indent');
+                    }
+                }
             }
 
             let params = {
@@ -1996,11 +2031,12 @@ function genCompletionRequests(limit, responses) {
             if(options.saveText    !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveText   , $('#save-text-value').val() );
             if(options.saveClear   !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveClear  , null    );
             if(run.actionId === 'sync-to-erp' && !options.testRun) {
-                if(erpResponse && Number(erpResponse.status) === 200) {
-                    addFieldToPayload(params.sections, wsConfig.sections, null, 'WYSLANE_DO_ERP', 'true');
-                    addFieldToPayload(params.sections, wsConfig.sections, null, 'INDEKS_CZESCI', getERPResponsePartIndex(erpResponse));
-                } else if(erpResponse) {
-                    addLogEntry('Skipping update of WYSLANE_DO_ERP for <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a> because ERP returned status ' + erpResponse.status, 'notice');
+                if(erpResponse && !erpResponse.erpSkipped && Number(erpResponse.status) === 200) {
+                    let simulated = !!(erpResponse.data && erpResponse.data.mode === 'simulation');
+                    if(!simulated) addFieldToPayload(params.sections, wsConfig.sections, null, 'INDEKS_CZESCI', getERPResponsePartIndex(erpResponse));
+                    addFieldToPayload(params.sections, wsConfig.sections, null, 'ERP_HASH', 'pending:' + erpResponse.erpHash);
+                } else if(erpResponse && !erpResponse.erpSkipped) {
+                    addLogEntry('Pominięto aktualizację ERP_HASH dla <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>, ponieważ ERP zwrócił status ' + erpResponse.status, 'notice');
                 }
             }
 

@@ -6,6 +6,33 @@ const vm = require('vm');
 const sourcePath = path.join(__dirname, '..', 'public', 'javascripts', 'custom', 'mbom.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
 
+(function testFusionManageERPHashOnEditScript() {
+    const scriptPath = path.join(__dirname, '..', 'docs', 'fusion-manage-erp-sync-on-edit.js');
+    const script = fs.readFileSync(scriptPath, 'utf8');
+    const synchronizedHash = 'v1:' + 'a'.repeat(64);
+
+    const syncContext = { item: { ERP_HASH: 'pending:' + synchronizedHash, ERP_SYNC_STATUS: 'OUT_OF_DATE' }, Date };
+    vm.runInNewContext(script, syncContext);
+    assert.strictEqual(syncContext.item.ERP_HASH, synchronizedHash);
+    assert.strictEqual(syncContext.item.ERP_SYNC_STATUS, 'UP_TO_DATE');
+    assert.ok(syncContext.item.ERP_SYNC_DATE instanceof Date);
+
+    const editContext = { item: { ERP_HASH: synchronizedHash, ERP_SYNC_STATUS: 'UP_TO_DATE' }, Date };
+    vm.runInNewContext(script, editContext);
+    assert.strictEqual(editContext.item.ERP_HASH, 'dirty:' + synchronizedHash);
+    assert.strictEqual(editContext.item.ERP_SYNC_STATUS, 'OUT_OF_DATE');
+
+    const newContext = { item: { ERP_HASH: '', ERP_SYNC_STATUS: '' }, Date };
+    vm.runInNewContext(script, newContext);
+    assert.strictEqual(newContext.item.ERP_HASH, 'dirty:new');
+    assert.strictEqual(newContext.item.ERP_SYNC_STATUS, 'NOT_SYNCED');
+
+    vm.runInNewContext(script, editContext);
+    assert.strictEqual(editContext.item.ERP_HASH, 'dirty:' + synchronizedHash,
+        'Repeated edits must not keep extending the dirty marker');
+    console.log('Fusion Manage ERP hash onEdit tests passed');
+})();
+
 function extractFunction(name) {
     const expression = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
     const match = expression.exec(source);
@@ -352,7 +379,10 @@ async function testRawMaterialCreation() {
         }
     };
     vm.createContext(rawContext);
-    ['normalizeComparisonValue', 'createRawMaterialItem', 'ensureRawMaterialSearchResult', 'getRawMaterialErrorMessage', 'resolveRawMaterialForBatch'].forEach(name => {
+    ['normalizeComparisonValue', 'getSearchItemLink', 'getSearchItemFieldValue', 'itemLooksLikeMatchingRawMaterial',
+        'getRawMaterialSearchProperty', 'isReleasedRawMaterialItem', 'getRawMaterialVersionOrder',
+        'chooseRawMaterialItem', 'createRawMaterialItem', 'ensureRawMaterialSearchResult',
+        'getRawMaterialErrorMessage', 'resolveRawMaterialForBatch'].forEach(name => {
         vm.runInContext(extractFunction(name), rawContext);
     });
     const missing = { material: 'Steel', items: [] };
@@ -361,7 +391,9 @@ async function testRawMaterialCreation() {
         rawContext.ensureRawMaterialSearchResult({ material: ' steel ', items: [] }, 'RAW-GROUP')
     ]);
     assert.strictEqual(posts.length, 1, 'Repeated materials must reuse one creation');
-    assert.strictEqual(results[0].items[0].__self__, '/api/v3/workspaces/57/items/123');
+    assert.strictEqual(results[0].items.length, 0, 'A newly created working version must not be inserted into mBOM');
+    assert.strictEqual(results[0].matchingItems[0].__self__, '/api/v3/workspaces/57/items/123');
+    assert.strictEqual(results[0].unreleasedOnly, true);
     assert.strictEqual(posts[0].wsId, 57);
     assert.deepStrictEqual(Object.fromEntries(posts[0].fields.map(field => [field.fieldId, field.value])), {
         ...expected, ...Object.fromEntries(dropdowns.map(fieldId => [fieldId, { link: '/options/' + fieldId }]))
@@ -369,6 +401,10 @@ async function testRawMaterialCreation() {
     assert.throws(() => rawContext.ensureRawMaterialSearchResult({ ...missing, error: true }), /nie powiodło się/);
     const existing = { material: 'Other', items: [{ title: 'Other' }] };
     assert.strictEqual(await rawContext.ensureRawMaterialSearchResult(existing), existing);
+    assert.strictEqual(posts.length, 1);
+    const unreleasedMatch = { material: 'Steel', items: [], unreleasedOnly: true };
+    assert.strictEqual(await rawContext.ensureRawMaterialSearchResult(unreleasedMatch, 'RAW-GROUP'), unreleasedMatch,
+        'An unreleased match must warn instead of creating a duplicate raw material');
     assert.strictEqual(posts.length, 1);
     const originalGet = rawContext.$.get;
     rawContext.config = { mbomRoot: { typeValue: '/lookups/TYPE/options/manufacturing' } };
@@ -396,15 +432,89 @@ async function testRawMaterialCreation() {
     assert.strictEqual(rawContext.rawMaterialCreationPromises['rejected material'], undefined);
     assert.strictEqual(rawContext.rawMaterialSearchPromises['rejected material'], undefined);
     rawContext.$.post = originalPost;
-    assert.strictEqual((await rawContext.resolveRawMaterialForBatch('Rejected material', true, 'RAW-GROUP')).items.length, 1,
-        'A failed material can be retried');
+    const retriedCreation = await rawContext.resolveRawMaterialForBatch('Rejected material', true, 'RAW-GROUP');
+    assert.strictEqual(retriedCreation.items.length, 0, 'A retried creation is still not released');
+    assert.strictEqual(retriedCreation.created, true, 'A failed material can be retried');
     rawContext.searchRawMaterialItems = () => Promise.reject({ responseJSON: { message: 'Search unavailable' } });
     const failedSearch = await rawContext.resolveRawMaterialForBatch('Search failure');
     assert.strictEqual(failedSearch.message, 'Search unavailable');
     assert.strictEqual(posts.length, 2, 'A failed search must not create an item');
+
+    const workingItem = {
+        title: 'Steel', workingVersion: true,
+        __self__: '/api/v3/workspaces/57/items/10/versions/3'
+    };
+    const releasedA = {
+        title: 'Steel', workingVersion: false, versionId: 1,
+        __self__: '/api/v3/workspaces/57/items/10/versions/1'
+    };
+    const releasedB = {
+        title: 'Steel', workingVersion: false, versionId: 2,
+        __self__: '/api/v3/workspaces/57/items/10/versions/2'
+    };
+    assert.strictEqual(rawContext.isReleasedRawMaterialItem(workingItem), false);
+    assert.strictEqual(rawContext.isReleasedRawMaterialItem(releasedA), true);
+    assert.strictEqual(rawContext.chooseRawMaterialItem('Steel', [workingItem, releasedA, releasedB]), releasedB,
+        'The latest released version must be selected while the working version is ignored');
+    assert.strictEqual(rawContext.chooseRawMaterialItem('Steel', [workingItem]), null,
+        'A matching item with only a working version must not be selected');
+    assert.strictEqual(rawContext.getSearchItemLink({
+        __self__: '/api/v3/workspaces/57/items/10/versions/2',
+        item: { link: '/api/v3/workspaces/57/items/10' }
+    }), '/api/v3/workspaces/57/items/10/versions/2', 'Prefer the revision-specific search result link');
+    assert.match(extractFunction('searchRawMaterialItems'), /revision\s*:\s*2/,
+        'Raw-material search must request all revisions');
     console.log('Raw material creation tests passed');
 }
 testRawMaterialCreation().catch(error => { console.error(error); process.exitCode = 1; });
+
+(function testRawMaterialVersionSpecificDOMMatching() {
+    function makeRow(link) {
+        return {
+            length: 1,
+            attr(name) {
+                if(name === 'data-link') return link;
+                return '';
+            }
+        };
+    }
+    const workingRow = makeRow('/api/v3/workspaces/57/items/10/versions/3');
+    const releasedRow = makeRow('/api/v3/workspaces/57/items/10/versions/2');
+    const rows = [workingRow, releasedRow];
+    const empty = { length: 0 };
+    const domContext = {
+        isBlank: context.isBlank,
+        $(value) { return typeof value === 'undefined' ? empty : value; }
+    };
+    const header = {
+        length: 1,
+        next() {
+            return {
+                children() {
+                    return {
+                        each(callback) {
+                            for(const row of rows) {
+                                if(callback.call(row) === false) break;
+                            }
+                        }
+                    };
+                }
+            };
+        }
+    };
+    vm.createContext(domContext);
+    ['normalizePLMLink', 'normalizePLMVersionLink', 'getDirectChildItemByLink'].forEach(name => {
+        vm.runInContext(extractFunction(name), domContext);
+    });
+
+    assert.strictEqual(domContext.getDirectChildItemByLink(
+        header, '/api/v3/workspaces/57/items/10/versions/2'
+    ), releasedRow, 'A released version link must select the released DOM row, not the working row');
+    assert.strictEqual(domContext.getDirectChildItemByLink(
+        header, '/api/v3/workspaces/57/items/10'
+    ), workingRow, 'An item-level link retains the existing item-level fallback');
+    console.log('Raw material version-specific DOM matching tests passed');
+})();
 
 async function testRawMaterialUnitWarning() {
     const warnings = [];
@@ -491,7 +601,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         Promise,
         isBlank: context.isBlank,
         getSectionFieldValue: context.getSectionFieldValue,
-        config: { workspaceMBOM: { fieldIDs: { erpVersionId: 'ID_WERSJI' } } },
+        config: { workspaceMBOM: { fieldIDs: { erpVersionId: 'ID_WERSJI', erpPartIndex: 'INDEKS_CZESCI' } } },
         getERPTechnologySectionValue(sections, candidateIds, fallbackValue) {
             for(const fieldId of candidateIds) {
                 if(Object.prototype.hasOwnProperty.call(sections, fieldId)) return String(sections[fieldId]);
@@ -508,22 +618,580 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
 
     const subMBOMElement = { length: 1 };
     assert.strictEqual(markerContext.isERPTechnologySynced({ sections: {} }), false);
-    assert.strictEqual(markerContext.isERPTechnologySynced({ sections: { ID_WERSJI: 4711 } }), true,
-        'ID_WERSJI marks an mBOM technology as already sent');
+    assert.strictEqual(markerContext.isERPTechnologySynced({
+        sections: [{ fields: [{ id: 'ID_WERSJI', value: 4711 }] }]
+    }), true, 'ID_WERSJI marks an mBOM technology as already created in ERP');
+    assert.strictEqual(markerContext.isERPTechnologySynced({
+        sections: [{ fields: [{ id: 'ID_WERSJI', value: 4711 }] }]
+    }), true, 'ID_WERSJI marks an mBOM technology as already created in ERP');
     assert.strictEqual(markerContext.isERPProductSynced({
-        sections: [{ fields: [{ id: 'WYSLANE_DO_ERP', value: true }] }]
-    }), true, 'WYSLANE_DO_ERP marks the linked eBOM product as already sent');
+        sections: [{ fields: [{ id: 'INDEKS_CZESCI', value: 'ERP-4711' }] }]
+    }), true, 'INDEKS_CZESCI marks a product as already created in ERP');
     assert.strictEqual(markerContext.needsERPSubMBOMProduct(subMBOMElement, {}, { partIndex: '' }), true,
         'A missing INDEKS_CZESCI requires add-product');
     assert.strictEqual(markerContext.needsERPSubMBOMProduct(subMBOMElement, {}, { partIndex: 'ERP-4711' }), false,
         'INDEKS_CZESCI proves that the ERP product already exists');
     assert.strictEqual(markerContext.buildERPAddProductName({ OPIS: 'Description', NAZWA_DEFRO: 'Defro name' }, 'Title', '100'),
-        'Description - Defro name');
+        'Defro name');
     assert.strictEqual(markerContext.buildERPAddProductName({ OPIS: '', NAZWA_DEFRO: 'Defro name' }, 'Title', '100'),
         'Defro name');
     assert.strictEqual(markerContext.buildERPAddProductName({}, 'Title', '100'), 'Title');
     console.log('ERP product and technology marker tests passed');
 })();
+
+(async function testERPSyncUsesSingleBOMViewRequest() {
+    let viewRequests = 0;
+    let bomRequests = 0;
+    const requiredDetails = {
+        NUMBER: '1000',
+        INDEKS_CZESCI: '1000',
+        ID_WERSJI: 1,
+        ERP_HASH: 'v1:abc',
+        ERP_SYNC_STATUS: 'UP_TO_DATE',
+        GRUPA_PRODUKTOWA: 'GROUP',
+        TYPE: 'Manufacturing',
+        PROCESS_CODE: null,
+        KOD_OPERACJI: null
+    };
+    function jquery() {
+        return { children() { return { first() { return {}; } }; } };
+    }
+    jquery.get = async (url, params) => {
+        if(url === '/plm/bom-view-by-name') {
+            viewRequests++;
+            assert.strictEqual(params.name, 'ERP Sync');
+            return { data: { id: 77, name: 'ERP Sync' } };
+        }
+        if(url === '/plm/bom') {
+            bomRequests++;
+            assert.strictEqual(params.viewId, 77);
+            assert.strictEqual(params.depth, 10);
+            assert.strictEqual(params.getBOMPartsList, true);
+            return { data: { bomPartsList: [{ level: 0, link: '/mbom', details: requiredDetails }] } };
+        }
+        throw new Error('Unexpected request: ' + url);
+    };
+    const syncViewContext = {
+        Promise,
+        Object,
+        Number,
+        String,
+        Array,
+        $: jquery,
+        links: { mbom: '/mbom' },
+        wsMBOM: { wsId: 274 },
+        config: { workspaceMBOM: { fieldIDs: {} } },
+        erpSyncBOMViewName: 'ERP Sync',
+        erpSyncBOMViewPromise: null,
+        erpTechnologyOperationCodeCandidates: ['KOD_OPERACJI'],
+        isBlank: context.isBlank,
+        normalizeERPBooleanText(value) {
+            return value === true || value === 1 || String(value || '').trim().toLowerCase() === 'true';
+        },
+        getMBOMSaveLink: () => '',
+        getCustomMBOMDepth: () => 10
+    };
+    vm.createContext(syncViewContext);
+    ['getERPSyncBOMValue', 'isERPSyncBOMManufacturing', 'getERPSyncBOMProductState',
+        'addERPSyncBOMHierarchy', 'validateERPSyncBOMColumns', 'getERPSyncBOMView', 'loadERPSyncBOMParts']
+        .forEach(name => vm.runInContext(extractFunction(name), syncViewContext));
+
+    const parts = await syncViewContext.loadERPSyncBOMParts();
+    assert.strictEqual(parts.length, 1);
+    assert.strictEqual(viewRequests, 1, 'Resolve the ERP Sync view once');
+    assert.strictEqual(bomRequests, 1, 'Load all ERP component data with one BOM request');
+
+    let state = syncViewContext.getERPSyncBOMProductState({
+        details: { TYPE: 'Manufacturing', INDEKS_CZESCI: 'ERP-100' }
+    });
+    assert.strictEqual(state.productExists, true,
+        'A Manufacturing mBOM with INDEKS_CZESCI already exists as an ERP product');
+    assert.strictEqual(state.updateMode, 'index');
+
+    state = syncViewContext.getERPSyncBOMProductState({
+        details: { TYPE: 'Manufacturing', INDEKS_CZESCI: '' }
+    });
+    assert.strictEqual(state.productExists, false,
+        'A Manufacturing mBOM without INDEKS_CZESCI still requires add-product');
+
+    state = syncViewContext.getERPSyncBOMProductState({
+        details: { TYPE: 'Purchased', INDEKS_CZESCI: 'ERP-200' }
+    });
+    assert.strictEqual(state.productExists, true,
+        'INDEKS_CZESCI is the product-existence marker for every component type');
+    assert.strictEqual(state.updateMode, 'product');
+
+    const collectionSource = extractFunction('collectERPTechnologyJobs');
+    assert.match(collectionSource, /loadERPSyncBOMParts/);
+    assert.doesNotMatch(collectionSource, /getERPTechnologyItemDetails|getERPTechnologyEBOMLink/,
+        'ERP collection must not load component details or follow eBOM links');
+    console.log('ERP Sync single BOM-view request tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testRawMaterialsUsesSingleBOMViewRequest() {
+    let viewRequests = 0;
+    let bomRequests = 0;
+    const manufacturingPart = {
+        level: 0,
+        link: '/mbom/manufacturing',
+        details: {
+            NUMBER: 'M-100',
+            TYPE: 'Manufacturing',
+            HAS_BOM: false,
+            MATERIAL: 'S355',
+            JEDNOSTKA_ROZLICZENIOWA: 'kg',
+            ILOSC_ROZLICZENIOWA: 2.5,
+            GRUPA_PRODUKTOWA_SUROWCOW: 'RAW'
+        }
+    };
+    const operationPart = {
+        level: 1,
+        link: '/operation/root',
+        details: { TYPE: 'Process' }
+    };
+    const existingRawMaterialPart = {
+        level: 2,
+        link: '/raw-material/root',
+        details: { TYPE: 'Surowiec' }
+    };
+    const nestedManufacturingPart = {
+        level: 2,
+        link: '/mbom/nested',
+        details: {
+            NUMBER: 'M-200', TYPE: 'Manufacturing', HAS_BOM: false, MATERIAL: 'S235',
+            JEDNOSTKA_ROZLICZENIOWA: 'kg', ILOSC_ROZLICZENIOWA: 1,
+            GRUPA_PRODUKTOWA_SUROWCOW: 'RAW'
+        }
+    };
+    const nestedOperationPart = {
+        level: 3,
+        link: '/operation/nested',
+        details: { TYPE: 'Process' }
+    };
+    const nestedRawMaterialPart = {
+        level: 4,
+        link: '/raw-material/nested',
+        details: { TYPE: 'Surowiec' }
+    };
+    function jquery() {
+        return { children() { return { first() { return {}; } }; } };
+    }
+    jquery.get = async (url, params) => {
+        if(url === '/plm/bom-view-by-name') {
+            viewRequests++;
+            assert.strictEqual(params.name, 'Raw Materials');
+            return { data: { id: 88, name: 'Raw Materials' } };
+        }
+        if(url === '/plm/bom') {
+            bomRequests++;
+            assert.strictEqual(params.viewId, 88);
+            assert.strictEqual(params.depth, 10);
+            assert.strictEqual(params.getBOMPartsList, true);
+            return { data: { bomPartsList: [
+                manufacturingPart,
+                operationPart,
+                existingRawMaterialPart,
+                nestedManufacturingPart,
+                nestedOperationPart,
+                nestedRawMaterialPart
+            ] } };
+        }
+        throw new Error('Unexpected request: ' + url);
+    };
+    const rawViewContext = {
+        Promise, Object, String, Array, Set, Map, Number, console,
+        $: jquery,
+        links: { mbom: '/mbom' },
+        wsMBOM: { wsId: 274 },
+        config: { workspaceMBOM: { fieldIDs: {} } },
+        rawMaterialsBOMViewName: 'Raw Materials',
+        rawMaterialsBOMViewPromise: null,
+        rawMaterialAccountingUnitFieldId: 'JEDNOSTKA_ROZLICZENIOWA',
+        rawMaterialAccountingQuantityFieldId: 'ILOSC_ROZLICZENIOWA',
+        rawMaterialProductGroupFieldId: 'GRUPA_PRODUKTOWA_SUROWCOW',
+        rawMaterialTypeName: 'Surowiec',
+        isBlank: context.isBlank,
+        normalizeComparisonValue: value => String(value || '').trim().toLowerCase(),
+        getMBOMSaveLink: () => '',
+        getCustomMBOMDepth: () => 10,
+        getMBOMAccountingFieldValue: (part, fieldId) => part.details[fieldId],
+        getPartItemLink: part => part.link,
+        getPLMItemLevelLink: value => value,
+        normalizePLMLink: value => value,
+        getMaterialValue: part => part.details.MATERIAL || '',
+        getMBOMAccountingUnit: part => part.details.JEDNOSTKA_ROZLICZENIOWA || '',
+        getMBOMAccountingQuantity: part => Number(part.details.ILOSC_ROZLICZENIOWA),
+        isMBOMHasBOM: value => value === true,
+        filterRawMaterialEntriesWithMaterial: entries => entries.filter(entry => entry.material)
+    };
+    vm.createContext(rawViewContext);
+    ['normalizePLMVersionLink', 'hasRawMaterialsBOMColumn', 'validateRawMaterialsBOMColumns', 'getRawMaterialsBOMView',
+        'loadRawMaterialsBOMParts', 'isRawMaterialsBOMSourcePart', 'getRawMaterialAssignmentsByMBOM',
+        'resolveRawMaterialsBOMViewParts']
+        .forEach(name => vm.runInContext(extractFunction(name), rawViewContext));
+
+    const parts = await rawViewContext.loadRawMaterialsBOMParts();
+    const materials = rawViewContext.resolveRawMaterialsBOMViewParts(parts);
+    assert.strictEqual(viewRequests, 1, 'Resolve the Raw Materials view once');
+    assert.strictEqual(bomRequests, 1, 'Load all raw-material source data with one BOM request');
+    assert.strictEqual(materials.length, 2);
+    assert.strictEqual(materials[0].material, 'S355');
+    assert.strictEqual(materials[0].accountingQuantity, 2.5);
+    assert.strictEqual(materials[0].productGroup, 'RAW');
+    assert.deepStrictEqual(Array.from(materials[0].assignedRawMaterialLinks), ['/raw-material/root'],
+        'The parent mBOM knows about its already assigned raw material');
+    assert.deepStrictEqual(Array.from(materials[1].assignedRawMaterialLinks), ['/raw-material/nested'],
+        'Nested raw materials stay assigned to the nested Manufacturing mBOM');
+    assert.strictEqual(materials[0].assignedRawMaterialLinks.has('/raw-material/nested'), false,
+        'A nested mBOM raw material must not be mistaken for a parent assignment');
+
+    rawViewContext.rawMaterialApplyModes = {
+        addMissing: 'add-missing', updateQuantity: 'update-quantity', overwrite: 'overwrite'
+    };
+    vm.runInContext(extractFunction('shouldPreserveAssignedRawMaterial'), rawViewContext);
+    assert.strictEqual(rawViewContext.shouldPreserveAssignedRawMaterial(
+        materials[0], '/raw-material/root', 'add-missing'
+    ), true, 'Add-missing must preserve an existing raw-material assignment');
+    assert.strictEqual(rawViewContext.shouldPreserveAssignedRawMaterial(
+        materials[0], '/raw-material/root', 'overwrite'
+    ), false, 'Overwrite mode may update an existing raw-material assignment');
+
+    const startSource = extractFunction('startRawMaterialsFromMBOM');
+    assert.match(startSource, /loadRawMaterialsBOMParts/);
+    assert.doesNotMatch(startSource, /resolveMBOMMaterials|\/plm\/details|ensureRawMaterialTreeExpanded/,
+        'The main Add Raw Materials flow must not load details or expand every mBOM separately');
+    console.log('Raw Materials single BOM-view request tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testERPProductComponentsCoverAllLevels() {
+    const makeItem = (link, classes, level) => ({
+        length: 1,
+        link,
+        level,
+        hasClass(name) { return classes.includes(name); }
+    });
+    const root = makeItem('/root', ['root'], 0);
+    const operation = makeItem('/operation', ['process'], 1);
+    const directComponent = makeItem('/component-a', [], 2);
+    const nestedComponent = makeItem('/component-b', [], 8);
+    const duplicateNestedComponent = makeItem('/component-b', [], 10);
+    const renderedItems = [root, operation, directComponent, nestedComponent, duplicateNestedComponent];
+    const productContext = {
+        Promise,
+        Set,
+        console,
+        isBlank: context.isBlank,
+        normalizePLMLink: value => value || '',
+        getERPTechnologyElementLink: item => item.link,
+        getElementLevel: item => item.level,
+        getMBOMPartFromElement: () => ({}),
+        getERPTechnologyItemDetails: async link => ({ link, synced: link === '/component-synced' }),
+        getERPTechnologyEBOMLink: () => '',
+        isERPProductSynced: details => details.synced === true,
+        isAssemblyIndexNode: () => false,
+        buildERPAssemblyIndexProductPayload: () => ({ assembly: true }),
+        buildERPSubMBOMProductPayload: (item, part, details) => ({ indeks: details.link }),
+        getERPTechnologyDescriptor: item => item.link,
+        $: value => {
+            if(value === '#mbom-tree') {
+                return { find() { return { each(callback) { renderedItems.forEach(item => callback.call(item)); } }; } };
+            }
+            return value;
+        }
+    };
+    vm.createContext(productContext);
+    ['getERPProductComponentItems', 'buildERPComponentProductJob'].forEach(name => {
+        vm.runInContext(extractFunction(name), productContext);
+    });
+
+    const components = productContext.getERPProductComponentItems();
+    assert.deepStrictEqual(Array.from(components, item => item.link), ['/component-a', '/component-b'],
+        'ERP product discovery must include nested components at every level, exclude roots/operations, and deduplicate items');
+
+    const productJob = await productContext.buildERPComponentProductJob(directComponent);
+    assert.strictEqual(productJob.jobType, 'product');
+    assert.strictEqual(productJob.productRequired, true);
+    assert.strictEqual(productJob.productPayload.indeks, '/component-a');
+
+    const syncedComponent = makeItem('/component-synced', [], 12);
+    assert.strictEqual(await productContext.buildERPComponentProductJob(syncedComponent), null,
+        'WYSLANE_DO_ERP=true must not enqueue Add Product');
+    console.log('All-level ERP component product discovery tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testERPProductAffectedItems() {
+    let changeOrderRequests = 0;
+    const affectedContext = {
+        Promise,
+        isBlank: context.isBlank,
+        syncMBOMChangeOrderAfterSave: async () => {
+            changeOrderRequests++;
+            return { release: '/change-orders/1', add: { added: 4 } };
+        }
+    };
+    vm.createContext(affectedContext);
+    vm.runInContext(extractFunction('addERPProductJobsToAffectedItems'), affectedContext);
+
+    const jobs = [
+        { link: '/components/1', productSourceLink: '/products/1' },
+        { link: '/components/2', productSourceLink: '/products/2' },
+        { link: '/components/3', productSourceLink: '/products/1' }
+    ];
+    const affectedResult = await affectedContext.addERPProductJobsToAffectedItems(jobs, false);
+    assert.strictEqual(changeOrderRequests, 1);
+    assert.strictEqual(affectedResult.added, 4,
+        'ERP synchronization reuses the existing change-order synchronization result');
+
+    await affectedContext.addERPProductJobsToAffectedItems(jobs, true);
+    assert.strictEqual(changeOrderRequests, 1, 'Test run must not modify affected items');
+    console.log('ERP product affected-item tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testChangeOrderAffectedItemFiltering() {
+    const parts = [
+        { link: '/root', details: { TYPE: 'Manufacturing' } },
+        { link: '/operation', details: { TYPE: 'Process' } },
+        { link: '/sub-mbom', details: { TYPE: 'Manufacturing' } },
+        { link: '/raw-material', details: { TYPE: 'Surowiec' } },
+        { link: '/purchased', details: { TYPE: 'Purchased' } },
+        { link: '/raw-material', details: { TYPE: 'Surowiec' } }
+    ];
+    const rootItem = { length: 1 };
+    const filterContext = {
+        Promise,
+        Array,
+        config: { workspaceMBOM: { fieldIDs: { type: 'TYPE' } } },
+        links: { mbom: '/root' },
+        rawMaterialTypeName: 'Surowiec',
+        rawMaterialsBOMViewName: 'Raw Materials',
+        isBlank: context.isBlank,
+        normalizeComparisonValue: value => String(value || '').trim().toLowerCase(),
+        normalizePLMLink: value => value,
+        getPLMItemLevelLink: value => value,
+        getPartItemLink: part => part.link,
+        getMBOMSaveLink: () => '/root',
+        getMBOMAccountingFieldValue: (part, fieldId) => part.details[fieldId],
+        getRawMaterialsBOMView: async () => ({ id: 91 }),
+        getCustomMBOMDepth: () => 25,
+        $(selector) {
+            if(selector === '#mbom-tree') return { children: () => ({ first: () => rootItem }) };
+            throw new Error('Unexpected selector: ' + selector);
+        }
+    };
+    filterContext.$.get = async (url, params) => {
+        assert.strictEqual(url, '/plm/bom');
+        assert.strictEqual(params.viewId, 91);
+        return { data: { bomPartsList: parts } };
+    };
+    vm.createContext(filterContext);
+    vm.runInContext(extractFunction('loadMBOMChangeOrderAffectedItemLinks'), filterContext);
+
+    const links = await filterContext.loadMBOMChangeOrderAffectedItemLinks();
+    assert.deepStrictEqual(Array.from(links), ['/root', '/sub-mbom', '/raw-material'],
+        'Only Manufacturing and Surowiec items are included, without duplicates');
+    console.log('Change-order affected-item filtering tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testSaveDoesNotCreateChangeOrder() {
+    let affectedCalls = 0;
+    let existingLink = '';
+    const saveContext = {
+        Promise,
+        console,
+        isBlank: context.isBlank,
+        getMBOMChangeOrderWorkspaceId: () => 77,
+        getSavedMBOMItems: () => [{ link: '/root', itemNumber: 'M-1' }],
+        findExistingMBOMChangeOrder: async () => existingLink,
+        loadMBOMChangeOrderAffectedItemLinks: async () => ['/root', '/sub', '/raw'],
+        addMissingMBOMAffectedItems: async (release, links) => {
+            affectedCalls++;
+            assert.strictEqual(release, '/change-orders/1');
+            assert.deepStrictEqual(Array.from(links), ['/root', '/sub', '/raw']);
+            return { added: 3 };
+        }
+    };
+    vm.createContext(saveContext);
+    vm.runInContext(extractFunction('syncMBOMChangeOrderAfterSave'), saveContext);
+
+    let result = await saveContext.syncMBOMChangeOrderAfterSave();
+    assert.strictEqual(result.skipped, true);
+    assert.strictEqual(affectedCalls, 0, 'Saving without an existing change order performs no mutation');
+
+    existingLink = '/change-orders/1';
+    result = await saveContext.syncMBOMChangeOrderAfterSave();
+    assert.strictEqual(result.skipped, false);
+    assert.strictEqual(affectedCalls, 1, 'Saving with an existing change order adds affected items');
+    console.log('Save change-order isolation tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+
+(async function testReleasedChangeOrderERPWorkflow() {
+    const transitions = [];
+    const progress = [];
+    const workflowContext = {
+        Promise,
+        Array,
+        waitForMBOMChangeOrderReleased: async () => ({ id: '310', title: 'Released' }),
+        sendReleasedMBOMTechnologiesToERP: async () => ({
+            jobs: [{ descriptor: 'Child' }, { descriptor: 'Root' }],
+            results: [{ descriptor: 'Child', success: true }, { descriptor: 'Root', success: true }]
+        }),
+        performMBOMChangeOrderTransition: async (link, id, comment) => {
+            transitions.push({ link, id, comment });
+            return true;
+        }
+    };
+    vm.createContext(workflowContext);
+    ['getMBOMERPWorkflowErrorComment', 'continueMBOMReleaseWithERP']
+        .forEach(name => vm.runInContext(extractFunction(name), workflowContext));
+
+    const result = await workflowContext.continueMBOMReleaseWithERP('/change-orders/1', (...args) => progress.push(args));
+    assert.deepStrictEqual(transitions.map(entry => entry.id), ['569', '567']);
+    assert.strictEqual(result.jobs.length, 2);
+    assert.ok(progress.some(entry => entry[0] === 'wait' && entry[1] === 'done'));
+    assert.ok(progress.some(entry => entry[0] === 'erp' && entry[1] === 'done'));
+
+    transitions.length = 0;
+    workflowContext.sendReleasedMBOMTechnologiesToERP = async () => {
+        const error = new Error('Impuls unavailable');
+        error.erpResults = [{ descriptor: 'Child', success: false, error: 'HTTP 500' }];
+        throw error;
+    };
+    await assert.rejects(
+        workflowContext.continueMBOMReleaseWithERP('/change-orders/1'),
+        /Impuls unavailable/
+    );
+    assert.deepStrictEqual(transitions.map(entry => entry.id), ['569', '566']);
+    assert.match(transitions[1].comment, /Child: HTTP 500/);
+    console.log('Released Change Order ERP workflow tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testAffectedItemLifecycleTransitionAssignment() {
+    const updates = [];
+    let catalogRequests = 0;
+    const affectedItems = [
+        {
+            __self__: '/api/v3/workspaces/77/items/1/views/11/affected-items/1',
+            item: { link: '/api/v3/workspaces/57/items/101', title: 'Working item', currentState: { title: 'Working' } },
+            linkedFields: [{ value: 'keep' }]
+        },
+        {
+            __self__: '/api/v3/workspaces/77/items/1/views/11/affected-items/2',
+            item: { link: '/api/v3/workspaces/57/items/102', title: 'Production item', lifecycle: { title: 'Production' } },
+            linkedFields: []
+        },
+        {
+            __self__: '/api/v3/workspaces/77/items/1/views/11/affected-items/3',
+            item: { link: '/api/v3/workspaces/57/items/103', title: 'Unreleased item', lifecycleState: { title: 'Unreleased' } },
+            targetTransition: { title: 'To Production', link: '/api/v3/workspaces/57/transitions/10' },
+            linkedFields: []
+        }
+    ];
+    const lifecycleContext = {
+        Promise,
+        Array,
+        isBlank: context.isBlank,
+        normalizeComparisonValue: value => String(value || '').trim().toLowerCase(),
+        normalizePLMLink: value => String(value || ''),
+        getPLMItemLevelLink: value => value,
+        getRawMaterialErrorMessage: () => 'Błąd PLM',
+        mapPLMRequestsWithConcurrency: async (items, limit, callback) => Promise.all(items.map(callback))
+    };
+    lifecycleContext.$ = function() {};
+    lifecycleContext.$.get = async (url) => {
+        if(url === '/plm/manages') return { data: affectedItems };
+        if(url === '/plm/workspace-lifecycle-transitions') {
+            catalogRequests++;
+            return { data: [
+                { name: 'To Production', fromState: { title: 'Working' }, __self__: '/api/v3/workspaces/57/transitions/10' },
+                { name: 'Production Revision', fromState: { title: 'Production' }, __self__: '/api/v3/workspaces/57/transitions/20' }
+            ] };
+        }
+        throw new Error('Unexpected GET: ' + url);
+    };
+    lifecycleContext.$.post = async (url, payload) => {
+        assert.strictEqual(url, '/plm/update-managed-item');
+        updates.push(payload);
+        return { data: true };
+    };
+    vm.createContext(lifecycleContext);
+    [
+        'getMBOMLifecycleTitle',
+        'getMBOMAffectedItemLifecycleState',
+        'getMBOMTargetLifecycleTransitionName',
+        'loadMBOMAffectedItemLifecycleState',
+        'loadMBOMWorkspaceLifecycleTransitions',
+        'setMBOMAffectedItemLifecycleTransitions'
+    ].forEach(name => vm.runInContext(extractFunction(name), lifecycleContext));
+
+    const result = await lifecycleContext.setMBOMAffectedItemLifecycleTransitions('/change-orders/1');
+    assert.strictEqual(catalogRequests, 1, 'Lifecycle transitions are loaded once per affected-item workspace');
+    assert.strictEqual(updates.length, 2, 'Items with an already correct target transition are skipped');
+    assert.strictEqual(updates[0].transition.endsWith('/10'), true, 'Working uses To Production');
+    assert.strictEqual(updates[1].transition.endsWith('/20'), true, 'Production uses Production Revision');
+    assert.deepStrictEqual(updates[0].fields, [{ value: 'keep' }], 'Existing linked fields are preserved');
+    assert.strictEqual(result.filter(entry => entry.updated).length, 2);
+    console.log('Affected-item lifecycle transition tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+(async function testExplicitChangeOrderCreationAndReleaseTransition() {
+    const posts = [];
+    let existingLink = '';
+    const transferCalls = [];
+    const lifecycleCalls = [];
+    const actionContext = {
+        Promise,
+        isBlank: context.isBlank,
+        getRawMaterialErrorMessage: () => 'Błąd PLM',
+        getMBOMChangeOrderWorkspaceId: () => 77,
+        getSavedMBOMItems: () => [{ link: '/root', itemNumber: 'M-1' }, { link: '/sub', itemNumber: 'M-2' }],
+        findExistingMBOMChangeOrder: async () => existingLink,
+        createMBOMChangeOrder: async () => '/change-orders/created',
+        addMBOMAffectedItems: async (release, links) => ({ release, added: links.length }),
+        moveMBOMsToReleaseInOrder: async (items, release, workspaceId) => {
+            transferCalls.push({ items, release, workspaceId });
+            return [];
+        },
+        loadMBOMChangeOrderAffectedItemLinks: async () => ['/root', '/sub', '/raw'],
+        addMissingMBOMAffectedItems: async (release, links) => ({ release, added: links.length }),
+        setMBOMAffectedItemLifecycleTransitions: async release => { lifecycleCalls.push(release); return []; },
+        $(selector) {
+            if(selector.indexOf('.pending') >= 0) return { length: 0 };
+            throw new Error('Unexpected selector: ' + selector);
+        }
+    };
+    actionContext.$.get = async (url) => {
+        assert.strictEqual(url, '/plm/transitions');
+        return { data: [{ __self__: '/api/v3/workspaces/77/items/1/transitions/1215' }] };
+    };
+    actionContext.$.post = async (url, payload) => {
+        posts.push({ url, payload });
+        return { data: true };
+    };
+    vm.createContext(actionContext);
+    ['performMBOMChangeOrderTransition', 'createMBOMChangeOrderFromEditor'].forEach(name => {
+        vm.runInContext(extractFunction(name), actionContext);
+    });
+
+    let result = await actionContext.createMBOMChangeOrderFromEditor(false);
+    assert.strictEqual(result.created, true);
+    assert.strictEqual(result.transitioned, false);
+    assert.deepStrictEqual(transferCalls[0].items, [{ link: '/sub', itemNumber: 'M-2' }]);
+    assert.strictEqual(transferCalls[0].release, '/change-orders/created');
+    assert.strictEqual(transferCalls[0].workspaceId, 77);
+    assert.strictEqual(lifecycleCalls[0], '/change-orders/created');
+    assert.strictEqual(posts.length, 0, 'Approval action only creates and prepares the change order');
+
+    existingLink = '/change-orders/existing';
+    result = await actionContext.createMBOMChangeOrderFromEditor(true);
+    assert.strictEqual(result.created, false, 'An active change order is reused instead of duplicated');
+    assert.strictEqual(result.transitioned, true);
+    assert.strictEqual(transferCalls[1].release, '/change-orders/existing');
+    assert.strictEqual(lifecycleCalls[1], '/change-orders/existing');
+    assert.strictEqual(posts[0].url, '/plm/transition');
+    assert.strictEqual(posts[0].payload.transition.endsWith('/1215'), true);
+    assert.strictEqual(posts[0].payload.comment, 'Zwolnione w mBOM Editor');
+    console.log('Explicit change-order action tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
 
 (async function testERPProductPrerequisiteUsesEBOM() {
     let ebomDetails = {

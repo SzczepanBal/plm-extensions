@@ -7,6 +7,7 @@
     const rawMaterialAccountingUnitFieldId = 'JEDNOSTKA_ROZLICZENIOWA';
     const rawMaterialAccountingQuantityFieldId = 'ILOSC_ROZLICZENIOWA';
     const rawMaterialProductGroupFieldId = 'GRUPA_PRODUKTOWA_SUROWCOW';
+    const rawMaterialsBOMViewName = 'Raw Materials';
     const rawMaterialTypeName = 'Surowiec';
     const rawMaterialTypeQueryValue = 'SUROWIEC';
     const rawMaterialApplyModes = {
@@ -14,6 +15,7 @@
         updateQuantity : 'update-quantity',
         overwrite      : 'overwrite'
     };
+    let rawMaterialsBOMViewPromise = null;
     const erpTechnologyDiscoveryDepth = 2;
     const erpStatusProxyUrl = '/plm/custom-erp-status';
     const assemblyIndexPLMDefaults = {
@@ -892,7 +894,8 @@
             wsId   : rawMaterialsWorkspaceId,
             limit  : 100,
             offset : 0,
-            query  : query
+            query  : query,
+            revision : 2
         };
 
         console.log('MBOM custom: raw material title search started', {
@@ -912,11 +915,14 @@
                     let filteredItems = items.filter(function(item) {
                         return itemLooksLikeMatchingRawMaterial(item, material);
                     });
+                    let releasedItems = filteredItems.filter(isReleasedRawMaterialItem);
+                    let unreleasedOnly = filteredItems.length > 0 && releasedItems.length === 0;
 
                     console.log('MBOM custom: raw material title search finished', {
                         material    : material,
                         totalResults: items.length,
-                        titleMatches: filteredItems.length
+                        titleMatches   : filteredItems.length,
+                        releasedMatches: releasedItems.length
                     });
 
                     if(items.length > 0) {
@@ -929,7 +935,13 @@
                         });
                     }
 
-                    resolve({ material: material, items: filteredItems, query: query });
+                    resolve({
+                        material       : material,
+                        items          : releasedItems,
+                        matchingItems  : filteredItems,
+                        unreleasedOnly : unreleasedOnly,
+                        query          : query
+                    });
                 })
                 .fail(function(jqXHR, textStatus, errorThrown) {
                     console.warn('MBOM custom: raw material title search failed', {
@@ -950,10 +962,18 @@
     function ensureRawMaterialSearchResult(result, productGroup) {
         if(result.error) throw new Error('Wyszukiwanie surowca nie powiodło się: ' + result.material);
         if(result.items.length > 0) return Promise.resolve(result);
+        if(result.unreleasedOnly === true) return Promise.resolve(result);
         let key = normalizeComparisonValue(result.material);
         if(!rawMaterialCreationPromises[key]) {
             rawMaterialCreationPromises[key] = createRawMaterialItem(result.material, productGroup).then(function(item) {
-                let createdResult = { material: result.material, items: [item], query: result.query };
+                let createdResult = {
+                    material       : result.material,
+                    items          : [],
+                    matchingItems  : [item],
+                    unreleasedOnly : true,
+                    created        : true,
+                    query          : result.query
+                };
                 rawMaterialSearchPromises[key] = Promise.resolve(createdResult);
                 return createdResult;
             }).catch(function(error) {
@@ -1056,9 +1076,16 @@
 
     function getSearchItemLink(item) {
         if(!item) return '';
-        if(item.item && item.item.link) return item.item.link;
-        if(item.__self__) return item.__self__;
-        return '';
+        let candidates = [
+            item.__self__,
+            item.link,
+            item.item && item.item.link,
+            item.item && item.item.__self__
+        ].filter(function(link) { return !isBlank(link); });
+        let versionLink = candidates.find(function(link) {
+            return /\/versions\/\d+(?:[/?#]|$)/i.test(String(link));
+        });
+        return versionLink || candidates[0] || '';
     }
 
     function normalizeProcessLookupName(value) {
@@ -1132,15 +1159,60 @@
         return /^s\d+$/.test(itemNumberSuffix);
     }
 
+    function getRawMaterialSearchProperty(item, propertyNames) {
+        let names = Array.isArray(propertyNames) ? propertyNames : [propertyNames];
+        let sources = [item, item && item.item].filter(Boolean);
+
+        for(let source of sources) {
+            for(let name of names) {
+                if(Object.prototype.hasOwnProperty.call(source, name)) return source[name];
+            }
+        }
+
+        return undefined;
+    }
+
+    function isReleasedRawMaterialItem(item) {
+        let working = getRawMaterialSearchProperty(item, ['isWorkingVersion', 'workingVersion']);
+        if(typeof working !== 'undefined') {
+            if(typeof working === 'string') working = /^(true|1|yes)$/i.test(working.trim());
+            if(typeof working === 'number') working = working !== 0;
+            return working === false;
+        }
+
+        let state = getRawMaterialSearchProperty(item, [
+            'lifecycleState', 'lifecycle-state', 'currentState', 'status'
+        ]);
+        if(state && typeof state === 'object') state = state.title || state.name || state.value || '';
+        let normalizedState = normalizeComparisonValue(state);
+        if(['released', 'release', 'zwolniony', 'zwolniona', 'zwolnione'].includes(normalizedState)) return true;
+
+        let revision = getRawMaterialSearchProperty(item, ['revision', 'version']);
+        return !isBlank(revision) && normalizeComparisonValue(revision) !== 'w';
+    }
+
+    function getRawMaterialVersionOrder(item) {
+        let value = getRawMaterialSearchProperty(item, ['versionId', 'versionID', 'revision']);
+        let numericValue = Number(value);
+        return Number.isNaN(numericValue) ? String(value || '') : numericValue;
+    }
+
     function chooseRawMaterialItem(material, items) {
         if(!Array.isArray(items) || items.length === 0) return null;
 
         let exactMatches = items.filter(function(item) {
-            return itemLooksLikeMatchingRawMaterial(item, material);
+            return itemLooksLikeMatchingRawMaterial(item, material) && isReleasedRawMaterialItem(item);
+        });
+
+        exactMatches.sort(function(left, right) {
+            let leftOrder = getRawMaterialVersionOrder(left);
+            let rightOrder = getRawMaterialVersionOrder(right);
+            if(typeof leftOrder === 'number' && typeof rightOrder === 'number') return rightOrder - leftOrder;
+            return String(rightOrder).localeCompare(String(leftOrder), undefined, { numeric : true });
         });
 
         if(exactMatches.length > 1) {
-            console.warn('MBOM custom: multiple matching raw material TITLE values found, using first result', {
+            console.warn('MBOM custom: multiple released raw material TITLE values found, using latest result', {
                 material : material,
                 matches  : exactMatches.map(function(item) {
                     return {
@@ -1601,6 +1673,14 @@
         return normalized.toLowerCase();
     }
 
+    function normalizePLMVersionLink(link) {
+        if(isBlank(link)) return '';
+
+        let normalized = String(link).trim().replace(/^https?:\/\/[^/]+/i, '').split(/[?#]/)[0];
+        let versionMatch = normalized.match(/\/api\/v3\/workspaces\/\d+\/items\/\d+(?:\/versions\/\d+)?/i);
+        return (versionMatch ? versionMatch[0] : normalized).toLowerCase();
+    }
+
     function getPLMItemLevelLink(link) {
         if(isBlank(link)) return '';
 
@@ -1615,13 +1695,26 @@
 
         let elemMatch = $();
         let normalizedLink = normalizePLMLink(link);
+        let normalizedVersionLink = normalizePLMVersionLink(link);
+        let requiresExactVersion = normalizedVersionLink.indexOf('/versions/') >= 0;
 
         elemHeader.next().children('.item').each(function() {
             let elemItem = $(this);
-            let itemLink = normalizePLMLink(elemItem.attr('data-link'));
-            let itemMBOMLink = normalizePLMLink(elemItem.attr('data-link-mbom'));
+            let candidateLinks = [
+                elemItem.attr('data-link'),
+                elemItem.attr('data-link-mbom'),
+                elemItem.attr('data-link-db')
+            ].filter(function(candidate) { return !isBlank(candidate); });
 
-            if(itemLink === normalizedLink || itemMBOMLink === normalizedLink) {
+            let matches = requiresExactVersion
+                ? candidateLinks.some(function(candidate) {
+                    return normalizePLMVersionLink(candidate) === normalizedVersionLink;
+                })
+                : candidateLinks.some(function(candidate) {
+                    return normalizePLMLink(candidate) === normalizedLink;
+                });
+
+            if(matches) {
                 elemMatch = elemItem;
                 return false;
             }
@@ -2560,8 +2653,9 @@
 
     function createExistingChildState() {
         return {
-            links    : new Set(),
-            children : new Map()
+            links        : new Set(),
+            versionLinks : new Set(),
+            children     : new Map()
         };
     }
 
@@ -2572,6 +2666,7 @@
         if(isBlank(normalizedLink)) return;
 
         state.links.add(normalizedLink);
+        state.versionLinks.add(normalizePLMVersionLink(part.link));
         if(!state.children.has(normalizedLink)) {
             state.children.set(normalizedLink, part);
         }
@@ -4134,6 +4229,157 @@
         return applicableEntries;
     }
 
+    function hasRawMaterialsBOMColumn(part, fieldId) {
+        if(!part || !part.details) return false;
+        let normalizedFieldId = String(fieldId).toLowerCase().replace(/[^a-z0-9]/g, '');
+        return Object.keys(part.details).some(function(candidate) {
+            return String(candidate).toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedFieldId;
+        });
+    }
+
+    function validateRawMaterialsBOMColumns(parts) {
+        let firstPart = parts[0] || null;
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let requiredColumns = [
+            fieldIds.number || 'NUMBER',
+            fieldIds.type || 'TYPE',
+            'HAS_BOM',
+            'MATERIAL',
+            rawMaterialAccountingUnitFieldId,
+            rawMaterialAccountingQuantityFieldId,
+            rawMaterialProductGroupFieldId
+        ];
+        let missing = requiredColumns.filter(function(fieldId) {
+            return !hasRawMaterialsBOMColumn(firstPart, fieldId);
+        });
+
+        if(missing.length > 0) {
+            throw new Error('W widoku BOM „' + rawMaterialsBOMViewName + '” brakuje wymaganych kolumn: ' + missing.join(', ') + '.');
+        }
+    }
+
+    function getRawMaterialsBOMView() {
+        if(!rawMaterialsBOMViewPromise) {
+            rawMaterialsBOMViewPromise = $.get('/plm/bom-view-by-name', {
+                wsId     : wsMBOM.wsId,
+                name     : rawMaterialsBOMViewName,
+                useCache : true
+            }).then(function(response) {
+                let view = response && response.data ? response.data : null;
+                if(!view || isBlank(view.id)) {
+                    throw new Error('Nie znaleziono widoku BOM „' + rawMaterialsBOMViewName + '”.');
+                }
+                return view;
+            }).catch(function(error) {
+                rawMaterialsBOMViewPromise = null;
+                throw error;
+            });
+        }
+
+        return rawMaterialsBOMViewPromise;
+    }
+
+    function loadRawMaterialsBOMParts() {
+        let rootItem = $('#mbom-tree').children('.item').first();
+        let mbomLink = (typeof links !== 'undefined' && links && !isBlank(links.mbom))
+            ? links.mbom
+            : getMBOMSaveLink(rootItem);
+        if(isBlank(mbomLink)) return Promise.reject(new Error('Nie znaleziono zapisanego mBOM do wyszukania surowców.'));
+
+        return getRawMaterialsBOMView().then(function(view) {
+            return $.get('/plm/bom', {
+                link            : mbomLink,
+                viewId          : view.id,
+                depth           : getCustomMBOMDepth(),
+                revisionBias    : 'working',
+                getBOMPartsList : true
+            });
+        }).then(function(response) {
+            let parts = response && response.data && Array.isArray(response.data.bomPartsList)
+                ? response.data.bomPartsList
+                : [];
+            if(parts.length === 0) {
+                throw new Error('Widok BOM „' + rawMaterialsBOMViewName + '” nie zwrócił żadnych elementów.');
+            }
+            validateRawMaterialsBOMColumns(parts);
+            return parts;
+        });
+    }
+
+    function isRawMaterialsBOMSourcePart(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let type = getMBOMAccountingFieldValue(part, fieldIds.type || 'TYPE');
+        return String(type || '').trim().toLowerCase() === 'manufacturing';
+    }
+
+    function getRawMaterialAssignmentsByMBOM(parts) {
+        let assignments = new Map();
+        let manufacturingStack = [];
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+
+        (Array.isArray(parts) ? parts : []).forEach(function(part) {
+            let level = Number(part && part.level);
+            if(Number.isNaN(level)) level = 0;
+
+            while(manufacturingStack.length > 0 &&
+                manufacturingStack[manufacturingStack.length - 1].level >= level) {
+                manufacturingStack.pop();
+            }
+
+            let type = normalizeComparisonValue(
+                getMBOMAccountingFieldValue(part, fieldIds.type || 'TYPE')
+            );
+            let link = getPLMItemLevelLink(getPartItemLink(part));
+            let key = normalizePLMLink(link);
+
+            if(type === 'manufacturing') {
+                if(!isBlank(key)) {
+                    if(!assignments.has(key)) assignments.set(key, new Set());
+                    manufacturingStack.push({ level : level, key : key });
+                }
+                return;
+            }
+
+            if(type !== normalizeComparisonValue(rawMaterialTypeName) || isBlank(key) || manufacturingStack.length === 0) return;
+            assignments.get(manufacturingStack[manufacturingStack.length - 1].key).add(normalizePLMVersionLink(link));
+        });
+
+        return assignments;
+    }
+
+    function resolveRawMaterialsBOMViewParts(parts) {
+        let sourceParts = [];
+        let seen = new Set();
+        let assignments = getRawMaterialAssignmentsByMBOM(parts);
+
+        parts.forEach(function(part) {
+            if(!isRawMaterialsBOMSourcePart(part)) return;
+            let key = normalizePLMLink(getPartItemLink(part));
+            if(!isBlank(key) && seen.has(key)) return;
+            if(!isBlank(key)) seen.add(key);
+            sourceParts.push(part);
+        });
+
+        console.log('MBOM custom: raw material sources loaded from one Raw Materials BOM response', {
+            parts     : parts.length,
+            mbomRoots : sourceParts.length
+        });
+
+        return filterRawMaterialEntriesWithMaterial(sourceParts.map(function(part) {
+            let sourceKey = normalizePLMLink(getPLMItemLevelLink(getPartItemLink(part)));
+            return {
+                part               : part,
+                material           : getMaterialValue(part),
+                accountingUnit     : getMBOMAccountingUnit(part),
+                accountingQuantity : getMBOMAccountingQuantity(part),
+                productGroup       : getMBOMAccountingFieldValue(part, rawMaterialProductGroupFieldId),
+                hasBom             : isMBOMHasBOM(getMBOMAccountingFieldValue(part, 'HAS_BOM')),
+                detailsError       : false,
+                assignedRawMaterialLinks : assignments.get(sourceKey) || new Set()
+            };
+        }));
+    }
+
     function getRawMaterialSourceParts(parts) {
         let seen = new Set();
         return parts.filter(function(part) {
@@ -4260,7 +4506,7 @@
         return new Promise(function(resolve) {
             let container = $('#raw-material-results').empty().removeClass('with-warning').show();
             $('<p></p>')
-                .text('Poniższe surowce nie istnieją w PLM. Potwierdź ich utworzenie, aby kontynuować:')
+                .text('Poniższe surowce nie istnieją w PLM. Po utworzeniu wymagają zwolnienia i nie zostaną jeszcze dodane do mBOM:')
                 .appendTo(container);
 
             let list = $('<ul></ul>').addClass('raw-material-creation-list').appendTo(container);
@@ -4403,6 +4649,24 @@
         return rawMaterialApplyModes.overwrite;
     }
 
+    function shouldPreserveAssignedRawMaterial(entry, link, mode) {
+        if(mode !== rawMaterialApplyModes.addMissing || !entry || !(entry.assignedRawMaterialLinks instanceof Set)) return false;
+        let normalizedLink = normalizePLMVersionLink(link);
+        return !isBlank(normalizedLink) && entry.assignedRawMaterialLinks.has(normalizedLink);
+    }
+
+    function hasExistingRawMaterialVersion(existingState, link) {
+        if(!existingState || isBlank(link)) return false;
+        let versionLink = normalizePLMVersionLink(link);
+        if(existingState.versionLinks instanceof Set && existingState.versionLinks.has(versionLink)) return true;
+
+        // Item-level links do not expose a revision and can only be compared by item identity.
+        if(versionLink.indexOf('/versions/') < 0) {
+            return existingState.links instanceof Set && existingState.links.has(normalizePLMLink(link));
+        }
+        return false;
+    }
+
     function addRawMaterialsToMBOM(mbomMaterials, applyMode) {
         let mode = normalizeRawMaterialApplyMode(applyMode);
         let addMissing = mode !== rawMaterialApplyModes.updateQuantity;
@@ -4474,7 +4738,8 @@
         return Promise.all(searchRequests).then(function() {
             let missingMaterials = uniqueMaterials.filter(function(material) {
                 let result = searchResultsByMaterial[material];
-                return result && !result.error && Array.isArray(result.items) && result.items.length === 0;
+                return result && !result.error && result.unreleasedOnly !== true &&
+                    Array.isArray(result.items) && result.items.length === 0;
             }).map(function(material) {
                 return { material : material, productGroup : productGroupsByMaterial[material] || '' };
             });
@@ -4538,6 +4803,12 @@
                     let result = searchResultsByMaterial[material];
                     if(result && result.error) entry.rawMaterialMessage = result.message;
                     if(result && result.creationDeclined) entry.rawMaterialMessage = result.message;
+                    if(result && result.unreleasedOnly) {
+                        entry.rawMaterialMessage = result.created
+                            ? 'Surowiec został utworzony, ale nie jest jeszcze zwolniony. Nie dodano go do mBOM.'
+                            : 'Znaleziono pasujący surowiec, ale nie ma on zwolnionej wersji. Nie dodano go do mBOM.';
+                        entry.rawMaterialWarnings.push('Do mBOM można dodać wyłącznie zwolnioną wersję surowca.');
+                    }
                     if(!result || !Array.isArray(result.items) || result.items.length === 0) {
                         console.warn('MBOM custom: no matching WS57 TITLE found for MATERIAL', {
                             material : material
@@ -4564,6 +4835,14 @@
                         console.warn('MBOM custom: raw material match has no usable link', {
                             material : material
                         });
+                        applyDone++;
+                        updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
+                        return null;
+                    }
+
+                    if(shouldPreserveAssignedRawMaterial(entry, link, mode)) {
+                        entry.rawMaterialOutcome = 'unchanged';
+                        entry.rawMaterialMessage = 'Surowiec jest już przypisany do tego mBOM; pozostawiono go bez zmian.';
                         applyDone++;
                         updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
                         return null;
@@ -4613,7 +4892,7 @@
                                     quantity : quantity
                                 });
 
-                                if(existingState.links.has(normalizedLink)) {
+                                if(hasExistingRawMaterialVersion(existingState, link)) {
                                     console.log('MBOM custom: raw material precheck found existing target assignment', {
                                         material : material,
                                         link     : link,
@@ -4683,6 +4962,9 @@
                                     }
 
                                     existingState.links.add(normalizedLink);
+                                    if(existingState.versionLinks instanceof Set) {
+                                        existingState.versionLinks.add(normalizePLMVersionLink(link));
+                                    }
                                     existingState.children.set(normalizedLink, { link : link, quantity : quantity });
                                     totalAdded++;
                                     entry.rawMaterialOutcome = 'added';
@@ -4826,60 +5108,16 @@
         initRawMaterialsDialog(0, 0);
         setRawMaterialsDialogPendingState();
 
-        if(Array.isArray(mbomPartsList) && mbomPartsList.length > 0) {
-            console.log('MBOM custom: Using loaded mbomPartsList with', mbomPartsList.length, 'items');
-            return resolveMBOMMaterials(mbomPartsList).then(function(mbomMaterials) {
-                return addRawMaterialsToMBOM(mbomMaterials, mode);
-            }).catch(function(error) {
-                console.warn('MBOM custom: failed while resolving MBOM materials', error);
-                completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
+        return loadRawMaterialsBOMParts().then(function(parts) {
+            let mbomMaterials = resolveRawMaterialsBOMViewParts(parts);
+            return addRawMaterialsToMBOM(mbomMaterials, mode);
+        }).catch(function(error) {
+            console.warn('MBOM custom: failed to load the Raw Materials BOM view', error);
+            completeRawMaterialsDialog(0, {
+                error          : true,
+                materialErrors : [{ material : 'Wyszukiwanie', message : getRawMaterialErrorMessage(error) }]
             });
-            return Promise.resolve();
-        }
-
-        console.warn('MBOM custom: mbomPartsList not loaded yet; falling back to explicit MBOM fetch');
-
-        let rootItem = $('#mbom-tree').children('.item').first();
-        let mbomLink = (typeof links !== 'undefined' && !isBlank(links.mbom))
-            ? links.mbom
-            : getMBOMSaveLink(rootItem);
-
-        if(isBlank(mbomLink)) {
-            console.warn('MBOM custom: no MBOM link is available for raw material discovery');
-            completeRawMaterialsDialog(0);
-            return;
-        }
-
-        let params = {
-            link            : mbomLink,
-            viewId          : wsMBOM.viewId,
-            depth           : config.workspaceMBOM.depth,
-            revisionBias    : 'working',
-            getBOMPartsList : true
-        };
-
-        console.log('MBOM custom: fetching MBOM data for raw material discovery', params);
-
-        return $.get('/plm/bom', params)
-            .done(function(bomResponse) {
-                let fetchedMBOMParts = (bomResponse.data && bomResponse.data.bomPartsList) ? bomResponse.data.bomPartsList : [];
-                if(!Array.isArray(fetchedMBOMParts) || fetchedMBOMParts.length === 0) {
-                    console.warn('MBOM custom: no MBOM parts found for raw material discovery');
-                    completeRawMaterialsDialog(0);
-                    return;
-                }
-
-                return resolveMBOMMaterials(fetchedMBOMParts).then(function(mbomMaterials) {
-                    return addRawMaterialsToMBOM(mbomMaterials, mode);
-                }).catch(function(error) {
-                    console.warn('MBOM custom: failed while resolving fetched MBOM materials', error);
-                    completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
-                });
-            })
-            .fail(function(error) {
-                console.warn('MBOM custom: failed to fetch MBOM data');
-                completeRawMaterialsDialog(0, { error: true, materialErrors: [{ material: 'Discovery', message: getRawMaterialErrorMessage(error) }] });
-            });
+        });
     }
 
     function getMissingLeafLinkedMBOMs() {
@@ -4951,6 +5189,7 @@
     }
 
     const erpTechnologyProxyBaseUrl = '/plm/custom-erp/';
+    const erpSyncBOMViewName = 'ERP Sync';
     const erpTechnologyPropertyMappings = [
         ['Grupa Produktowa', ['GRUPA_PRODUKTOWA']],
         ['Typ czesci', ['TYP_CZESCI']]
@@ -5010,6 +5249,7 @@
         'KODOPERACJI'
     ];
     let erpTechnologyDetailsCache = {};
+    let erpSyncBOMViewPromise = null;
 
     function isERPTechnologyTestRunEnabled() {
         return $('#toggle-erp-technology-test-run').hasClass('icon-toggle-on');
@@ -5037,24 +5277,14 @@
 
     function isERPProductSynced(detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        return normalizeERPBooleanText(getSectionFieldValue(sections, 'WYSLANE_DO_ERP', false, 'object'));
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        return !isBlank(getSectionFieldValue(sections, fieldIds.erpPartIndex || 'INDEKS_CZESCI', '', 'object'));
     }
 
     function isERPTechnologySynced(detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        let fieldIds = (typeof config !== 'undefined' && config.workspaceMBOM && config.workspaceMBOM.fieldIDs)
-            ? config.workspaceMBOM.fieldIDs
-            : {};
-        let versionId = getERPTechnologySectionValue(sections, [
-            fieldIds.erpVersionId || 'ID_WERSJI',
-            'ID_WERSJI',
-            'id_wersji'
-        ], '');
-
-        // ID_WERSJI is assigned by ERP after a successful technology request.
-        // It is therefore the authoritative marker that this mBOM technology
-        // has already been sent.
-        return !isBlank(versionId);
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        return !isBlank(getSectionFieldValue(sections, fieldIds.erpVersionId || 'ID_WERSJI', '', 'object'));
     }
 
     function getERPTechnologyElementLink(elemItem) {
@@ -5117,39 +5347,10 @@
                 return false;
             }
 
-            return getERPTechnologyItemDetails(expansionLink).then(function(detailsData) {
-                if(!detailsData) {
-                    console.warn('MBOM custom: ERP technology discovery could not load linked sub-MBOM details, skipping expansion', {
-                        itemLink       : getERPTechnologyElementLink(elemItem),
-                        expansionLink  : expansionLink,
-                        descriptor     : getERPTechnologyDescriptor(elemItem)
-                    });
-                    return false;
-                }
-
-                let alreadySynced = isERPTechnologySynced(detailsData);
-                let productRequired = !alreadySynced && needsERPSubMBOMProduct(
-                    elemItem,
-                    getMBOMPartFromElement(elemItem),
-                    detailsData
-                );
-                console.log('MBOM custom: ERP technology sub-MBOM sync state resolved', {
-                    itemLink       : getERPTechnologyElementLink(elemItem),
-                    expansionLink  : expansionLink,
-                    descriptor     : getERPTechnologyDescriptor(elemItem),
-                    alreadySynced  : alreadySynced,
-                    productRequired: productRequired
-                });
-
-                return !alreadySynced || productRequired;
-            }).catch(function(error) {
-                console.warn('MBOM custom: ERP technology discovery failed to inspect linked sub-MBOM, skipping expansion', {
-                    itemLink      : getERPTechnologyElementLink(elemItem),
-                    expansionLink : expansionLink,
-                    error         : error
-                });
-                return false;
-            });
+            // Every nested branch must be loaded because product readiness is
+            // checked for every non-operation component, even when the linked
+            // sub-mBOM technology itself has already been synchronized.
+            return true;
         }).catch(function(error) {
             console.warn('MBOM custom: ERP technology discovery failed to resolve inline sub-MBOM context, skipping expansion', {
                 itemLink   : getERPTechnologyElementLink(elemItem),
@@ -5256,6 +5457,92 @@
         return roots;
     }
 
+    function getERPProductComponentItems() {
+        let items = [];
+        let seen = new Set();
+
+        $('#mbom-tree').find('.item').each(function() {
+            let elemItem = $(this);
+            if(elemItem.hasClass('root') || elemItem.hasClass('process')) return;
+
+            let itemLink = getERPTechnologyElementLink(elemItem);
+            let key = normalizePLMLink(itemLink);
+            if(isBlank(itemLink) || isBlank(key) || seen.has(key)) return;
+
+            seen.add(key);
+            items.push(elemItem);
+        });
+
+        items.sort(function(a, b) {
+            return getElementLevel(a) - getElementLevel(b);
+        });
+
+        return items;
+    }
+
+    function buildERPComponentProductJob(elemItem) {
+        let itemLink = getERPTechnologyElementLink(elemItem);
+        let itemPart = getMBOMPartFromElement(elemItem);
+
+        if(isBlank(itemLink)) return Promise.resolve(null);
+
+        return getERPTechnologyItemDetails(itemLink).then(function(itemDetailsData) {
+            if(!itemDetailsData) throw new Error('Could not load component details for ERP product check: ' + itemLink);
+
+            let sourceLink = getERPTechnologyEBOMLink(elemItem, itemPart, itemDetailsData) || itemLink;
+            let sourceDetailsPromise = normalizePLMLink(sourceLink) === normalizePLMLink(itemLink)
+                ? Promise.resolve(itemDetailsData)
+                : getERPTechnologyItemDetails(sourceLink);
+
+            return sourceDetailsPromise.then(function(sourceDetailsData) {
+                if(!sourceDetailsData) throw new Error('Could not load product source details for ERP product check: ' + sourceLink);
+                if(isERPProductSynced(sourceDetailsData)) return null;
+
+                let assemblyIndex = elemItem.hasClass('assembly-index') || isAssemblyIndexNode(itemPart);
+                let productPayload = assemblyIndex
+                    ? buildERPAssemblyIndexProductPayload(elemItem, itemPart, sourceDetailsData)
+                    : buildERPSubMBOMProductPayload(elemItem, itemPart, sourceDetailsData);
+
+                return {
+                    jobType           : 'product',
+                    elemItem          : elemItem,
+                    link              : itemLink,
+                    descriptor        : getERPTechnologyDescriptor(elemItem),
+                    level             : getElementLevel(elemItem),
+                    productRequired   : true,
+                    productPayload    : productPayload,
+                    productSourceLink : sourceLink,
+                    productIndexToCopy: ''
+                };
+            });
+        });
+    }
+
+    function collectERPComponentProductJobs() {
+        let components = getERPProductComponentItems();
+
+        return mapPLMRequestsWithConcurrency(components, 6, function(elemItem) {
+            return buildERPComponentProductJob(elemItem).catch(function(error) {
+                console.warn('MBOM custom: component ERP product state could not be checked', {
+                    link       : getERPTechnologyElementLink(elemItem),
+                    descriptor : getERPTechnologyDescriptor(elemItem),
+                    level      : getElementLevel(elemItem),
+                    error      : error
+                });
+                throw error;
+            });
+        }).then(function(jobs) {
+            let seenSources = new Set();
+            return jobs.filter(function(job) {
+                if(!job) return false;
+                let key = normalizePLMLink(job.productSourceLink || job.link);
+                if(isBlank(key) || seenSources.has(key)) return false;
+                seenSources.add(key);
+                return true;
+            });
+        });
+    }
+
     function isERPTechnologyMainRootItem(elemItem) {
         return isMainMBOMRootItem(elemItem);
     }
@@ -5314,9 +5601,8 @@
     }
 
     function buildERPAddProductName(sections, title, rawIndex) {
-        let description = getERPTechnologySectionValue(sections, ['OPIS'], '');
         let partName = getERPTechnologySectionValue(sections, ['NAZWA_DEFRO'], '');
-        let combinedName = [description, partName].filter(function(value) {
+        let combinedName = [partName].filter(function(value) {
             return !isBlank(value);
         }).join(' - ');
 
@@ -6014,74 +6300,422 @@
         return ordered;
     }
 
-    function collectERPTechnologyJobs() {
-        erpTechnologyDetailsCache = {};
+    function getERPSyncBOMValue(part, candidateIds, fallbackValue) {
+        if(!part || !part.details) return fallbackValue || '';
 
-        return ensureERPTechnologyTreeExpanded().then(function() {
-            let technologyRoots = getERPTechnologyRootItems();
-            if(technologyRoots.length === 0) return [];
+        for(let candidateId of candidateIds.filter(Boolean)) {
+            if(Object.prototype.hasOwnProperty.call(part.details, candidateId) && !isBlank(part.details[candidateId])) {
+                return part.details[candidateId];
+            }
+        }
 
-            return mapPLMRequestsWithConcurrency(technologyRoots, 6, function(elemItem) {
-                if(isERPTechnologyMainRootItem(elemItem) || elemItem.hasClass('assembly-index')) {
-                    return buildERPTechnologyPayload(elemItem);
+        let normalizedIds = candidateIds.filter(Boolean).map(function(candidateId) {
+            return String(candidateId).toLowerCase().replace(/[^a-z0-9]/g, '');
+        });
+
+        for(let fieldId of Object.keys(part.details)) {
+            let normalizedFieldId = String(fieldId).toLowerCase().replace(/[^a-z0-9]/g, '');
+            if(normalizedIds.includes(normalizedFieldId) && !isBlank(part.details[fieldId])) {
+                return part.details[fieldId];
+            }
+        }
+
+        return fallbackValue || '';
+    }
+
+    function isERPSyncBOMOperation(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let isProcess = getERPSyncBOMValue(part, [fieldIds.isProcess, 'IS_PROCESS'], false);
+        if(normalizeERPBooleanText(isProcess)) return true;
+
+        let type = String(getERPSyncBOMValue(part, [fieldIds.type, 'TYPE'], '')).trim().toLowerCase();
+        if(['operation', 'process', 'operacja', 'proces'].includes(type)) return true;
+
+        return !isBlank(getERPSyncBOMValue(part, [fieldIds.code, 'PROCESS_CODE'], ''));
+    }
+
+    function isERPSyncBOMManufacturing(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        return String(getERPSyncBOMValue(part, [fieldIds.type, 'TYPE'], '')).trim().toLowerCase() === 'manufacturing';
+    }
+
+    function getERPSyncBOMProductState(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let manufacturing = isERPSyncBOMManufacturing(part);
+        let storedPartIndex = getERPSyncBOMValue(part, [fieldIds.erpPartIndex, 'INDEKS_CZESCI'], '');
+
+        return {
+            manufacturing : manufacturing,
+            productExists : !isBlank(storedPartIndex),
+            updateMode    : manufacturing ? 'index' : 'product'
+        };
+    }
+
+    function addERPSyncBOMHierarchy(parts) {
+        let stack = [];
+
+        parts.forEach(function(part) {
+            let level = Number(part.level) || 0;
+            part.erpChildren = [];
+            while(stack.length > level) stack.pop();
+            part.erpParent = level > 0 ? stack[level - 1] || null : null;
+            if(part.erpParent) part.erpParent.erpChildren.push(part);
+            stack[level] = part;
+            stack.length = level + 1;
+        });
+
+        return parts;
+    }
+
+    function validateERPSyncBOMColumns(parts) {
+        let details = parts[0] && parts[0].details ? parts[0].details : {};
+        let normalizedColumns = Object.keys(details).map(function(fieldId) {
+            return String(fieldId).toLowerCase().replace(/[^a-z0-9]/g, '');
+        });
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let requiredColumns = [
+            { label : 'NUMBER', candidates : [fieldIds.number, 'NUMBER'] },
+            { label : 'INDEKS_CZESCI', candidates : [fieldIds.erpPartIndex, 'INDEKS_CZESCI'] },
+            { label : 'ID_WERSJI', candidates : [fieldIds.erpVersionId, 'ID_WERSJI'] },
+            { label : 'ERP_HASH', candidates : [fieldIds.erpHash, 'ERP_HASH'] },
+            { label : 'ERP_SYNC_STATUS', candidates : [fieldIds.erpSyncStatus, 'ERP_SYNC_STATUS'] },
+            { label : 'GRUPA_PRODUKTOWA', candidates : ['GRUPA_PRODUKTOWA'] },
+            { label : 'TYPE', candidates : [fieldIds.type, 'TYPE'] },
+            { label : 'PROCESS_CODE', candidates : [fieldIds.code, 'PROCESS_CODE'] },
+            { label : 'KOD_OPERACJI', candidates : erpTechnologyOperationCodeCandidates }
+        ];
+        let missing = requiredColumns.filter(function(column) {
+            return !column.candidates.filter(Boolean).some(function(candidate) {
+                return normalizedColumns.includes(String(candidate).toLowerCase().replace(/[^a-z0-9]/g, ''));
+            });
+        }).map(function(column) { return column.label; });
+
+        if(missing.length > 0) {
+            throw new Error('W widoku BOM „' + erpSyncBOMViewName + '” brakuje wymaganych kolumn: ' + missing.join(', ') + '.');
+        }
+    }
+
+    function getERPSyncBOMView() {
+        if(!erpSyncBOMViewPromise) {
+            erpSyncBOMViewPromise = $.get('/plm/bom-view-by-name', {
+                wsId     : wsMBOM.wsId,
+                name     : erpSyncBOMViewName,
+                useCache : true
+            }).then(function(response) {
+                let view = response && response.data ? response.data : null;
+                if(!view || isBlank(view.id)) {
+                    throw new Error('Nie znaleziono widoku BOM „' + erpSyncBOMViewName + '”.');
                 }
+                return view;
+            }).catch(function(error) {
+                erpSyncBOMViewPromise = null;
+                throw error;
+            });
+        }
 
-                let itemLink = getERPTechnologyElementLink(elemItem);
-                if(isBlank(itemLink)) {
-                    console.warn('MBOM custom: skipping sub-MBOM technology because its ERP sync state cannot be checked', {
-                        descriptor : getERPTechnologyDescriptor(elemItem),
-                        level      : getElementLevel(elemItem)
-                    });
-                    return Promise.resolve(null);
+        return erpSyncBOMViewPromise;
+    }
+
+    function loadERPSyncBOMParts(revisionBias) {
+        revisionBias = isBlank(revisionBias) ? 'working' : revisionBias;
+        let rootItem = $('#mbom-tree').children('.item').first();
+        let mbomLink = !isBlank(links.mbom) ? links.mbom : getMBOMSaveLink(rootItem);
+        if(isBlank(mbomLink)) return Promise.reject(new Error('Nie znaleziono zapisanego mBOM do synchronizacji ERP.'));
+
+        return getERPSyncBOMView().then(function(view) {
+            return $.get('/plm/bom', {
+                link            : mbomLink,
+                viewId          : view.id,
+                depth           : getCustomMBOMDepth(),
+                revisionBias    : revisionBias,
+                useCache        : false,
+                getBOMPartsList : true
+            });
+        }).then(function(response) {
+            let parts = response && response.data && Array.isArray(response.data.bomPartsList)
+                ? response.data.bomPartsList
+                : [];
+            if(parts.length === 0) throw new Error('Widok BOM „' + erpSyncBOMViewName + '” nie zwrócił żadnych elementów.');
+            validateERPSyncBOMColumns(parts);
+            return addERPSyncBOMHierarchy(parts);
+        });
+    }
+
+    function getERPSyncBOMUnitOfMeasure(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        return normalizeERPTechnologyUnitOfMeasure(getERPSyncBOMValue(part, [
+            fieldIds.unitOfMeasure,
+            fieldIds.uom,
+            'UNIT_OF_MEASURE',
+            'UOM',
+            'UNIT',
+            'BOM_UOM',
+            'ITEM_UOM'
+        ], ''));
+    }
+
+    function buildERPSyncBOMProductPayload(part, assemblyIndex) {
+        let mappings = assemblyIndex ? erpAssemblyIndexProductPropertyMappings : erpSubMBOMProductPropertyMappings;
+        let rawIndex = getERPSyncBOMValue(part, ['NUMBER'], part.partNumber || '');
+        let title = getERPSyncBOMValue(part, ['TITLE'], part.title || '');
+        let description = getERPSyncBOMValue(part, ['OPIS'], title);
+        let partName = getERPSyncBOMValue(part, ['NAZWA_DEFRO'], '');
+        let groupId = getERPSyncBOMValue(part, ['GRUPA_PRODUKTOWA'], assemblyIndex ? erpAssemblyIndexProductGroupId : '');
+        let properties = [];
+
+        mappings.forEach(function(mapping) {
+            let value = getERPSyncBOMValue(part, mapping[1], '');
+            if(isBlank(value) && mapping.length > 2) value = mapping[2];
+            if(mapping[0] === 'Grupa produktowa' && isBlank(value)) value = groupId;
+            if(mapping[0] === 'Opis' && isBlank(value)) value = description;
+            if(mapping[0] === 'Specyfikacja') {
+                let normalizedSpecification = normalizeComparisonValue(value);
+                if(normalizedSpecification === 'zozenie' || normalizedSpecification === 'zlozenie') {
+                    value = assemblyIndexPLMDefaults.specification;
                 }
+            }
+            if(isBlank(value) && !assemblyIndex) return;
+            if(mapping.length > 3 && mapping[3] === true && isBlank(value)) return;
 
-                return getERPTechnologyItemDetails(itemLink).then(function(detailsData) {
-                    if(!detailsData) {
-                        console.warn('MBOM custom: skipping sub-MBOM technology because its details could not be loaded', {
-                            link       : itemLink,
-                            descriptor : getERPTechnologyDescriptor(elemItem)
-                        });
-                        return null;
-                    }
+            let property = {};
+            property[mapping[0]] = isBlank(value) ? '' : truncateERPAssemblyIndexPropertyValue(String(value), 40);
+            properties.push(property);
+        });
 
-                    let technologySynced = isERPTechnologySynced(detailsData);
-                    let productRequired = !technologySynced && needsERPSubMBOMProduct(
-                        elemItem,
-                        getMBOMPartFromElement(elemItem),
-                        detailsData
-                    );
+        return {
+            indeks          : rawIndex,
+            nazwa_czesci    : [partName].filter(function(value) { return !isBlank(value); }).join(' - ') || title || rawIndex,
+            id_grupy        : groupId,
+            jednostka_miary : getERPSyncBOMUnitOfMeasure(part),
+            wlasnosci       : properties
+        };
+    }
 
-                    if(technologySynced && !productRequired) {
-                        console.log('MBOM custom: skipping already synced sub-MBOM before loading its technology structure', {
-                            link       : itemLink,
-                            descriptor : getERPTechnologyDescriptor(elemItem),
-                            level      : getElementLevel(elemItem)
-                        });
-                        return null;
-                    }
+    function getERPSyncBOMRevision(part) {
+        let revision = getERPSyncBOMValue(part, ['REVISION'], part.revision || '');
+        return String(revision || '').trim();
+    }
 
-                    return buildERPTechnologyPayload(elemItem);
-                }).catch(function(error) {
-                    console.warn('MBOM custom: skipping sub-MBOM technology because its ERP sync state could not be checked', {
-                        link       : itemLink,
-                        descriptor : getERPTechnologyDescriptor(elemItem),
-                        error      : error
+    function getERPSyncBOMVersionId(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let value = getERPSyncBOMValue(part, [fieldIds.erpVersionId, 'ID_WERSJI'], '');
+        let number = Number(value);
+        return isBlank(value) || Number.isNaN(number) ? '' : Math.trunc(number);
+    }
+
+    function getERPSyncBOMProcessNumber(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let value = getERPSyncBOMValue(part, [fieldIds.code, 'PROCESS_CODE'], '');
+        let numeric = Number(value);
+        if(!Number.isNaN(numeric) && String(value).indexOf('.') > -1) return String(parseInt(numeric, 10));
+        return String(value || '').trim();
+    }
+
+    function getERPSyncBOMStoredHash(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        return String(getERPSyncBOMValue(part, [fieldIds.erpHash, 'ERP_HASH'], '') || '').trim();
+    }
+
+    function getERPSyncBOMStatus(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        return String(getERPSyncBOMValue(part, [fieldIds.erpSyncStatus, 'ERP_SYNC_STATUS'], '') || '')
+            .trim()
+            .toUpperCase();
+    }
+
+    function buildERPHashInput(job) {
+        if(job.jobType === 'product') {
+            return {
+                type    : 'product',
+                product : job.productPayload
+            };
+        }
+
+        let technology = $.extend(true, {}, job.payload || {});
+        delete technology.id_wersji;
+        delete technology.zablokowana;
+
+        return {
+            type       : 'technology',
+            product    : job.productHashPayload,
+            technology : technology
+        };
+    }
+
+    function calculateERPHash(job) {
+        return $.ajax({
+            url         : erpTechnologyProxyBaseUrl + 'hash',
+            method      : 'POST',
+            contentType : 'application/json',
+            data        : JSON.stringify(buildERPHashInput(job))
+        }).then(function(response) {
+            let hash = response && response.data ? response.data.hash : '';
+            if(isBlank(hash)) throw new Error('Serwer nie zwrócił skrótu danych ERP.');
+            job.erpHash = String(hash);
+            job.erpOutOfDate = job.erpHash !== job.storedERPHash;
+            return job;
+        });
+    }
+
+    function buildERPSyncBOMTechnologyJob(part, isMainRoot) {
+        let operations = part.erpChildren.filter(isERPSyncBOMOperation);
+        if(operations.length === 0) return null;
+
+        let technologyVersionId = getERPSyncBOMVersionId(part);
+        let productState = getERPSyncBOMProductState(part);
+        let technologySynced = !isBlank(technologyVersionId);
+        let assemblyIndex = isAssemblyIndexNode(part);
+        let rawIndex = getERPSyncBOMValue(part, ['NUMBER'], part.partNumber || '');
+        let description = getERPSyncBOMValue(part, ['OPIS'], getERPSyncBOMValue(part, ['TITLE'], part.title || ''));
+        let technologyId = getERPSyncBOMValue(part, ['ID_TECHNOLOGI'], '');
+        let revision = getERPSyncBOMRevision(part);
+        let revisionDescription = isBlank(revision) ? '' : 'Rewizja: ' + revision;
+        let payload = {
+            indeks          : normalizeERPTechnologyIndex(rawIndex),
+            nazwa_czesci    : getERPSyncBOMValue(part, ['NAZWA_DEFRO', 'TITLE'], part.title || ''),
+            opis            : [description, technologyId, revisionDescription].filter(function(value) { return !isBlank(value); }).join(' | '),
+            rewizja         : revision,
+            czy_zatwierdzona: 'N',
+            wlasnosci       : [],
+            operacje        : [],
+            struktura       : [],
+            zalaczniki      : getERPTechnologyAttachments(part.link)
+        };
+
+
+        erpTechnologyPropertyMappings.forEach(function(mapping) {
+            let value = getERPSyncBOMValue(part, mapping[1], '');
+            if(!isBlank(value)) {
+                let property = {};
+                property[mapping[0]] = value;
+                payload.wlasnosci.push(property);
+            }
+        });
+
+        operations.forEach(function(operation) {
+            let processNumber = getERPSyncBOMProcessNumber(operation);
+            payload.operacje.push({
+                numer_operacji : processNumber,
+                kod_operacji   : getERPSyncBOMValue(operation, erpTechnologyOperationCodeCandidates, operation.title || ''),
+                gniazdo        : 'xxxx',
+                stanowisko     : 'wirtualne'
+            });
+
+            operation.erpChildren.filter(function(child) { return !isERPSyncBOMOperation(child); }).forEach(function(component) {
+                let fieldIds = config.workspaceMBOM.fieldIDs || {};
+                let componentIndex = getERPSyncBOMValue(component, [fieldIds.erpPartIndex, 'INDEKS_CZESCI', fieldIds.number, 'NUMBER'], component.partNumber || '');
+                let type = String(getERPSyncBOMValue(component, [fieldIds.type, 'TYPE'], '')).trim().toLowerCase();
+                let componentVersionId = getERPSyncBOMVersionId(component);
+                let structureRow = {
+                    numer_operacji  : processNumber,
+                    indeks_skladowy : normalizeERPTechnologyIndex(componentIndex),
+                    rewizja         : type === 'manufacturing' ? getERPSyncBOMRevision(component) : '',
+                    ilosc_stala     : 0,
+                    ilosc_jednostek : Number(component.quantity) || 1,
+                    jednostka_miary : getERPSyncBOMUnitOfMeasure(component)
+                };
+                if(!isBlank(componentVersionId)) structureRow.id_wersji_skladowej = componentVersionId;
+                payload.struktura.push(structureRow);
+            });
+        });
+
+        sortERPTechnologyOperations(payload);
+        sortERPTechnologyStructure(payload);
+
+        return {
+            jobType           : 'technology',
+            elemItem          : $(),
+            link              : part.link,
+            descriptor        : part.title || rawIndex,
+            level             : Number(part.level) || 0,
+            synced            : technologySynced,
+            isMainRoot        : isMainRoot,
+            isAssemblyIndex   : assemblyIndex,
+            productRequired   : !productState.productExists,
+            productPayload    : productState.productExists ? null : buildERPSyncBOMProductPayload(part, assemblyIndex),
+            productHashPayload: buildERPSyncBOMProductPayload(part, assemblyIndex),
+            productSourceLink : part.link,
+            productIndexToCopy: '',
+            productUpdateMode : productState.updateMode,
+            payload           : payload,
+            storedERPHash     : getERPSyncBOMStoredHash(part),
+            erpSyncStatus     : getERPSyncBOMStatus(part)
+        };
+    }
+
+    function collectERPTechnologyJobs(options) {
+        options = options || {};
+        let revisionBias = options.revisionBias || 'working';
+        return loadERPSyncBOMParts(revisionBias).then(function(parts) {
+            let productJobs = [];
+            let productLinks = new Set();
+
+            parts.forEach(function(part, index) {
+                if(index === 0 || isERPSyncBOMOperation(part) || isERPSyncBOMManufacturing(part)) return;
+                let linkKey = normalizePLMLink(part.link);
+                if(isBlank(linkKey) || productLinks.has(linkKey)) return;
+                productLinks.add(linkKey);
+                let productState = getERPSyncBOMProductState(part);
+
+                let assemblyIndex = isAssemblyIndexNode(part);
+                let fieldIds = config.workspaceMBOM.fieldIDs || {};
+                productJobs.push({
+                    jobType           : 'product',
+                    elemItem          : $(),
+                    link              : part.link,
+                    descriptor        : part.title || part.partNumber || '',
+                    level             : Number(part.level) || 0,
+                    productRequired   : !productState.productExists,
+                    productPayload    : buildERPSyncBOMProductPayload(part, assemblyIndex),
+                    productSourceLink : part.link,
+                    productIndexToCopy: '',
+                    productUpdateMode : productState.updateMode,
+                    storedERPHash     : getERPSyncBOMStoredHash(part),
+                    erpSyncStatus     : getERPSyncBOMStatus(part),
+                    componentType    : String(getERPSyncBOMValue(part, [fieldIds.type, 'TYPE'], '') || '')
+                });
+            });
+
+            let technologyJobs = parts.map(function(part, index) {
+                return buildERPSyncBOMTechnologyJob(part, index === 0);
+            }).filter(function(job) {
+                return !!job && !!job.payload && !isBlank(job.payload.indeks) && job.payload.operacje.length > 0;
+            });
+
+            let componentWarnings = productJobs.filter(function(job) {
+                    return job.erpSyncStatus !== 'UP_TO_DATE';
+                }).map(function(job) {
+                    let status = job.erpSyncStatus === 'OUT_OF_DATE' ? 'OUT_OF_DATE' : 'NOT_SYNCED';
+                    return {
+                        descriptor : job.descriptor,
+                        link       : job.link,
+                        type       : job.componentType || 'Komponent',
+                        status     : status
+                    };
+                });
+
+            if(componentWarnings.length > 0) {
+                let warning = new Error('Komponenty inne niz Manufacturing musza zostac najpierw zsynchronizowane przez ERP Interface.');
+                warning.erpComponentWarnings = componentWarnings;
+                throw warning;
+            }
+
+            let hashPromise = options.calculateHashes === false ? Promise.resolve(technologyJobs) : Promise.all(technologyJobs.map(calculateERPHash));
+
+            return hashPromise.then(function(hashedJobs) {
+                let requiredTechnologies = options.calculateHashes === false
+                    ? hashedJobs
+                    : hashedJobs.filter(function(job) {
+                        return job.productRequired || !job.synced || job.erpOutOfDate || job.erpSyncStatus !== 'UP_TO_DATE';
                     });
-                    return null;
-                });
-            }).then(function(jobs) {
-                let filteredJobs = jobs.filter(function(job) {
-                    return job !== null && job.payload && !isBlank(job.payload.indeks) && Array.isArray(job.payload.operacje) && job.payload.operacje.length > 0;
+
+                console.log('MBOM custom: ERP jobs built from one ERP Sync BOM response', {
+                    parts        : parts.length,
+                    products     : 0,
+                    technologies : requiredTechnologies.length
                 });
 
-                filteredJobs = filteredJobs.filter(function(job) {
-                    if(isERPTechnologyMainRootItem(job.elemItem)) return true;
-                    if(job.isAssemblyIndex) return true;
-                    if(job.productRequired) return true;
-                    return !job.synced;
-                });
-
-                return orderERPTechnologyJobsBottomUp(filteredJobs);
+                return orderERPTechnologyJobsBottomUp(requiredTechnologies);
             });
         });
     }
@@ -6090,15 +6724,15 @@
         let elemButton = $('#preview-erp-technologies');
         if(elemButton.hasClass('disabled')) return;
 
-        elemButton.addClass('disabled').text('Building...');
-        setERPStatusOutput('Building ERP technology payloads', {
+        elemButton.addClass('disabled').text('Przygotowywanie…');
+        setERPStatusOutput('Przygotowywanie danych technologii ERP', {
             timestamp : new Date().toISOString()
         }, false);
 
         collectERPTechnologyJobs().then(function(jobs) {
             if(jobs.length === 0) {
-                setERPStatusOutput('No ERP technology payloads found', {
-                    message : 'No process-based technology roots are available in the current MBOM.'
+                setERPStatusOutput('Nie znaleziono danych technologii ERP', {
+                    message : 'Bieżący mBOM nie zawiera technologii opartych na operacjach ani produktów wymagających wysłania.'
                 }, true);
                 return;
             }
@@ -6106,6 +6740,17 @@
             let previewItems = [];
 
             jobs.forEach(function(job) {
+                if(job.jobType === 'product') {
+                    previewItems.push({
+                        order      : previewItems.length + 1,
+                        callName   : 'add-product',
+                        indeks     : job.productPayload ? job.productPayload.indeks : '',
+                        descriptor : job.descriptor,
+                        payload    : job.productPayload
+                    });
+                    return;
+                }
+
                 if(job.productRequired) {
                     previewItems.push({
                         order      : previewItems.length + 1,
@@ -6118,44 +6763,45 @@
 
                 previewItems.push({
                     order      : previewItems.length + 1,
-                    callName   : job.synced ? 'modify-technology' : 'add-technology',
+                    callName   : 'add-technology',
                     indeks     : job.payload.indeks,
                     descriptor : job.descriptor,
                     payload    : job.payload
                 });
             });
 
-            setERPStatusOutput('ERP technology payload preview', {
+            setERPStatusOutput('Podgląd danych technologii ERP', {
                 requestCount : previewItems.length,
-                message      : 'The currently opened MBOM will send ' + previewItems.length + ' ERP request(s).',
+                message      : 'Bieżący mBOM wyśle do ERP następującą liczbę żądań: ' + previewItems.length + '.',
                 requests     : previewItems
             }, false);
         }).catch(function(error) {
             console.warn('MBOM custom: failed to build ERP technology payloads', error);
-            setERPStatusOutput('Building ERP technology payloads failed', {
-                error : String(error || '')
+            setERPStatusOutput(error && error.erpComponentWarnings
+                ? 'Najpierw zsynchronizuj komponenty w ERP Interface'
+                : 'Nie udało się przygotować danych technologii ERP', {
+                error      : String(error && error.message ? error.message : error || ''),
+                komponenty : error && error.erpComponentWarnings ? error.erpComponentWarnings : undefined
             }, true);
         }).finally(function() {
-            elemButton.removeClass('disabled').text('Preview Technology JSON');
+            elemButton.removeClass('disabled').text('Podgląd JSON technologii');
         });
     }
 
-    function updateERPSyncFields(link, erpResponseBody, updateMode) {
+    function updateERPSyncFields(link, erpResponseBody, updateMode, erpHash) {
         if(isBlank(link)) {
             return Promise.resolve(false);
         }
 
         let isTechnologyUpdate = updateMode === 'technology';
         let isProductUpdate = updateMode === 'product';
-        let workspaceConfig = isProductUpdate && typeof config !== 'undefined' && config.workspaceEBOM
-            ? config.workspaceEBOM
-            : ((typeof config !== 'undefined' && config.workspaceMBOM) ? config.workspaceMBOM : null);
+        let workspaceConfig = (typeof config !== 'undefined' && config.workspaceMBOM) ? config.workspaceMBOM : null;
         let fieldIds = workspaceConfig && workspaceConfig.fieldIDs
             ? workspaceConfig.fieldIDs
             : {};
-        let fieldIdERPSent = fieldIds.erpSent || 'WYSLANE_DO_ERP';
         let fieldIdERPVersion = fieldIds.erpVersionId || 'ID_WERSJI';
         let fieldIdERPPartIndex = fieldIds.erpPartIndex || 'INDEKS_CZESCI';
+        let fieldIdERPHash = fieldIds.erpHash || 'ERP_HASH';
 
         function normalizeERPTextValue(value) {
             if(value === null || typeof value === 'undefined') return '';
@@ -6212,7 +6858,11 @@
             return '';
         }
 
-        return $.get('/plm/sections', { link : link }).then(function(response) {
+        let sectionsPromise = (typeof wsMBOM !== 'undefined' && Array.isArray(wsMBOM.sections) && wsMBOM.sections.length > 0)
+            ? Promise.resolve({ data : wsMBOM.sections })
+            : $.get('/plm/sections', { link : link });
+
+        return sectionsPromise.then(function(response) {
             let sections = response && response.data ? response.data : [];
             let params = {
                 link     : link,
@@ -6246,8 +6896,9 @@
                 fieldsRequested.push(fieldId);
             }
 
-            if(isTechnologyUpdate || isProductUpdate) {
-                addERPField(fieldIdERPSent, 'true');
+            let isSimulatedUpdate = updateMode === 'simulation';
+            if((isTechnologyUpdate || isProductUpdate || isSimulatedUpdate) && !isBlank(erpHash)) {
+                addERPField(fieldIdERPHash, 'pending:' + String(erpHash).replace(/^pending:/, ''));
             }
             if(erpResponseBody && typeof erpResponseBody === 'object') {
                 if(isTechnologyUpdate) {
@@ -6308,7 +6959,7 @@
 
         return {
             status       : Number(error.status) || Number(response.status) || null,
-            message      : message || 'ERP request failed',
+            message      : message || 'Żądanie ERP nie powiodło się.',
             requestDump  : responseData.requestDumpUrl || '',
             responseDump : responseData.dumpUrl || ''
         };
@@ -6343,7 +6994,7 @@
                 descriptor : currentJob.descriptor,
                 testRun    : testRun,
                 success    : false,
-                error      : 'ERP product payload is incomplete: ' + missingFields.join(', ')
+                error      : 'Dane produktu ERP są niekompletne: ' + missingFields.join(', ')
             });
             return Promise.resolve(false);
         }
@@ -6366,13 +7017,19 @@
             let success = !!response && !response.error && status === 200;
 
             let erpResponseBody = response && response.data ? response.data.body : null;
+            let simulated = !!(response && response.data && response.data.mode === 'simulation');
             let indexUpdatePromise = Promise.resolve(false);
             if(!testRun && success) {
                 let updateRequests = [];
                 let productSourceLink = currentJob.productSourceLink || currentJob.link;
 
-                updateRequests.push(updateERPSyncFields(productSourceLink, erpResponseBody, 'product'));
-                if(normalizePLMLink(productSourceLink) !== normalizePLMLink(currentJob.link)) {
+                updateRequests.push(updateERPSyncFields(
+                    productSourceLink,
+                    simulated ? null : erpResponseBody,
+                    simulated ? 'simulation' : (currentJob.productUpdateMode || 'product'),
+                    currentJob.productUpdateMode === 'product' || simulated ? currentJob.erpHash : ''
+                ));
+                if(!simulated && normalizePLMLink(productSourceLink) !== normalizePLMLink(currentJob.link)) {
                     updateRequests.push(updateERPSyncFields(currentJob.link, erpResponseBody, 'index'));
                 }
 
@@ -6395,7 +7052,8 @@
                     requestDump : response && response.data ? response.data.requestDumpUrl : '',
                     responseDump: response && response.data ? response.data.dumpUrl : '',
                     indexUpdated: indexUpdated,
-                    error       : success ? '' : ((response && response.message) || 'ERP add-product did not return status 200.')
+                    erpHash     : currentJob.erpHash || '',
+                    error       : success ? '' : ((response && response.message) || 'Operacja ERP add-product nie zwróciła statusu 200.')
                 });
 
                 return success;
@@ -6431,7 +7089,7 @@
 
         $('<div></div>')
             .addClass('dialog-header')
-            .text('ERP Technology Sync')
+            .text('Synchronizacja technologii ERP')
             .appendTo(elemDialog);
 
         let elemContent = $('<div></div>')
@@ -6464,8 +7122,8 @@
                 .appendTo(elemStep);
         }
 
-        addProgressStep('erp-step-reading', 'Reading MBOM');
-        addProgressStep('erp-step-sending', 'Sending Technologies to ERP');
+        addProgressStep('erp-step-reading', 'Odczytywanie mBOM');
+        addProgressStep('erp-step-sending', 'Wysyłanie do ERP');
 
         let elemFooter = $('<div></div>')
             .addClass('dialog-footer')
@@ -6474,7 +7132,7 @@
         $('<div></div>')
             .attr('id', 'confirm-erp-sync')
             .addClass('button disabled')
-            .text('Close')
+            .text('Zamknij')
             .click(function() {
                 if($(this).hasClass('disabled')) return;
                 elemDialog.hide();
@@ -6488,7 +7146,7 @@
     function showERPSyncProgressDialog() {
         let elemDialog = ensureERPSyncProgressDialog();
 
-        elemDialog.find('.dialog-header').text('ERP Technology Sync');
+        elemDialog.find('.dialog-header').text('Synchronizacja technologii ERP');
         elemDialog.find('.step').removeClass('in-work');
         elemDialog.find('.step-bar')
             .addClass('transition-stopper')
@@ -6496,8 +7154,8 @@
             .removeClass('transition-stopper');
 
         $('#erp-step-reading').addClass('in-work');
-        $('#erp-step-reading-counter').text('Reading');
-        $('#erp-step-sending-counter').text('Waiting');
+        $('#erp-step-reading-counter').text('Odczytywanie');
+        $('#erp-step-sending-counter').text('Oczekiwanie');
         $('#confirm-erp-sync').addClass('disabled').removeClass('default');
 
         $('#overlay').show();
@@ -6509,10 +7167,10 @@
 
         $('#erp-step-reading').removeClass('in-work');
         $('#erp-step-reading-bar').css('width', '100%');
-        $('#erp-step-reading-counter').text('Done');
+        $('#erp-step-reading-counter').text('Gotowe');
         $('#erp-step-sending').addClass('in-work');
         $('#erp-step-sending-bar').css('width', '0%');
-        $('#erp-step-sending-counter').text('0 of ' + count);
+        $('#erp-step-sending-counter').text('0 z ' + count);
     }
 
     function updateERPSyncSendingProgress(current, total) {
@@ -6521,7 +7179,7 @@
         let progress = count > 0 ? Math.min(100, done * 100 / count) : 100;
 
         $('#erp-step-sending-bar').css('width', progress + '%');
-        $('#erp-step-sending-counter').text(done + ' of ' + count);
+        $('#erp-step-sending-counter').text(done + ' z ' + count);
     }
 
     function completeERPSyncProgressDialog(total, failed) {
@@ -6529,12 +7187,25 @@
 
         $('#erp-step-reading').removeClass('in-work');
         $('#erp-step-reading-bar').css('width', '100%');
-        $('#erp-step-reading-counter').text('Done');
+        $('#erp-step-reading-counter').text('Gotowe');
         $('#erp-step-sending').removeClass('in-work');
         $('#erp-step-sending-bar').css('width', '100%');
-        $('#erp-step-sending-counter').text(count + ' of ' + count);
-        $('#dialog-erp-sync .dialog-header').text(failed ? 'ERP Technology Sync Failed' : 'ERP Technology Sync Complete');
+        $('#erp-step-sending-counter').text(count + ' z ' + count);
+        $('#dialog-erp-sync .dialog-header').text(failed ? 'Synchronizacja technologii ERP nie powiodła się' : 'Synchronizacja technologii ERP zakończona');
         $('#confirm-erp-sync').removeClass('disabled').addClass('default');
+    }
+
+    function addERPProductJobsToAffectedItems(productJobs, testRun) {
+        if(testRun || !Array.isArray(productJobs) || productJobs.length === 0) {
+            return Promise.resolve({ added : 0 });
+        }
+
+        return syncMBOMChangeOrderAfterSave().then(function(changeOrderResult) {
+            if(!changeOrderResult || isBlank(changeOrderResult.release)) {
+                return { added : 0, skipped : true };
+            }
+            return changeOrderResult.add || { added : 0 };
+        });
     }
 
     function syncERPTechnologies() {
@@ -6543,9 +7214,9 @@
         let testRun = isERPTechnologyTestRunEnabled();
         let totalJobs = 0;
 
-        elemButton.addClass('disabled').text('Syncing...');
+        elemButton.addClass('disabled').text('Synchronizacja…');
         showERPSyncProgressDialog();
-        setERPStatusOutput(testRun ? 'Exporting ERP technology request JSON' : 'Syncing ERP technologies', {
+        setERPStatusOutput(testRun ? 'Eksport żądań technologii ERP do JSON' : 'Synchronizacja technologii ERP', {
             timestamp : new Date().toISOString(),
             testRun   : testRun
         }, false);
@@ -6555,16 +7226,19 @@
             startERPSyncSendingProgress(totalJobs);
 
             if(jobs.length === 0) {
-                setERPStatusOutput('No ERP technology payloads found', {
-                    message : 'No process-based technology roots are available in the current MBOM.'
+                setERPStatusOutput('Nie znaleziono danych do synchronizacji ERP', {
+                    message : 'Bieżący mBOM nie zawiera technologii opartych na operacjach ani produktów wymagających wysłania.'
                 }, true);
                 completeERPSyncProgressDialog(totalJobs, true);
                 return;
             }
 
+            let productJobs = jobs.filter(function(job) { return job.jobType === 'product'; });
+            return addERPProductJobsToAffectedItems(productJobs, testRun).then(function() {
             let results = [];
             let chain = Promise.resolve();
             let completedJobs = 0;
+            let allProductsReady = true;
 
             jobs.forEach(function(job, index) {
                 chain = chain.then(function() {
@@ -6572,6 +7246,25 @@
                     // discovery phase. Reuse it so ERP requests stay sequential
                     // without repeating all PLM detail and structure reads.
                     return Promise.resolve(job).then(function(currentJob) {
+                        if(currentJob && currentJob.jobType === 'product') {
+                            return ensureERPProductPrerequisite(currentJob, testRun, results).then(function(productReady) {
+                                if(!productReady) allProductsReady = false;
+                                return null;
+                            });
+                        }
+
+                        if(!allProductsReady) {
+                            results.push({
+                                order      : results.length + 1,
+                                callName   : 'skipped-technology',
+                                indeks     : currentJob && currentJob.payload ? currentJob.payload.indeks : '',
+                                descriptor : currentJob ? currentJob.descriptor : '',
+                                success    : false,
+                                error      : 'Nie wszystkie komponenty istnieją w ERP. Synchronizacja technologii została pominięta.'
+                            });
+                            return null;
+                        }
+
                         if(!currentJob || !currentJob.payload || isBlank(currentJob.payload.indeks) || !Array.isArray(currentJob.payload.operacje) || currentJob.payload.operacje.length === 0) {
                             results.push({
                                 order      : results.length + 1,
@@ -6579,20 +7272,7 @@
                                 indeks     : '',
                                 descriptor : getERPTechnologyDescriptor(job.elemItem),
                                 success    : false,
-                                error      : 'Could not rebuild ERP technology payload before sending.'
-                            });
-                            return null;
-                        }
-
-                        if(!isERPTechnologyMainRootItem(currentJob.elemItem) &&
-                            currentJob.synced &&
-                            !currentJob.isAssemblyIndex &&
-                            !currentJob.productRequired) {
-                            console.log('MBOM custom: skipping ERP calls for already synced sub-MBOM item', {
-                                link       : currentJob.link,
-                                indeks     : currentJob.payload.indeks,
-                                descriptor : currentJob.descriptor,
-                                erpSent    : true
+                                error      : 'Nie udało się ponownie przygotować danych technologii ERP przed wysłaniem.'
                             });
                             return null;
                         }
@@ -6606,7 +7286,7 @@
                                 return null;
                             }
 
-                            let callName = currentJob.synced ? 'modify-technology' : 'add-technology';
+                            let callName = 'add-technology';
                             let requestUrl = testRun
                                 ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
                                 : erpTechnologyProxyBaseUrl + callName;
@@ -6623,6 +7303,7 @@
                                 let status = Number(response && response.status);
                                 let success = !!response && !response.error && status === 200;
                                 let erpResponseBody = response && response.data ? response.data.body : null;
+                                let simulated = !!(response && response.data && response.data.mode === 'simulation');
                                 console.log('MBOM custom: ERP technology raw response payload', {
                                     callName        : callName,
                                     status          : status,
@@ -6631,7 +7312,12 @@
                                     erpResponseBody : erpResponseBody
                                 });
                                 let flagUpdatePromise = (!testRun && success)
-                                    ? updateERPSyncFields(currentJob.link, erpResponseBody, 'technology')
+                                    ? updateERPSyncFields(
+                                        currentJob.link,
+                                        simulated ? null : erpResponseBody,
+                                        simulated ? 'simulation' : 'technology',
+                                        currentJob.erpHash
+                                    )
                                     : Promise.resolve(false);
 
                                 return flagUpdatePromise.then(function(flagUpdated) {
@@ -6646,9 +7332,10 @@
                                         status      : status,
                                         success     : success,
                                         requestDump : response && response.data ? response.data.requestDumpUrl : '',
-                                        responseDump: response && response.data ? response.data.dumpUrl : '',
-                                        flagUpdated : flagUpdated,
-                                        error       : success ? '' : ((response && response.message) || 'ERP technology request did not return status 200.')
+                                    responseDump: response && response.data ? response.data.dumpUrl : '',
+                                    flagUpdated : flagUpdated,
+                                    erpHash     : currentJob.erpHash || '',
+                                    error       : success ? '' : ((response && response.message) || 'ERP technology request did not return status 200.')
                                     });
                                 });
                             });
@@ -6671,7 +7358,7 @@
 
             return chain.then(function() {
                 renderERPTechnologySyncResults(
-                    testRun ? 'ERP technology request export finished' : 'ERP technology sync finished',
+                    testRun ? 'Eksport żądań technologii ERP zakończony' : 'Synchronizacja technologii ERP zakończona',
                     results,
                     results.some(function(result) { return !result.success; }),
                     testRun
@@ -6681,17 +7368,120 @@
                     results.some(function(result) { return !result.success; })
                 );
             });
+            });
         }).catch(function(error) {
             console.warn('MBOM custom: ERP technology sync failed', error);
-            setERPStatusOutput('ERP technology sync failed', {
-                error : String(error || '')
+            setERPStatusOutput(error && error.erpComponentWarnings
+                ? 'Synchronizacja zablokowana - komponenty wymagają synchronizacji'
+                : 'Synchronizacja technologii ERP nie powiodła się', {
+                error      : String(error && error.message ? error.message : error || ''),
+                komponenty : error && error.erpComponentWarnings ? error.erpComponentWarnings : undefined
             }, true);
             completeERPSyncProgressDialog(totalJobs, true);
         }).finally(function() {
-            elemButton.removeClass('disabled').text('Sync Technology to ERP');
+            elemButton.removeClass('disabled').text('Synchronizuj technologię z ERP');
         });
     }
 
+
+    function getERPTechnologyResponseVersionId(responseBody) {
+        if(!responseBody || typeof responseBody !== 'object') return '';
+        let value = responseBody.id_wersji;
+        if(isBlank(value)) value = responseBody.ID_WERSJI;
+        let number = Number(value);
+        return isBlank(value) || Number.isNaN(number) ? '' : Math.trunc(number);
+    }
+
+    function applyERPChildTechnologyVersions(job, versionByIndex) {
+        if(!job || !job.payload || !Array.isArray(job.payload.struktura)) return;
+        job.payload.struktura.forEach(function(row) {
+            let index = String(row.indeks_skladowy || '');
+            if(Object.prototype.hasOwnProperty.call(versionByIndex, index)) {
+                row.id_wersji_skladowej = versionByIndex[index];
+            }
+        });
+    }
+
+    function sendReleasedMBOMTechnologiesToERP(onProgress) {
+        let results = [];
+        let versionByIndex = {};
+
+        return collectERPTechnologyJobs({
+            revisionBias    : 'release',
+            calculateHashes : false
+        }).then(function(jobs) {
+            if(jobs.length === 0) throw new Error('Po zwolnieniu nie znaleziono żadnych technologii mBOM do wysłania do Impuls.');
+            if(typeof onProgress === 'function') onProgress(0, jobs.length, 'Wczytano zwolnione rewizje mBOM.');
+
+            let chain = Promise.resolve();
+            jobs.forEach(function(job, index) {
+                chain = chain.then(function() {
+                    applyERPChildTechnologyVersions(job, versionByIndex);
+                    return calculateERPHash(job);
+                }).then(function(currentJob) {
+                    return ensureERPProductPrerequisite(currentJob, false, results).then(function(productReady) {
+                        if(!productReady) throw new Error('Nie udało się przygotować produktu ERP dla „' + currentJob.descriptor + '”.');
+
+                        return $.post(erpTechnologyProxyBaseUrl + 'add-technology', currentJob.payload, null, 'json').then(function(response) {
+                            let status = Number(response && response.status);
+                            let success = !!response && !response.error && status === 200;
+                            let responseBody = response && response.data ? response.data.body : null;
+                            let simulated = !!(response && response.data && response.data.mode === 'simulation');
+
+                            if(!success) {
+                                throw new Error((response && response.message) || 'Impuls nie zwrócił statusu 200 dla „' + currentJob.descriptor + '”.');
+                            }
+
+                            return updateERPSyncFields(
+                                currentJob.link,
+                                simulated ? null : responseBody,
+                                simulated ? 'simulation' : 'technology',
+                                currentJob.erpHash
+                            ).then(function(updated) {
+                                if(!updated) throw new Error('Nie udało się zapisać wyniku synchronizacji ERP w PLM dla „' + currentJob.descriptor + '”.');
+
+                                let newVersionId = getERPTechnologyResponseVersionId(responseBody);
+                                if(!isBlank(newVersionId)) versionByIndex[String(currentJob.payload.indeks || '')] = newVersionId;
+
+                                results.push({
+                                    order       : results.length + 1,
+                                    callName    : 'add-technology',
+                                    indeks      : currentJob.payload.indeks,
+                                    descriptor  : currentJob.descriptor,
+                                    revision    : currentJob.payload.rewizja,
+                                    status      : status,
+                                    success     : true,
+                                    requestDump : response && response.data ? response.data.requestDumpUrl : '',
+                                    responseDump: response && response.data ? response.data.dumpUrl : '',
+                                    erpHash     : currentJob.erpHash,
+                                    erpVersionId: newVersionId
+                                });
+                            });
+                        });
+                    });
+                }).then(function() {
+                    if(typeof onProgress === 'function') onProgress(index + 1, jobs.length, 'Wysłano „' + job.descriptor + '”.');
+                }).catch(function(error) {
+                    let failure = getERPRequestFailureDetails(error);
+                    results.push({
+                        order      : results.length + 1,
+                        callName   : 'add-technology',
+                        indeks     : job && job.payload ? job.payload.indeks : '',
+                        descriptor : job ? job.descriptor : '',
+                        revision   : job && job.payload ? job.payload.rewizja : '',
+                        success    : false,
+                        error      : error && error.message ? error.message : failure.message
+                    });
+                    error.erpResults = results;
+                    throw error;
+                });
+            });
+
+            return chain.then(function() {
+                return { jobs : jobs, results : results };
+            });
+        });
+    }
     function formatERPStatusPayload(payload) {
         if(typeof payload === 'string') {
             try {
@@ -6735,33 +7525,39 @@
             let descriptor = escapeERPStatusHtml(result.descriptor || result.indeks || '');
             let callName = escapeERPStatusHtml(result.callName || 'ERP');
 
-            html += '<div class="erp-status-line">Found next record to process</div>';
-            html += '<div class="erp-status-line">- Processing "' + descriptor + '"</div>';
+            html += '<div class="erp-status-line">Znaleziono kolejny rekord do przetworzenia</div>';
+            html += '<div class="erp-status-line">– Przetwarzanie „' + descriptor + '”</div>';
 
             if(result.success) {
-                html += '<div class="erp-status-line">ERP ' + callName + ' succeeded for "' + descriptor + '"</div>';
+                html += '<div class="erp-status-line">Operacja ERP ' + callName + ' zakończona powodzeniem dla „' + descriptor + '”</div>';
             } else {
-                html += '<div class="erp-status-line error">ERP ' + callName + ' failed for "' + descriptor + '"</div>';
+                html += '<div class="erp-status-line error">Operacja ERP ' + callName + ' nie powiodła się dla „' + descriptor + '”</div>';
             }
 
             if(result.requestDump) {
-                html += '<div class="erp-status-line">ERP request file: <a target="_blank" href="' + escapeERPStatusHtml(result.requestDump) + '">Open JSON request</a></div>';
+                html += '<div class="erp-status-line">Plik żądania ERP: <a target="_blank" href="' + escapeERPStatusHtml(result.requestDump) + '">Otwórz JSON żądania</a></div>';
+            }
+
+            if(testRun && result.erpHash) {
+                html += '<div class="erp-status-line">Wyliczony ERP_HASH: ' + escapeERPStatusHtml(result.erpHash) + '</div>';
+                html += '<div class="erp-status-line">Symulacja onEdit: ERP_SYNC_STATUS = UP_TO_DATE, ERP_SYNC_DATE = bieżąca data i czas.</div>';
+                html += '<div class="erp-status-line">Tryb testowy nie zmienił żadnych pól w PLM.</div>';
             }
 
             if(!testRun && result.responseDump) {
-                html += '<div class="erp-status-line">ERP response file: <a target="_blank" href="' + escapeERPStatusHtml(result.responseDump) + '">Open JSON dump</a></div>';
+                html += '<div class="erp-status-line">Plik odpowiedzi ERP: <a target="_blank" href="' + escapeERPStatusHtml(result.responseDump) + '">Otwórz JSON odpowiedzi</a></div>';
             }
 
             if(result.error) {
-                html += '<div class="erp-status-line error">Error: ' + escapeERPStatusHtml(result.error) + '</div>';
+                html += '<div class="erp-status-line error">Błąd: ' + escapeERPStatusHtml(result.error) + '</div>';
             }
 
             html += '<div class="erp-status-line">&nbsp;</div>';
         });
 
-        html += '<div class="erp-status-line"><strong>SUMMARY</strong></div>';
-        html += '<div class="erp-status-line">Successful items: ' + successCount + '</div>';
-        html += '<div class="erp-status-line">Failed items: ' + failedCount + '</div>';
+        html += '<div class="erp-status-line"><strong>PODSUMOWANIE</strong></div>';
+        html += '<div class="erp-status-line">Operacje zakończone powodzeniem: ' + successCount + '</div>';
+        html += '<div class="erp-status-line">Operacje zakończone błędem: ' + failedCount + '</div>';
         html += '</div>';
 
         setERPStatusHtml(title, html, isError);
@@ -6778,21 +7574,21 @@
         let setCopiedState = function(label) {
             elemButton.text(label);
             setTimeout(function() {
-                elemButton.text('Copy Response');
+                elemButton.text('Kopiuj odpowiedź');
             }, 1500);
         };
 
         if(navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
             navigator.clipboard.writeText(text)
                 .then(function() {
-                    setCopiedState('Copied');
+                    setCopiedState('Skopiowano');
                 })
                 .catch(function() {
                     window.getSelection().removeAllRanges();
                     let range = document.createRange();
                     range.selectNodeContents(elemOutput[0]);
                     window.getSelection().addRange(range);
-                    setCopiedState('Select and Copy');
+                    setCopiedState('Zaznacz i skopiuj');
                 });
             return;
         }
@@ -6801,15 +7597,15 @@
         let range = document.createRange();
         range.selectNodeContents(elemOutput[0]);
         window.getSelection().addRange(range);
-        setCopiedState('Select and Copy');
+        setCopiedState('Zaznacz i skopiuj');
     }
 
     function checkERPStatus() {
         let elemButton = $('#check-erp-status');
         if(elemButton.hasClass('disabled')) return;
 
-        elemButton.addClass('disabled').text('Checking...');
-        setERPStatusOutput('Checking ERP status', {
+        elemButton.addClass('disabled').text('Sprawdzanie…');
+        setERPStatusOutput('Sprawdzanie statusu ERP', {
             url: erpStatusProxyUrl,
             timestamp: new Date().toISOString()
         }, false);
@@ -6826,7 +7622,7 @@
                 ? response.data.body
                 : ((response && typeof response.body !== 'undefined') ? response.body : (response.data || response));
 
-            setERPStatusOutput('ERP status check succeeded', payload, false);
+            setERPStatusOutput('Sprawdzenie statusu ERP zakończone powodzeniem', payload, false);
         }).fail(function(jqXHR, textStatus, errorThrown) {
             let responseText = jqXHR.responseText || '';
             let payload = responseText;
@@ -6844,13 +7640,13 @@
                 payload = responseText;
             }
 
-            setERPStatusOutput('ERP status check failed', payload || {
+            setERPStatusOutput('Sprawdzenie statusu ERP nie powiodło się', payload || {
                 httpStatus : jqXHR.status || null,
                 statusText : textStatus,
                 error      : errorThrown || ''
             }, true);
         }).always(function() {
-            elemButton.removeClass('disabled').text('Check ERP Status');
+            elemButton.removeClass('disabled').text('Sprawdź status ERP');
         });
     }
 
@@ -6898,12 +7694,12 @@
         $('<div></div>')
             .appendTo(elemPanel)
             .addClass('erp-title')
-            .text('ERP Integration');
+            .text('Integracja ERP');
 
         $('<div></div>')
             .appendTo(elemPanel)
             .addClass('erp-description')
-            .text('Check connectivity and response from the ERP endpoint.');
+            .text('Sprawdź połączenie i odpowiedź punktu końcowego ERP.');
 
         $('<div></div>')
             .appendTo(elemPanel)
@@ -6912,7 +7708,7 @@
             .addClass('with-icon')
             .addClass('icon-toggle-on')
             .addClass('filled')
-            .text('Test Run Only')
+            .text('Tylko przebieg testowy')
             .click(function() {
                 $(this)
                     .toggleClass('filled')
@@ -6924,7 +7720,7 @@
             .appendTo(elemPanel)
             .attr('id', 'preview-erp-technologies')
             .addClass('button')
-            .text('Preview Technology JSON')
+            .text('Podgląd JSON technologii')
             .click(previewERPTechnologies);
 
         $('<div></div>')
@@ -6932,28 +7728,28 @@
             .attr('id', 'sync-erp-technologies')
             .addClass('button')
             .addClass('default')
-            .text('Sync Technology to ERP')
+            .text('Synchronizuj technologię z ERP')
             .click(syncERPTechnologies);
 
         $('<div></div>')
             .appendTo(elemPanel)
             .attr('id', 'check-erp-status')
             .addClass('button')
-            .text('Check ERP Status')
+            .text('Sprawdź status ERP')
             .click(checkERPStatus);
 
         $('<div></div>')
             .appendTo(elemPanel)
             .attr('id', 'copy-erp-status')
             .addClass('button')
-            .text('Copy Response')
+            .text('Kopiuj odpowiedź')
             .click(copyERPStatusOutput);
 
         $('<div></div>')
             .appendTo(elemPanel)
             .attr('id', 'erp-status-output')
             .addClass('erp-status-output')
-            .html('<pre>ERP status output will appear here.</pre>');
+            .html('<pre>W tym miejscu pojawi się odpowiedź ERP.</pre>');
 
         $('#tabs').append(elemERP);
     }
@@ -8567,7 +9363,7 @@
             : picklist;
 
         if(isBlank(picklistLink)) {
-            return Promise.reject(new Error('The Change Template field has no picklist definition.'));
+            return Promise.reject(new Error('Pole szablonu zmiany nie ma zdefiniowanej listy wyboru.'));
         }
 
         let offset = 0;
@@ -8587,11 +9383,11 @@
 
                 if(option) {
                     let optionLink = option.link || option.__self__;
-                    if(isBlank(optionLink)) throw new Error('The Fast Track change template returned no option link.');
+                    if(isBlank(optionLink)) throw new Error('Szablon zmiany Fast Track nie zwrócił odnośnika do opcji.');
                     return { link : optionLink };
                 }
                 if(items.length < 250) {
-                    throw new Error('The Fast Track option was not found in the Change Template picklist.');
+                    throw new Error('Nie znaleziono opcji Fast Track na liście szablonów zmian.');
                 }
 
                 offset += items.length;
@@ -8621,7 +9417,7 @@
     function findExistingMBOMChangeOrder(rootLink, workspaceId, expectedTitle) {
         return $.get('/plm/changes', { link : rootLink, useCache : false }).then(function(response) {
             if(!response || response.error || !Array.isArray(response.data)) {
-                throw new Error('Could not load the change orders linked to the root mBOM.');
+                throw new Error('Nie udało się wczytać zleceń zmian powiązanych z głównym mBOM.');
             }
 
             let workspaceSegment = '/workspaces/' + String(workspaceId) + '/';
@@ -8698,7 +9494,7 @@
             if(responses.some(function(response) {
                 return !response || response.error || !Array.isArray(response.data);
             })) {
-                throw new Error('Could not load the WS_CHANGE_ORDERS workspace definition.');
+                throw new Error('Nie udało się wczytać definicji obszaru roboczego zleceń zmian.');
             }
 
             requiredFieldLabels = responses[1].data.filter(function(field) {
@@ -8716,7 +9512,7 @@
             let templateField = findMBOMChangeOrderField(workspaceFields, 'CHANGE_TEMPLATE', 'Change Template');
 
             if(!titleField || !descriptionField || !templateField) {
-                throw new Error('Could not identify Title, Description, and Change Template in WS_CHANGE_ORDERS.');
+                throw new Error('Nie udało się odnaleźć pól Tytuł, Opis i Szablon zmiany w obszarze zleceń zmian.');
             }
 
             return resolveMBOMChangeOrderPicklistValue(templateField, 'Fast Track').then(function(templateValue) {
@@ -8725,7 +9521,7 @@
                     value   : getMBOMChangeOrderTitle(itemNumber)
                 }, {
                     fieldId : getMBOMChangeOrderFieldId(descriptionField),
-                    value   : 'Automatic Release created from mBOM Editor'
+                    value   : 'Zlecenie zmian utworzone w edytorze mBOM'
                 }, {
                     fieldId : getMBOMChangeOrderFieldId(templateField),
                     value   : templateValue
@@ -8745,14 +9541,14 @@
             if(!response || response.error) {
                 let message = getRawMaterialErrorMessage(response);
                 if(requiredFieldLabels.length > 0) {
-                    message += ' Required WS_CHANGE_ORDERS fields: ' + requiredFieldLabels.join(', ') + '.';
+                    message += ' Wymagane pola obszaru zleceń zmian: ' + requiredFieldLabels.join(', ') + '.';
                 }
                 throw new Error(message);
             }
 
             let link = response.data && response.data.__self__ ? response.data.__self__ : response.data;
             link = getPLMItemLevelLink(link);
-            if(isBlank(link)) throw new Error('The new change order returned no item link.');
+            if(isBlank(link)) throw new Error('Nowe zlecenie zmian nie zwróciło odnośnika do elementu.');
 
             return link;
         });
@@ -8775,7 +9571,7 @@
     function addMissingMBOMAffectedItems(changeOrderLink, mbomLinks) {
         return $.get('/plm/manages', { link : changeOrderLink, useCache : false }).then(function(response) {
             if(!response || response.error || !Array.isArray(response.data)) {
-                throw new Error('Could not load the affected items of the change order.');
+                throw new Error('Nie udało się wczytać pozycji objętych zleceniem zmian.');
             }
 
             let affected = {};
@@ -8791,6 +9587,520 @@
 
             return addMBOMAffectedItems(changeOrderLink, missing);
         });
+    }
+
+    function loadMBOMChangeOrderAffectedItemLinks() {
+        let rootItem = $('#mbom-tree').children('.item').first();
+        let rootLink = getPLMItemLevelLink(
+            (typeof links !== 'undefined' && links && !isBlank(links.mbom))
+                ? links.mbom
+                : getMBOMSaveLink(rootItem)
+        );
+        if(isBlank(rootLink)) {
+            return Promise.reject(new Error('Nie znaleziono zapisanego mBOM.'));
+        }
+
+        return getRawMaterialsBOMView().then(function(view) {
+            return $.get('/plm/bom', {
+                link            : rootLink,
+                viewId          : view.id,
+                depth           : getCustomMBOMDepth(),
+                revisionBias    : 'working',
+                getBOMPartsList : true
+            });
+        }).then(function(response) {
+            let parts = response && response.data && Array.isArray(response.data.bomPartsList)
+                ? response.data.bomPartsList
+                : [];
+            if(parts.length === 0) {
+                throw new Error('Widok BOM „' + rawMaterialsBOMViewName + '” nie zwrócił żadnych elementów.');
+            }
+
+            let fieldIds = config.workspaceMBOM.fieldIDs || {};
+            let seen = {};
+            let affectedLinks = [rootLink];
+            seen[normalizePLMLink(rootLink)] = true;
+
+            parts.forEach(function(part) {
+                let type = normalizeComparisonValue(
+                    getMBOMAccountingFieldValue(part, fieldIds.type || 'TYPE')
+                );
+                if(type !== 'manufacturing' && type !== normalizeComparisonValue(rawMaterialTypeName)) return;
+
+                let link = getPLMItemLevelLink(getPartItemLink(part));
+                let key = normalizePLMLink(link);
+                if(isBlank(link) || isBlank(key) || seen[key]) return;
+                seen[key] = true;
+                affectedLinks.push(link);
+            });
+
+            return affectedLinks;
+        });
+    }
+
+    function performMBOMChangeOrderTransition(changeOrderLink, transitionId, comment) {
+        return $.get('/plm/transitions', { link : changeOrderLink }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Nie udało się wczytać dostępnych przejść zlecenia zmian.');
+            }
+
+            let transition = response.data.find(function(action) {
+                let actionLink = action ? (action.__self__ || action.link || '') : '';
+                return String(actionLink).split('/').pop() === String(transitionId);
+            });
+            if(!transition) {
+                throw new Error('Przejście ' + transitionId + ' nie jest dostępne dla bieżącego zlecenia zmian.');
+            }
+
+            return $.post('/plm/transition', {
+                link       : changeOrderLink,
+                transition : transition.__self__ || transition.link,
+                comment    : comment
+            }).then(function(transitionResponse) {
+                if(!transitionResponse || transitionResponse.error) {
+                    throw new Error(getRawMaterialErrorMessage(transitionResponse));
+                }
+                return transitionResponse;
+            });
+        });
+    }
+
+
+    function getMBOMLifecycleTitle(value) {
+        if(isBlank(value)) return '';
+        if(typeof value === 'string') return value;
+        return value.title || value.name || value.value || '';
+    }
+
+    function getMBOMAffectedItemLifecycleState(entry) {
+        let item = entry && entry.item ? entry.item : {};
+        let candidates = [
+            entry && entry.currentState,
+            entry && entry.lifecycle,
+            entry && entry.lifecycleState,
+            item.currentState,
+            item.lifecycle,
+            item.lifecycleState
+        ];
+
+        for(let candidate of candidates) {
+            let title = getMBOMLifecycleTitle(candidate);
+            if(!isBlank(title)) return String(title);
+        }
+
+        return '';
+    }
+
+    function getMBOMTargetLifecycleTransitionName(currentState) {
+        let normalizedState = normalizeComparisonValue(currentState);
+        if(normalizedState === 'working' || normalizedState === 'unreleased') return 'To Production';
+        if(normalizedState === 'production') return 'Production Revision';
+        return '';
+    }
+
+    function loadMBOMAffectedItemLifecycleState(entry) {
+        let currentState = getMBOMAffectedItemLifecycleState(entry);
+        if(!isBlank(currentState)) return Promise.resolve(currentState);
+
+        let itemLink = entry && entry.item ? getPLMItemLevelLink(entry.item.link) : '';
+        if(isBlank(itemLink)) return Promise.resolve('');
+
+        return $.get('/plm/details', { link : itemLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !response.data) {
+                throw new Error('Nie udało się odczytać cyklu życia pozycji „' + itemLink + '”.');
+            }
+            return getMBOMAffectedItemLifecycleState(response.data);
+        });
+    }
+
+    function loadMBOMWorkspaceLifecycleTransitions(itemLink, cache) {
+        let workspaceId = String(itemLink || '').split('/')[4] || '';
+        if(isBlank(workspaceId)) return Promise.reject(new Error('Nie udało się ustalić obszaru roboczego pozycji „' + itemLink + '”.'));
+        if(cache[workspaceId]) return cache[workspaceId];
+
+        cache[workspaceId] = $.get('/plm/workspace-lifecycle-transitions', {
+            link     : itemLink,
+            useCache : true
+        }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Nie udało się wczytać przejść cyklu życia dla obszaru roboczego ' + workspaceId + '.');
+            }
+            return response.data;
+        });
+
+        return cache[workspaceId];
+    }
+
+    function setMBOMAffectedItemLifecycleTransitions(changeOrderLink) {
+        return $.get('/plm/manages', { link : changeOrderLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Nie udało się wczytać pozycji objętych zleceniem zmian.');
+            }
+            if(response.data.length === 0) {
+                throw new Error('Zlecenie zmian nie zawiera żadnych pozycji objętych zmianą.');
+            }
+
+            let transitionCache = {};
+            return mapPLMRequestsWithConcurrency(response.data, 5, function(entry) {
+                let affectedItemLink = entry ? (entry.__self__ || entry.link || '') : '';
+                let itemLink = entry && entry.item ? getPLMItemLevelLink(entry.item.link) : '';
+                let itemTitle = entry && entry.item ? (entry.item.title || itemLink) : itemLink;
+
+                if(isBlank(affectedItemLink) || isBlank(itemLink)) {
+                    throw new Error('Pozycja objęta zmianą nie zawiera prawidłowego odnośnika.');
+                }
+
+                return loadMBOMAffectedItemLifecycleState(entry).then(function(currentState) {
+                    let targetName = getMBOMTargetLifecycleTransitionName(currentState);
+                    if(isBlank(targetName)) {
+                        throw new Error('Nieobsługiwany cykl życia „' + (currentState || 'brak wartości') + '” dla pozycji „' + itemTitle + '”.');
+                    }
+
+                    return loadMBOMWorkspaceLifecycleTransitions(itemLink, transitionCache).then(function(transitions) {
+                        let targetNormalized = normalizeComparisonValue(targetName);
+                        let stateNormalized = normalizeComparisonValue(currentState);
+                        let matching = transitions.filter(function(transition) {
+                            return normalizeComparisonValue(getMBOMLifecycleTitle(transition && (transition.name || transition.title))) === targetNormalized;
+                        });
+                        let transition = matching.find(function(candidate) {
+                            let fromState = getMBOMLifecycleTitle(candidate && candidate.fromState);
+                            return isBlank(fromState) || normalizeComparisonValue(fromState) === stateNormalized;
+                        }) || matching[0];
+
+                        if(!transition) {
+                            throw new Error('Nie znaleziono przejścia „' + targetName + '” dla pozycji „' + itemTitle + '”.');
+                        }
+
+                        let transitionLink = transition.__self__ || transition.link || '';
+                        let existingLink = entry.targetTransition ? (entry.targetTransition.link || entry.targetTransition.__self__ || '') : '';
+                        let existingTitle = entry.targetTransition ? getMBOMLifecycleTitle(entry.targetTransition) : '';
+                        if(isBlank(transitionLink)) {
+                            throw new Error('Przejście „' + targetName + '” nie zawiera odnośnika API.');
+                        }
+                        if(normalizePLMLink(existingLink) === normalizePLMLink(transitionLink)
+                            || normalizeComparisonValue(existingTitle) === targetNormalized) {
+                            return { item : itemLink, transition : targetName, updated : false };
+                        }
+
+                        return $.post('/plm/update-managed-item', {
+                            link       : affectedItemLink,
+                            fields     : Array.isArray(entry.linkedFields) ? entry.linkedFields : [],
+                            transition : transitionLink
+                        }).then(function(updateResponse) {
+                            if(!updateResponse || updateResponse.error) {
+                                throw new Error('Nie udało się ustawić przejścia „' + targetName + '” dla pozycji „' + itemTitle + '”. ' + getRawMaterialErrorMessage(updateResponse));
+                            }
+                            return { item : itemLink, transition : targetName, updated : true };
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    function getMBOMChangeOrderState(data) {
+        let state = data && (data.currentState || data.workflowState || data['workflow-state']);
+        if(!state && data && data.item) state = data.item.currentState;
+        if(typeof state === 'string') return { id : '', title : state };
+        state = state || {};
+        let link = state.link || state.__self__ || '';
+        return {
+            id    : String(state.systemId || state.id || String(link).split('/').pop() || ''),
+            title : String(state.title || state.name || '')
+        };
+    }
+
+    function waitForMBOMChangeOrderReleased(changeOrderLink, onStatus) {
+        let started = Date.now();
+        let timeout = 240000;
+
+        function poll() {
+            return $.get('/plm/details', { link : changeOrderLink, useCache : false }).then(function(response) {
+                if(!response || response.error || !response.data) {
+                    throw new Error('Nie udało się odczytać statusu zlecenia zmian.');
+                }
+
+                let state = getMBOMChangeOrderState(response.data);
+                if(typeof onStatus === 'function') onStatus(state);
+                if(state.id === '310' || normalizeComparisonValue(state.title) === 'released') return state;
+                if(Date.now() - started >= timeout) {
+                    throw new Error('Przekroczono czas oczekiwania na status Released. Ostatni status: ' + (state.title || state.id || 'nieznany') + '.');
+                }
+
+                return new Promise(function(resolve) { setTimeout(resolve, 2000); }).then(poll);
+            });
+        }
+
+        return poll();
+    }
+
+    function getMBOMERPWorkflowErrorComment(error) {
+        let lines = ['Błąd automatycznego wysyłania technologii do Impuls.'];
+        let message = error && error.message ? error.message : String(error || 'Nieznany błąd.');
+        lines.push(message);
+        let results = error && Array.isArray(error.erpResults) ? error.erpResults : [];
+        results.filter(function(result) { return !result.success; }).forEach(function(result) {
+            lines.push((result.descriptor || result.indeks || 'mBOM') + ': ' + (result.error || 'błąd wysyłki'));
+        });
+        return lines.join('\n').substring(0, 1900);
+    }
+
+    function continueMBOMReleaseWithERP(changeOrderLink, onProgress) {
+        let pushToERPStarted = false;
+        let syncResult = null;
+
+        function report(stage, status, message, current, total) {
+            if(typeof onProgress === 'function') onProgress(stage, status, message, current, total);
+        }
+
+        report('wait', 'active', 'Oczekiwanie na status Released.');
+        return waitForMBOMChangeOrderReleased(changeOrderLink, function(state) {
+            report('wait', 'active', 'Aktualny status: ' + (state.title || state.id || 'nieznany') + '.');
+        }).then(function() {
+            report('wait', 'done', 'Zlecenie zmian ma status Released.');
+            report('push', 'active', 'Uruchamianie przejścia Push to ERP.');
+            return performMBOMChangeOrderTransition(changeOrderLink, '569', 'Rozpoczęto wysyłanie technologii do Impuls z mBOM Editor.');
+        }).then(function() {
+            pushToERPStarted = true;
+            report('push', 'done', 'Workflow ustawiono na Push to ERP.');
+            report('erp', 'active', 'Wczytywanie zwolnionych rewizji mBOM.');
+            return sendReleasedMBOMTechnologiesToERP(function(current, total, message) {
+                report('erp', 'active', message, current, total);
+            });
+        }).then(function(result) {
+            syncResult = result;
+            report('erp', 'done', 'Wszystkie technologie wysłano do Impuls.', result.jobs.length, result.jobs.length);
+            report('finish', 'active', 'Kończenie workflow.');
+            return performMBOMChangeOrderTransition(
+                changeOrderLink,
+                '567',
+                'Wysłano wszystkie technologie do Impuls. Liczba mBOM: ' + result.jobs.length + '.'
+            );
+        }).then(function() {
+            report('finish', 'done', 'Workflow zakończono powodzeniem.');
+            return syncResult;
+        }).catch(function(error) {
+            report('finish', 'error', error && error.message ? error.message : String(error));
+            if(!pushToERPStarted) throw error;
+
+            return performMBOMChangeOrderTransition(
+                changeOrderLink,
+                '566',
+                getMBOMERPWorkflowErrorComment(error)
+            ).catch(function(transitionError) {
+                error.failureTransitionError = transitionError;
+            }).then(function() {
+                throw error;
+            });
+        });
+    }
+
+    function ensureMBOMReleaseProgressDialog() {
+        let elemDialog = $('#dialog-mbom-release-progress');
+        if(elemDialog.length > 0) return elemDialog;
+
+        elemDialog = $('<div></div>').attr('id', 'dialog-mbom-release-progress').addClass('dialog').appendTo('body');
+        $('<div></div>').addClass('dialog-header').text('Zwalnianie technologii').appendTo(elemDialog);
+        let elemContent = $('<div></div>').addClass('dialog-content').appendTo(elemDialog);
+        [
+            ['release', 'Zwalnianie w PLM'],
+            ['wait', 'Oczekiwanie na status Released'],
+            ['push', 'Przejście Push to ERP'],
+            ['erp', 'Wysyłanie do Impuls'],
+            ['finish', 'Zakończenie procesu']
+        ].forEach(function(step) {
+            let elemStep = $('<div></div>').attr('data-stage', step[0]).addClass('step').appendTo(elemContent);
+            $('<div></div>').addClass('step-label').text(step[1]).appendTo(elemStep);
+            let elemProgress = $('<div></div>').addClass('step-progress').appendTo(elemStep);
+            $('<div></div>').addClass('step-bar').appendTo(elemProgress);
+            $('<div></div>').addClass('step-counter').text('Oczekiwanie').appendTo(elemStep);
+        });
+        $('<div></div>').attr('id', 'mbom-release-progress-log').addClass('erp-status-run').appendTo(elemContent);
+        let elemFooter = $('<div></div>').addClass('dialog-footer').appendTo(elemDialog);
+        $('<div></div>').attr('id', 'close-mbom-release-progress').addClass('button disabled').text('Zamknij').on('click', function() {
+            if($(this).hasClass('disabled')) return;
+            elemDialog.hide();
+            $('#overlay').hide();
+        }).appendTo(elemFooter);
+        return elemDialog;
+    }
+
+    function showMBOMReleaseProgressDialog() {
+        let elemDialog = ensureMBOMReleaseProgressDialog();
+        elemDialog.find('.dialog-header').text('Zwalnianie technologii');
+        elemDialog.find('.step').removeClass('in-work error');
+        elemDialog.find('.step-bar').css('width', '0%');
+        elemDialog.find('.step-counter').text('Oczekiwanie');
+        $('#mbom-release-progress-log').empty();
+        $('#close-mbom-release-progress').addClass('disabled').removeClass('default');
+        $('#overlay').show();
+        elemDialog.show();
+        updateMBOMReleaseProgress('release', 'active', 'Przygotowywanie zlecenia zmian i przejścia 1215.');
+    }
+
+    function updateMBOMReleaseProgress(stage, status, message, current, total) {
+        let elemDialog = ensureMBOMReleaseProgressDialog();
+        let elemStep = elemDialog.find('.step[data-stage="' + stage + '"]');
+        if(status === 'active') {
+            elemDialog.find('.step').removeClass('in-work');
+            elemStep.addClass('in-work');
+            let counter = !isBlank(total) ? String(current || 0) + ' z ' + String(total) : 'W toku';
+            elemStep.find('.step-counter').text(counter);
+            if(!isBlank(total) && Number(total) > 0) elemStep.find('.step-bar').css('width', Math.min(100, Number(current || 0) * 100 / Number(total)) + '%');
+        } else if(status === 'done') {
+            elemStep.removeClass('in-work error').find('.step-bar').css('width', '100%');
+            elemStep.find('.step-counter').text('Gotowe');
+        } else if(status === 'error') {
+            elemDialog.find('.step').removeClass('in-work');
+            elemStep.addClass('error').find('.step-counter').text('Błąd');
+        }
+
+        if(!isBlank(message)) $('<div></div>').addClass('erp-status-line' + (status === 'error' ? ' error' : '')).text(message).appendTo($('#mbom-release-progress-log'));
+    }
+
+    function completeMBOMReleaseProgress(error) {
+        let elemDialog = ensureMBOMReleaseProgressDialog();
+        elemDialog.find('.dialog-header').text(error ? 'Zwalnianie technologii nie powiodło się' : 'Zwalnianie technologii zakończone');
+        $('#close-mbom-release-progress').removeClass('disabled').addClass('default');
+    }
+    function createMBOMChangeOrderFromEditor(startReleaseTransition) {
+        let workspaceId = getMBOMChangeOrderWorkspaceId();
+        let mbomItems = getSavedMBOMItems();
+        let rootItem = mbomItems[0];
+
+        if(isBlank(workspaceId)) {
+            return Promise.reject(new Error('Nie skonfigurowano obszaru roboczego zleceń zmian.'));
+        }
+        if(!rootItem || isBlank(rootItem.link)) {
+            return Promise.reject(new Error('Najpierw zapisz mBOM.'));
+        }
+        if($('#mbom .pending, #mbom .pending-update, #mbom .pending-removal').length > 0) {
+            return Promise.reject(new Error('Najpierw zapisz wszystkie zmiany w mBOM.'));
+        }
+
+        let created = false;
+        let changeOrderLink = '';
+        return findExistingMBOMChangeOrder(rootItem.link, workspaceId, '').then(function(existingLink) {
+            if(!isBlank(existingLink)) return existingLink;
+            created = true;
+            return createMBOMChangeOrder(workspaceId, rootItem.itemNumber);
+        }).then(function(resolvedLink) {
+            changeOrderLink = resolvedLink;
+            let prepareRoot = created
+                ? addMBOMAffectedItems(changeOrderLink, [rootItem.link])
+                : Promise.resolve();
+
+            return prepareRoot.then(function() {
+                return moveMBOMsToReleaseInOrder(mbomItems.slice(1), changeOrderLink, workspaceId);
+            }).then(function() {
+                return loadMBOMChangeOrderAffectedItemLinks();
+            });
+        }).then(function(affectedLinks) {
+            return addMissingMBOMAffectedItems(changeOrderLink, affectedLinks);
+        }).then(function(addResult) {
+            return setMBOMAffectedItemLifecycleTransitions(changeOrderLink).then(function(lifecycleResult) {
+                if(!startReleaseTransition) {
+                    return { release : changeOrderLink, created : created, add : addResult, lifecycle : lifecycleResult, transitioned : false };
+                }
+                return performMBOMChangeOrderTransition(
+                    changeOrderLink,
+                    '1215',
+                    'Zwolnione w mBOM Editor'
+                ).then(function() {
+                    return { release : changeOrderLink, created : created, add : addResult, lifecycle : lifecycleResult, transitioned : true };
+                });
+            });
+        });
+    }
+
+    function showMBOMChangeOrderResult(title, message) {
+        let elemDialog = $('#dialog-mbom-change-order-result');
+        if(elemDialog.length === 0) {
+            elemDialog = $('<div></div>')
+                .attr('id', 'dialog-mbom-change-order-result')
+                .addClass('dialog')
+                .append('<div class="dialog-header"></div>')
+                .append('<div class="dialog-content"></div>')
+                .append('<div class="dialog-footer"><div class="button default">Zamknij</div></div>')
+                .appendTo('body');
+            elemDialog.find('.dialog-footer .button').on('click', function() {
+                elemDialog.hide();
+                $('#overlay').hide();
+            });
+        }
+
+        elemDialog.find('.dialog-header').text(title);
+        elemDialog.find('.dialog-content').text(message);
+        $('#overlay').show();
+        elemDialog.show();
+    }
+
+    function runMBOMChangeOrderAction(startReleaseTransition) {
+        let approvalLabel = 'Uruchom proces zatwierdzania';
+        let releaseLabel = 'Zwolnij Technologie (Technolog)';
+        let elemButtons = $('#start-mbom-approval, #release-mbom-technology');
+        if(elemButtons.hasClass('disabled')) return;
+
+        elemButtons.addClass('disabled');
+        $(startReleaseTransition ? '#release-mbom-technology' : '#start-mbom-approval').text('Przetwarzanie…');
+        if(startReleaseTransition) showMBOMReleaseProgressDialog();
+        else $('#overlay').show();
+
+        createMBOMChangeOrderFromEditor(startReleaseTransition).then(function(result) {
+            if(startReleaseTransition) {
+                updateMBOMReleaseProgress('release', 'done', 'Zwolnienie w PLM zostało uruchomione przejściem 1215.');
+                return continueMBOMReleaseWithERP(result.release, updateMBOMReleaseProgress).then(function(syncResult) {
+                    renderERPTechnologySyncResults('Wysyłanie technologii do Impuls zakończone', syncResult.results, false, false);
+                    completeMBOMReleaseProgress(false);
+                    return result;
+                });
+            }
+
+            let message = result.created
+                ? 'Zlecenie zmian zostało utworzone.'
+                : 'Użyto istniejącego aktywnego zlecenia zmian.';
+            showMBOMChangeOrderResult('Proces zatwierdzania', message);
+        }).catch(function(error) {
+            if(startReleaseTransition) {
+                let message = String(error && error.message ? error.message : error);
+                updateMBOMReleaseProgress('finish', 'error', message);
+                if(error && error.failureTransitionError) {
+                    updateMBOMReleaseProgress('finish', 'error', 'Nie udało się również uruchomić przejścia błędu 566: ' + String(error.failureTransitionError.message || error.failureTransitionError));
+                }
+                if(error && Array.isArray(error.erpResults)) {
+                    renderERPTechnologySyncResults('Wysyłanie technologii do Impuls nie powiodło się', error.erpResults, true, false);
+                }
+                completeMBOMReleaseProgress(true);
+            } else {
+                $('#overlay').hide();
+                showErrorMessage('Proces zatwierdzania', String(error && error.message ? error.message : error));
+            }
+        }).finally(function() {
+            elemButtons.removeClass('disabled');
+            $('#start-mbom-approval').text(approvalLabel);
+            $('#release-mbom-technology').text(releaseLabel);
+        });
+    }
+
+    function insertMBOMChangeOrderButtons() {
+        if($('#start-mbom-approval').length > 0 || $('#header-toolbar').length === 0) return;
+
+        let elemTarget = $('#add-raw-materials').length > 0 ? $('#add-raw-materials') : $('#header-avatar');
+        $('<div></div>')
+            .attr('id', 'start-mbom-approval')
+            .addClass('button')
+            .attr('title', 'Utwórz zlecenie zmian i dodaj elementy mBOM jako pozycje objęte zmianą')
+            .text('Uruchom proces zatwierdzania')
+            .on('click', function() { runMBOMChangeOrderAction(false); })
+            .insertBefore(elemTarget);
+
+        $('<div></div>')
+            .attr('id', 'release-mbom-technology')
+            .addClass('button default')
+            .attr('title', 'Utwórz zlecenie zmian i uruchom przejście zwalniające technologię')
+            .text('Zwolnij Technologie (Technolog)')
+            .on('click', function() { runMBOMChangeOrderAction(true); })
+            .insertBefore(elemTarget);
     }
 
     function getMBOMReleaseAffectedItemLinks(changeOrderLink) {
@@ -8963,41 +10273,29 @@
     function syncMBOMChangeOrderAfterSave() {
         let workspaceId = getMBOMChangeOrderWorkspaceId();
         let mbomItems = getSavedMBOMItems();
-        let mbomLinks = mbomItems.map(function(item) { return item.link; });
 
         if(isBlank(workspaceId)) {
-            return Promise.reject(new Error('WS_CHANGE_ORDERS is not configured in common.workspaceIds.changeOrders.'));
+            return Promise.reject(new Error('Nie skonfigurowano obszaru roboczego zleceń zmian.'));
         }
-        if(mbomLinks.length === 0) {
-            return Promise.reject(new Error('No saved mBOM item link was found.'));
+        if(mbomItems.length === 0) {
+            return Promise.reject(new Error('Nie znaleziono zapisanego elementu mBOM.'));
         }
 
         let rootItem = mbomItems[0];
-        let nestedSubMBOMItems = mbomItems.slice(1);
 
-        return getMBOMMotherItems(rootItem.link).then(function(motherItems) {
-            if(motherItems.length > 1) {
-                console.warn('MBOM custom: multiple mother mBOMs found; using the first direct mother', motherItems);
+        return findExistingMBOMChangeOrder(rootItem.link, workspaceId, '').then(function(changeOrderLink) {
+            if(isBlank(changeOrderLink)) {
+                console.log('MBOM custom: save completed without change-order creation');
+                return { release : '', owner : rootItem, skipped : true, add : { added : 0 } };
             }
 
-            if(motherItems.length === 0) {
-                return getOrCreateMBOMRelease(rootItem, workspaceId).then(function(rootReleaseLink) {
-                    return moveMBOMsToReleaseInOrder(nestedSubMBOMItems, rootReleaseLink, workspaceId).then(function(moved) {
-                        return { release : rootReleaseLink, owner : rootItem, moved : moved };
-                    });
-                });
-            }
-
-            let motherItem = motherItems[0];
-            return getOrCreateMBOMRelease(motherItem, workspaceId).then(function(motherReleaseLink) {
-                let itemsToMove = [rootItem].concat(nestedSubMBOMItems);
-                return moveMBOMsToReleaseInOrder(itemsToMove, motherReleaseLink, workspaceId).then(function(moved) {
-                    return { release : motherReleaseLink, owner : motherItem, moved : moved };
-                });
+            return loadMBOMChangeOrderAffectedItemLinks().then(function(affectedLinks) {
+                return addMissingMBOMAffectedItems(changeOrderLink, affectedLinks);
+            }).then(function(addResult) {
+                let result = { release : changeOrderLink, owner : rootItem, skipped : false, add : addResult };
+                console.log('MBOM custom: existing change order affected items synchronized', result);
+                return result;
             });
-        }).then(function(result) {
-            console.log('MBOM custom: change order affected items synchronized', result);
-            return result;
         });
     }
 
@@ -9132,7 +10430,7 @@
                     console.error('MBOM custom: change order synchronization failed', error);
                     endProcessing();
                     showErrorMessage(
-                        'mBOM saved, change order update failed',
+                        'Zapisano mBOM, ale aktualizacja zlecenia zmian nie powiodła się',
                         String(error && error.message ? error.message : error)
                     );
                 });
@@ -9161,6 +10459,7 @@
             }
 
             insertAddAssemblyIndexButton();
+            insertMBOMChangeOrderButtons();
             setupAddProcessPicker();
             $('#confirm-raw-materials').off('click').on('click', function() {
                 if($(this).hasClass('disabled')) return;

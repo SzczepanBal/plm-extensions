@@ -7,7 +7,10 @@ const fileUpload    = require('express-fileupload');
 const ExcelJS       = require('exceljs/dist/es5');
 const FormData      = require('form-data');
 const { Console }   = require('console');
+const crypto        = require('crypto');
 const pathUploads   = 'uploads/';
+// Temporary deployment safety switch. Set to false only when productive ERP traffic is approved.
+const forceCustomErpSimulation = true;
 
 router.use(fileUpload());
 
@@ -7516,8 +7519,18 @@ function getCustomErpConfig(req) {
         baseUrl       : baseUrl,
         integrationId : integrationId,
         username      : username,
-        password      : password
+        password      : password,
+        simulationMode: forceCustomErpSimulation || erp.simulationMode === true
     };
+}
+
+function getSafeCustomErpTargetUrl(targetUrl) {
+    try {
+        let url = new URL(targetUrl);
+        return url.origin + url.pathname;
+    } catch(error) {
+        return '';
+    }
 }
 
 function validateCustomErpConfig(req, res) {
@@ -7691,7 +7704,7 @@ function invokeCustomErpApiDocsCall(req, res, targetUrl) {
             data : {
                 source     : 'custom-erp',
                 call       : 'api-docs',
-                targetUrl  : targetUrl,
+                targetUrl  : getSafeCustomErpTargetUrl(targetUrl),
                 method     : 'GET',
                 status     : response.status,
                 statusText : response.statusText,
@@ -7714,7 +7727,7 @@ function invokeCustomErpApiDocsCall(req, res, targetUrl) {
                 data : {
                     source     : 'custom-erp',
                     call       : 'api-docs',
-                    targetUrl  : targetUrl,
+                    targetUrl  : getSafeCustomErpTargetUrl(targetUrl),
                     method     : 'POST',
                     status     : response.status,
                     statusText : response.statusText,
@@ -7736,7 +7749,7 @@ function invokeCustomErpApiDocsCall(req, res, targetUrl) {
                 data : {
                     source    : 'custom-erp',
                     call      : 'api-docs',
-                    targetUrl : targetUrl,
+                    targetUrl : getSafeCustomErpTargetUrl(targetUrl),
                     method    : 'GET',
                     error     : error.message || '',
                     fallback  : {
@@ -7752,9 +7765,6 @@ function invokeCustomErpApiDocsCall(req, res, targetUrl) {
 }
 
 function invokeCustomErpCall(req, res, callName, fallbackMethod) {
-    let erp = validateCustomErpConfig(req, res);
-    if(erp === null) return;
-
     let call = customErpCalls[callName];
     if(typeof call === 'undefined') {
         sendResponse(req, res, {
@@ -7766,6 +7776,29 @@ function invokeCustomErpCall(req, res, callName, fallbackMethod) {
         }, true);
         return;
     }
+
+    let erpSettings = getCustomErpConfig(req);
+    if(erpSettings.simulationMode) {
+        let simulatedBody = (req.body && Object.keys(req.body).length > 0) ? req.body : call.defaultBody;
+        let simulatedDump = saveCustomErpRequestDump(callName, simulatedBody);
+
+        sendResponse(req, res, {
+            data : {
+                source          : 'custom-erp',
+                call            : callName,
+                method          : call.method,
+                mode            : 'simulation',
+                body            : {},
+                requestDumpFile : simulatedDump.filePath,
+                requestDumpUrl  : simulatedDump.fileUrl
+            },
+            status : 200
+        }, false);
+        return;
+    }
+
+    let erp = validateCustomErpConfig(req, res);
+    if(erp === null) return;
 
     let targetUrl = buildCustomErpUrl(req, callName);
     let body = (req.body && Object.keys(req.body).length > 0) ? req.body : call.defaultBody;
@@ -7794,7 +7827,7 @@ function invokeCustomErpCall(req, res, callName, fallbackMethod) {
             data : {
                 source     : 'custom-erp',
                 call       : callName,
-                targetUrl  : targetUrl,
+                targetUrl  : getSafeCustomErpTargetUrl(targetUrl),
                 method     : call.method,
                 status     : response.status,
                 statusText : response.statusText,
@@ -7820,7 +7853,7 @@ function invokeCustomErpCall(req, res, callName, fallbackMethod) {
                     data : {
                         source     : 'custom-erp',
                         call       : callName,
-                        targetUrl  : targetUrl,
+                        targetUrl  : getSafeCustomErpTargetUrl(targetUrl),
                         method     : 'POST',
                         status     : response.status,
                         statusText : response.statusText,
@@ -7842,7 +7875,7 @@ function invokeCustomErpCall(req, res, callName, fallbackMethod) {
                     data : {
                         source    : 'custom-erp',
                         call      : callName,
-                        targetUrl : targetUrl,
+                        targetUrl : getSafeCustomErpTargetUrl(targetUrl),
                         method    : call.method,
                         error     : error.message || '',
                         fallback  : {
@@ -7870,7 +7903,7 @@ function invokeCustomErpCall(req, res, callName, fallbackMethod) {
             data : {
                 source    : 'custom-erp',
                 call      : callName,
-                targetUrl : targetUrl,
+                targetUrl : getSafeCustomErpTargetUrl(targetUrl),
                 method    : call.method,
                 error     : error.message || '',
                 response  : errorResponse.data || {},
@@ -7902,6 +7935,46 @@ router.get('/custom-erp-calls', function(req, res) {
         data : result,
         status : 200
     }, false);
+});
+
+function canonicalizeERPHashValue(value) {
+    if(Array.isArray(value)) {
+        return value.map(canonicalizeERPHashValue);
+    }
+
+    if(value && typeof value === 'object') {
+        return Object.keys(value).sort().reduce(function(result, key) {
+            if(typeof value[key] !== 'undefined') {
+                result[key] = canonicalizeERPHashValue(value[key]);
+            }
+            return result;
+        }, {});
+    }
+
+    return value;
+}
+
+function createERPHash(value) {
+    let canonicalValue = canonicalizeERPHashValue(value);
+    let serializedValue = JSON.stringify(canonicalValue);
+    return 'v1:' + crypto.createHash('sha256').update(serializedValue, 'utf8').digest('hex');
+}
+
+router.post('/custom-erp/hash', function(req, res) {
+    try {
+        sendResponse(req, res, {
+            data : {
+                hash : createERPHash(req.body)
+            },
+            status : 200
+        }, false);
+    } catch(error) {
+        sendResponse(req, res, {
+            message : 'Nie udało się obliczyć skrótu danych ERP.',
+            data    : { error : error.message || String(error) },
+            status  : 500
+        }, true);
+    }
 });
 
 router.get('/custom-erp/:callName', function(req, res) {

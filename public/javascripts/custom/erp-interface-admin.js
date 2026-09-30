@@ -7,7 +7,7 @@
         version : 1,
         fields  : {
             index : { label : 'Part number', erpField : 'indeks', plmFields : ['NUMBER'] },
-            name : { label : 'Part name', erpField : 'nazwa_czesci', plmFields : ['OPIS', 'NAZWA_DEFRO'], fallbackFields : ['TITLE', 'NUMBER'], separator : ' - ' },
+            name : { label : 'Part name', erpField : 'nazwa_czesci', plmFields : ['NAZWA_DEFRO'], fallbackFields : ['TITLE', 'NUMBER'], separator : ' - ' },
             group : { label : 'Product group', erpField : 'id_grupy', plmFields : ['GRUPA_PRODUKTOWA'] },
             unit : { label : 'Unit of measure', erpField : 'jednostka_miary', plmFields : ['UNIT_OF_MEASURE', 'UOM', 'UNIT', 'BOM_UOM', 'ITEM_UOM'], defaultValue : 'szt' },
             partIndex : { label : 'ERP part index', erpField : 'indeks_czesci', plmFields : ['INDEKS_CZESCI'] }
