@@ -21,6 +21,17 @@
 // ---------------------------------------------------------------------------------------------------------------------------
 exports.common = {
 
+    erp : {
+        fieldIDs : {
+            versionId : 'ID_WERSJI',
+            partIndex : 'INDEKS_CZESCI',
+            syncDate  : 'ERP_SYNC_DATE',
+            syncStatus: 'ERP_SYNC_STATUS',
+            hash      : 'ERP_HASH',
+            relevant  : 'ERP_RELEVANT'
+        }
+    },
+
     workspaceIds : {
 
         // Product Development Workspaces

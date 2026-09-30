@@ -545,6 +545,13 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     const copyContext = {
         rawMaterialAccountingUnitFieldId: 'JEDNOSTKA_ROZLICZENIOWA',
         rawMaterialAccountingQuantityFieldId: 'ILOSC_ROZLICZENIOWA',
+        customERPFieldIDs: {
+            versionId: 'ID_WERSJI',
+            partIndex: 'INDEKS_CZESCI',
+            syncDate: 'ERP_SYNC_DATE',
+            syncStatus: 'ERP_SYNC_STATUS',
+            hash: 'ERP_HASH'
+        },
         isBlank: context.isBlank,
         getSectionFieldValue(sections, fieldId) { return sections[fieldId]; },
         config: {
@@ -601,7 +608,14 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         Promise,
         isBlank: context.isBlank,
         getSectionFieldValue: context.getSectionFieldValue,
-        config: { workspaceMBOM: { fieldIDs: { erpVersionId: 'ID_WERSJI', erpPartIndex: 'INDEKS_CZESCI' } } },
+        customERPFieldIDs: {
+            versionId: 'ID_WERSJI',
+            partIndex: 'INDEKS_CZESCI',
+            syncDate: 'ERP_SYNC_DATE',
+            syncStatus: 'ERP_SYNC_STATUS',
+            hash: 'ERP_HASH'
+        },
+        config: { workspaceMBOM: { fieldIDs: {} } },
         getERPTechnologySectionValue(sections, candidateIds, fallbackValue) {
             for(const fieldId of candidateIds) {
                 if(Object.prototype.hasOwnProperty.call(sections, fieldId)) return String(sections[fieldId]);
@@ -681,6 +695,13 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         links: { mbom: '/mbom' },
         wsMBOM: { wsId: 274 },
         config: { workspaceMBOM: { fieldIDs: {} } },
+        customERPFieldIDs: {
+            versionId: 'ID_WERSJI',
+            partIndex: 'INDEKS_CZESCI',
+            syncDate: 'ERP_SYNC_DATE',
+            syncStatus: 'ERP_SYNC_STATUS',
+            hash: 'ERP_HASH'
+        },
         erpSyncBOMViewName: 'ERP Sync',
         erpSyncBOMViewPromise: null,
         erpTechnologyOperationCodeCandidates: ['KOD_OPERACJI'],
@@ -1142,6 +1163,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         Promise,
         isBlank: context.isBlank,
         getRawMaterialErrorMessage: () => 'Błąd PLM',
+        customERPFieldIDs: { relevant: 'ERP_RELEVANT' },
+        normalizeComparisonValue: value => String(value || '').trim().toLowerCase(),
         getMBOMChangeOrderWorkspaceId: () => 77,
         getSavedMBOMItems: () => [{ link: '/root', itemNumber: 'M-1' }, { link: '/sub', itemNumber: 'M-2' }],
         findExistingMBOMChangeOrder: async () => existingLink,
@@ -1160,6 +1183,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         }
     };
     actionContext.$.get = async (url) => {
+        if(url === '/plm/sections') return { data: [{ __self__: '/api/v3/workspaces/77/sections/42', title: 'Admin', fields: [{ link: '/api/v3/workspaces/77/sections/42/fields/ERP_RELEVANT' }] }] };
         assert.strictEqual(url, '/plm/transitions');
         return { data: [{ __self__: '/api/v3/workspaces/77/items/1/transitions/1215' }] };
     };
@@ -1168,7 +1192,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         return { data: true };
     };
     vm.createContext(actionContext);
-    ['performMBOMChangeOrderTransition', 'createMBOMChangeOrderFromEditor'].forEach(name => {
+    ['getMBOMChangeOrderFieldId', 'getMBOMERPRelevantAdminSectionId', 'performMBOMChangeOrderTransition', 'setMBOMChangeOrderERPRelevant', 'createMBOMChangeOrderFromEditor'].forEach(name => {
         vm.runInContext(extractFunction(name), actionContext);
     });
 
@@ -1187,9 +1211,12 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.strictEqual(result.transitioned, true);
     assert.strictEqual(transferCalls[1].release, '/change-orders/existing');
     assert.strictEqual(lifecycleCalls[1], '/change-orders/existing');
-    assert.strictEqual(posts[0].url, '/plm/transition');
-    assert.strictEqual(posts[0].payload.transition.endsWith('/1215'), true);
-    assert.strictEqual(posts[0].payload.comment, 'Zwolnione w mBOM Editor');
+    assert.strictEqual(posts[0].url, '/plm/edit', 'ERP relevance is saved before transition 1215');
+    assert.strictEqual(posts[0].payload.fields[0].fieldId, 'ERP_RELEVANT');
+    assert.strictEqual(posts[0].payload.fields[0].value, true);
+    assert.strictEqual(posts[1].url, '/plm/transition');
+    assert.strictEqual(posts[1].payload.transition.endsWith('/1215'), true);
+    assert.strictEqual(posts[1].payload.comment, 'Zwolnione w mBOM Editor');
     console.log('Explicit change-order action tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
@@ -1692,3 +1719,129 @@ async function testERPTechnologyDiscoveryUsesShallowDepth() {
     console.log('Shallow ERP technology discovery tests passed');
 }
 testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testDataManagerERPQuickReleaseWorkflow() {
+    const dataPath = path.join(__dirname, '..', 'public', 'javascripts', 'admin', 'data.js');
+    const dataSource = fs.readFileSync(dataPath, 'utf8');
+
+    function extractDataFunction(name) {
+        const marker = 'function ' + name + '(';
+        const start = dataSource.indexOf(marker);
+        assert.notStrictEqual(start, -1, 'Missing Data Manager function ' + name);
+        const bodyStart = dataSource.indexOf('{', start);
+        let depth = 0;
+        let quote = '';
+        let escaped = false;
+        for(let index = bodyStart; index < dataSource.length; index++) {
+            const character = dataSource[index];
+            if(quote) {
+                if(escaped) escaped = false;
+                else if(character === '\\') escaped = true;
+                else if(character === quote) quote = '';
+                continue;
+            }
+            if(character === '\'' || character === '"' || character === '`') { quote = character; continue; }
+            if(character === '{') depth++;
+            if(character === '}' && --depth === 0) return dataSource.substring(start, index + 1);
+        }
+        throw new Error('Could not extract Data Manager function ' + name);
+    }
+
+    assert.match(dataSource, /const erpQuickReleaseWorkspaceId = 78;/);
+
+    let rawSyncStatus = 'NOT_SYNCED';
+    const statusContext = {
+        isBlank: context.isBlank,
+        getSectionFieldValue: () => rawSyncStatus,
+        erpFieldIDs: { syncStatus: 'ERP_SYNC_STATUS' }
+    };
+    vm.createContext(statusContext);
+    vm.runInContext(extractDataFunction('getERPSyncStatus'), statusContext);
+    assert.strictEqual(statusContext.getERPSyncStatus({ sections: [] }), 'NOT_SYNCED');
+    rawSyncStatus = 'not_synced';
+    assert.strictEqual(statusContext.getERPSyncStatus({ sections: [] }), 'not_synced', 'ERP status must not be normalized');
+
+    const dataHashContext = { isBlank: context.isBlank };
+    vm.createContext(dataHashContext);
+    vm.runInContext(extractDataFunction('getERPHashResponseValue'), dataHashContext);
+    assert.strictEqual(dataHashContext.getERPHashResponseValue({ data: { hash: 'v1:direct' } }), 'v1:direct');
+    assert.strictEqual(dataHashContext.getERPHashResponseValue({ data: { data: { hash: 'v1:nested' } } }), 'v1:nested');
+
+    const mbomHashContext = { isBlank: context.isBlank };
+    vm.createContext(mbomHashContext);
+    vm.runInContext(extractFunction('getERPHashResponseValue'), mbomHashContext);
+    assert.strictEqual(mbomHashContext.getERPHashResponseValue({ data: { body: { hash: 'v1:body' } } }), 'v1:body');
+
+    assert.match(extractDataFunction('sendERPQuickReleaseProduct'), /\/plm\/details[\s\S]*useCache\s*:\s*false/,
+        'Released item details must be reloaded before building the ERP payload');
+
+    const lifecycleContext = { isBlank: context.isBlank };
+    vm.createContext(lifecycleContext);
+    vm.runInContext(extractDataFunction('getERPQuickReleaseTargetLifecycle'), lifecycleContext);
+    assert.strictEqual(lifecycleContext.getERPQuickReleaseTargetLifecycle('Working'), 'To Production');
+    assert.strictEqual(lifecycleContext.getERPQuickReleaseTargetLifecycle('Unreleased'), 'To Production');
+    assert.strictEqual(lifecycleContext.getERPQuickReleaseTargetLifecycle('Production'), 'Production Revision');
+
+    const relevantPosts = [];
+    const relevantContext = {
+        Promise,
+        Array,
+        addLogEntry: () => {},
+        getDataManagerErrorMessage: () => 'PLM error',
+        isBlank: context.isBlank,
+        erpFieldIDs: { relevant: 'ERP_RELEVANT' },
+        $: {
+            get: async () => ({ data: [{ __self__: '/api/v3/workspaces/78/sections/84', title: 'Admin', fields: [{ link: '/api/v3/workspaces/78/sections/84/fields/ERP_RELEVANT' }] }] }),
+            post: async (url, payload) => { relevantPosts.push({ url, payload }); return { data: true }; }
+        }
+    };
+    vm.createContext(relevantContext);
+    ['getERPQuickReleaseFieldId', 'getERPRelevantAdminSectionId', 'setERPQuickReleaseRelevant'].forEach(name => {
+        vm.runInContext(extractDataFunction(name), relevantContext);
+    });
+    await relevantContext.setERPQuickReleaseRelevant('/quick-releases/1');
+    assert.strictEqual(relevantPosts[0].url, '/plm/edit');
+    assert.strictEqual(relevantPosts[0].payload.fields[0].fieldId, 'ERP_RELEVANT');
+    assert.strictEqual(relevantPosts[0].payload.fields[0].sectionId, '84');
+    assert.strictEqual(relevantPosts[0].payload.fields[0].value, true);
+
+    async function runScenario(failERP) {
+        const events = [];
+        const workflowContext = {
+            Promise,
+            run: {
+                erpSyncCandidates: [{ link: '/items/1', descriptor: 'Part 1' }],
+                errors: []
+            },
+            isBlank: context.isBlank,
+            addLogEntry: () => {},
+            createERPQuickRelease: async () => { events.push('create'); return '/quick-releases/1'; },
+            addERPQuickReleaseAffectedItems: async () => { events.push('affected'); },
+            setERPQuickReleaseLifecycleTransitions: async () => { events.push('lifecycle'); },
+            setERPQuickReleaseRelevant: async () => { events.push('erp-relevant'); },
+            performERPQuickReleaseTransition: async (link, transition) => { events.push(String(transition)); },
+            waitForERPQuickReleaseState: async (link, state) => { events.push('state:' + state); },
+            sendERPQuickReleaseProducts: async () => {
+                events.push('send');
+                return [{ link: '/items/1', descriptor: 'Part 1', success: !failERP, error: failERP ? 'ERP error' : '' }];
+            },
+            getERPQuickReleaseErrorComment: () => 'workflow error'
+        };
+        vm.createContext(workflowContext);
+        vm.runInContext(extractDataFunction('finishERPQuickReleaseWorkflow'), workflowContext);
+
+        if(failERP) await assert.rejects(() => workflowContext.finishERPQuickReleaseWorkflow());
+        else await workflowContext.finishERPQuickReleaseWorkflow();
+        return events;
+    }
+
+    assert.deepStrictEqual(
+        await runScenario(false),
+        ['create', 'affected', 'lifecycle', 'erp-relevant', '509', 'state:286', '1255', 'send', '1252']
+    );
+    assert.deepStrictEqual(
+        await runScenario(true),
+        ['create', 'affected', 'lifecycle', 'erp-relevant', '509', 'state:286', '1255', 'send', '1251']
+    );
+    console.log('Data Manager ERP Quick Release workflow tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });

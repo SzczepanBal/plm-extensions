@@ -9,8 +9,6 @@ const FormData      = require('form-data');
 const { Console }   = require('console');
 const crypto        = require('crypto');
 const pathUploads   = 'uploads/';
-// Temporary deployment safety switch. Set to false only when productive ERP traffic is approved.
-const forceCustomErpSimulation = true;
 
 router.use(fileUpload());
 
@@ -7519,8 +7517,7 @@ function getCustomErpConfig(req) {
         baseUrl       : baseUrl,
         integrationId : integrationId,
         username      : username,
-        password      : password,
-        simulationMode: forceCustomErpSimulation || erp.simulationMode === true
+        password      : password
     };
 }
 
@@ -7778,24 +7775,6 @@ function invokeCustomErpCall(req, res, callName, fallbackMethod) {
     }
 
     let erpSettings = getCustomErpConfig(req);
-    if(erpSettings.simulationMode) {
-        let simulatedBody = (req.body && Object.keys(req.body).length > 0) ? req.body : call.defaultBody;
-        let simulatedDump = saveCustomErpRequestDump(callName, simulatedBody);
-
-        sendResponse(req, res, {
-            data : {
-                source          : 'custom-erp',
-                call            : callName,
-                method          : call.method,
-                mode            : 'simulation',
-                body            : {},
-                requestDumpFile : simulatedDump.filePath,
-                requestDumpUrl  : simulatedDump.fileUrl
-            },
-            status : 200
-        }, false);
-        return;
-    }
 
     let erp = validateCustomErpConfig(req, res);
     if(erp === null) return;

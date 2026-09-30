@@ -54,8 +54,7 @@ exports.erp = {
     baseUrl       : '',
     integrationId : '',
     username      : '',
-    password      : '',
-    simulationMode: true
+    password      : ''
 };
 
 

@@ -3,6 +3,8 @@ let wsConfig         = {};
 let options          = {};
 let run              = {};
 let records          = null;
+const erpQuickReleaseWorkspaceId = 78;
+const erpFieldIDs = common.erp.fieldIDs;
 
 
 // let actions = [
@@ -1113,6 +1115,9 @@ function startProcessing() {
     run.ids          = [];
     run.storage      = '';
     run.prev         = {};
+    run.erpSyncCandidates = [];
+    run.erpQuickReleaseLink = '';
+    run.erpWorkflowFinishing = false;
 
     run.params = {
         pageNo    : 0,
@@ -1200,7 +1205,16 @@ function getNextRecords() {
             setRecordsData(response);
 
             if(records.length === 0) {
-                endProcessing();
+                if(run.actionId === 'sync-to-erp' && !options.testRun && !run.erpWorkflowFinishing) {
+                    run.erpWorkflowFinishing = true;
+                    finishERPQuickReleaseWorkflow().catch(function(error) {
+                        addLogEntry('Synchronizacja ERP nie powiodła się: ' + getDataManagerErrorMessage(error), 'error');
+                    }).then(function() {
+                        endProcessing();
+                    });
+                } else {
+                    endProcessing();
+                }
             } else {
                 if(run.actionId === 'import-attachments') {
                     let record = records[0];
@@ -1709,7 +1723,7 @@ function buildERPSyncPayload(details, erpCallName) {
     };
 
     if(erpCallName === 'modify-product') {
-        payload.indeks_czesci = getERPFieldValue(sections, 'INDEKS_CZESCI');
+        payload.indeks_czesci = getERPFieldValue(sections, erpFieldIDs.partIndex);
         if(isBlank(payload.indeks_czesci)) payload.indeks_czesci = payload.indeks;
     }
 
@@ -1719,9 +1733,9 @@ function buildERPSyncPayload(details, erpCallName) {
 function getERPSyncStatus(details) {
 
     let sections = (details && details.sections) ? details.sections : [];
-    let value = getSectionFieldValue(sections, 'ERP_SYNC_STATUS', '', null);
+    let value = getSectionFieldValue(sections, erpFieldIDs.syncStatus, '', null);
 
-    return isBlank(value) ? '' : String(value).trim().toUpperCase();
+    return isBlank(value) ? '' : String(value);
 
 }
 function getERPProductCallName(syncStatus) {
@@ -1729,6 +1743,22 @@ function getERPProductCallName(syncStatus) {
     if(syncStatus === 'NOT_SYNCED')  return 'add-product';
     if(syncStatus === 'OUT_OF_DATE') return 'modify-product';
 
+    return '';
+
+}
+function getERPHashResponseValue(response) {
+
+    let containers = [
+        response,
+        response && response.data,
+        response && response.data && response.data.data,
+        response && response.body,
+        response && response.data && response.data.body
+    ];
+    for(let container of containers) {
+        if(container && typeof container === 'object' && !isBlank(container.hash)) return String(container.hash);
+        if(typeof container === 'string' && container.indexOf('v1:') === 0) return container;
+    }
     return '';
 
 }
@@ -1740,9 +1770,13 @@ function requestERPHash(payload) {
         contentType : 'application/json',
         data        : JSON.stringify({ type : 'product', product : payload })
     }).then(function(response) {
-        let hash = response && response.data ? response.data.hash : '';
-        if(isBlank(hash)) throw new Error('Serwer nie zwrócił skrótu danych ERP.');
-        return String(hash);
+        let hash = getERPHashResponseValue(response);
+        if(isBlank(hash)) {
+            let responseShape = response && typeof response === 'object' ? Object.keys(response).join(', ') : typeof response;
+            let dataShape = response && response.data && typeof response.data === 'object' ? Object.keys(response.data).join(', ') : typeof (response && response.data);
+            throw new Error('Serwer nie zwrócił skrótu danych ERP. Format odpowiedzi: [' + responseShape + '], data: [' + dataShape + '].');
+        }
+        return hash;
     });
 
 }
@@ -1825,6 +1859,7 @@ function genUpdateRequests(responses) {
 
             if(erpSyncStatus === 'UP_TO_DATE') {
                 requests.push(Promise.resolve({
+                    url           : '',
                     params        : params,
                     erpSkipped    : true,
                     erpSyncStatus : erpSyncStatus
@@ -1832,6 +1867,20 @@ function genUpdateRequests(responses) {
                 continue;
             }
 
+            if(!options.testRun) {
+                run.erpSyncCandidates.push({
+                    link             : params.link,
+                    descriptor       : params.descriptor,
+                    initialSyncStatus: erpSyncStatus
+                });
+                requests.push(Promise.resolve({
+                    url           : '',
+                    params        : params,
+                    erpDeferred   : true,
+                    erpSyncStatus : erpSyncStatus
+                }));
+                continue;
+            }
             let erpCallName = getERPProductCallName(erpSyncStatus);
 
             if(isBlank(erpCallName)) {
@@ -1843,6 +1892,7 @@ function genUpdateRequests(responses) {
                 });
                 continue;
             }
+
 
             let payload = buildERPSyncPayload(response.data, erpCallName);
             let missingFields = [];
@@ -1997,10 +2047,13 @@ function genCompletionRequests(limit, responses) {
 
         if(success) {
             
-            run.success++;;
+            let erpDeferred = run.actionId === 'sync-to-erp' && erpResponse && erpResponse.erpDeferred;
+            if(!erpDeferred) run.success++;
 
             if(run.actionId === 'sync-to-erp') {
-                if(erpResponse && erpResponse.erpSkipped) {
+                if(erpDeferred) {
+                    addLogEntry('Przygotowano do zwolnienia i synchronizacji ERP: <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>.', 'notice');
+                } else if(erpResponse && erpResponse.erpSkipped) {
                     addLogEntry('Pominięto synchronizację ERP dla <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>, ponieważ ERP_SYNC_STATUS = UP_TO_DATE.', 'notice');
                 } else {
                     let erpActionLabel = (erpResponse && erpResponse.erpCallName) ? erpResponse.erpCallName : 'ERP';
@@ -2011,7 +2064,7 @@ function genCompletionRequests(limit, responses) {
                     if(erpResponse) addERPDumpLinks(erpResponse);
                     if(options.testRun && erpResponse && !isBlank(erpResponse.erpHash)) {
                         addLogEntry('Wyliczony ERP_HASH: ' + erpResponse.erpHash, 'indent');
-                        addLogEntry('Symulacja onEdit: ERP_SYNC_STATUS = UP_TO_DATE, ERP_SYNC_DATE = bieżąca data i czas.', 'indent');
+                        addLogEntry('Przewidywany wynik onEdit: ERP_SYNC_STATUS = UP_TO_DATE, ERP_SYNC_DATE = bieżąca data i czas.', 'indent');
                         addLogEntry('Tryb testowy nie zmienił żadnych pól w PLM.', 'indent');
                     }
                 }
@@ -2030,11 +2083,10 @@ function genCompletionRequests(limit, responses) {
             if(options.saveUncheck !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveUncheck, 'false' );
             if(options.saveText    !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveText   , $('#save-text-value').val() );
             if(options.saveClear   !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveClear  , null    );
-            if(run.actionId === 'sync-to-erp' && !options.testRun) {
+            if(run.actionId === 'sync-to-erp' && !options.testRun && !(erpResponse && erpResponse.erpDeferred)) {
                 if(erpResponse && !erpResponse.erpSkipped && Number(erpResponse.status) === 200) {
-                    let simulated = !!(erpResponse.data && erpResponse.data.mode === 'simulation');
-                    if(!simulated) addFieldToPayload(params.sections, wsConfig.sections, null, 'INDEKS_CZESCI', getERPResponsePartIndex(erpResponse));
-                    addFieldToPayload(params.sections, wsConfig.sections, null, 'ERP_HASH', 'pending:' + erpResponse.erpHash);
+                    addFieldToPayload(params.sections, wsConfig.sections, null, erpFieldIDs.partIndex, getERPResponsePartIndex(erpResponse));
+                    addFieldToPayload(params.sections, wsConfig.sections, null, erpFieldIDs.hash, 'pending:' + erpResponse.erpHash);
                 } else if(erpResponse && !erpResponse.erpSkipped) {
                     addLogEntry('Pominięto aktualizację ERP_HASH dla <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>, ponieważ ERP zwrócił status ' + erpResponse.status, 'notice');
                 }
@@ -2049,6 +2101,498 @@ function genCompletionRequests(limit, responses) {
     return requests;
 
 }
+function getDataManagerErrorMessage(error) {
+
+    if(!error) return 'Nieznany błąd.';
+    if(error.responseJSON && !isBlank(error.responseJSON.message)) return error.responseJSON.message;
+    if(error.data && !isBlank(error.data.message)) return error.data.message;
+    if(!isBlank(error.message)) return error.message;
+    return String(error);
+
+}
+function getERPQuickReleaseItemLink(value) {
+
+    let link = value && typeof value === 'object' ? (value.__self__ || value.link || '') : value;
+    link = String(link || '');
+    let apiIndex = link.indexOf('/api/');
+    if(apiIndex >= 0) link = link.substring(apiIndex);
+    return link.replace(/\/versions\/\d+.*$/i, '').replace(/\/$/, '');
+
+}
+function getERPQuickReleaseFieldId(field) {
+
+    let reference = field ? (field.__self__ || field.link || field.urn || '') : '';
+    return String(reference).split(/[\/:.]/).pop();
+
+}
+function findERPQuickReleaseField(fields, fieldId, fieldName) {
+
+    let normalizedName = String(fieldName || '').trim().toLowerCase();
+    return fields.find(function(field) {
+        let title = field && (field.name || field.title || field.displayName);
+        return getERPQuickReleaseFieldId(field) === fieldId
+            || String(title || '').trim().toLowerCase() === normalizedName;
+    });
+
+}
+function createERPQuickRelease() {
+
+    addLogEntry('Tworzenie Quick Release dla synchronizacji ERP.', 'notice');
+    return Promise.all([
+        $.get('/plm/sections', { wsId : erpQuickReleaseWorkspaceId, useCache : true }),
+        $.get('/plm/fields', { wsId : erpQuickReleaseWorkspaceId, useCache : true })
+    ]).then(function(responses) {
+        if(responses.some(function(response) { return !response || response.error || !Array.isArray(response.data); })) {
+            throw new Error('Nie udało się wczytać definicji workspace WS_QUICK_RELEASES (78).');
+        }
+
+        let workspaceFields = responses[1].data;
+        let titleField = findERPQuickReleaseField(workspaceFields, 'TITLE', 'Title');
+        let descriptionField = findERPQuickReleaseField(workspaceFields, 'DESCRIPTION', 'Description');
+        if(!titleField) throw new Error('W workspace WS_QUICK_RELEASES (78) nie znaleziono pola TITLE.');
+
+        let timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+        let fields = [{ fieldId : getERPQuickReleaseFieldId(titleField), value : 'ERP Sync - ' + timestamp }];
+        if(descriptionField) {
+            fields.push({
+                fieldId : getERPQuickReleaseFieldId(descriptionField),
+                value   : 'Quick Release utworzony automatycznie przez Data Manager dla synchronizacji ERP.'
+            });
+        }
+
+        return $.post({
+            url         : '/plm/create',
+            contentType : 'application/json',
+            data        : JSON.stringify({
+                wsId     : erpQuickReleaseWorkspaceId,
+                sections : responses[0].data,
+                fields   : fields
+            })
+        });
+    }).then(function(response) {
+        if(!response || response.error) throw new Error('Nie udało się utworzyć Quick Release. ' + getDataManagerErrorMessage(response));
+        let link = getERPQuickReleaseItemLink(response.data && response.data.__self__ ? response.data.__self__ : response.data);
+        if(isBlank(link)) throw new Error('Nowy Quick Release nie zwrócił odnośnika do elementu.');
+        run.erpQuickReleaseLink = link;
+        addLogEntry('Utworzono Quick Release: <a target="_blank" href="' + genItemURL({ link : link }) + '">' + link + '</a>.', 'success');
+        return link;
+    });
+
+}
+function mapERPQuickReleaseRequests(items, limit, worker) {
+
+    let results = new Array(items.length);
+    let nextIndex = 0;
+    let workers = [];
+    let count = Math.min(Math.max(1, limit || 1), Math.max(1, items.length));
+
+    function runWorker() {
+        let index = nextIndex++;
+        if(index >= items.length) return Promise.resolve();
+        return Promise.resolve(worker(items[index], index)).then(function(result) {
+            results[index] = result;
+            return runWorker();
+        });
+    }
+
+    for(let i = 0; i < count; i++) workers.push(runWorker());
+    return Promise.all(workers).then(function() { return results; });
+
+}
+function addERPQuickReleaseAffectedItems(releaseLink, candidates) {
+
+    let links = [];
+    let seen = {};
+    candidates.forEach(function(candidate) {
+        let link = getERPQuickReleaseItemLink(candidate.link);
+        if(isBlank(link) || seen[link]) return;
+        seen[link] = true;
+        links.push(link);
+    });
+
+    let batches = [];
+    for(let index = 0; index < links.length; index += 100) batches.push(links.slice(index, index + 100));
+    return batches.reduce(function(sequence, batch) {
+        return sequence.then(function() {
+            return $.post('/plm/add-managed-items', { link : releaseLink, items : batch }).then(function(response) {
+                if(!response || response.error) throw new Error('Nie udało się dodać affected items do Quick Release. ' + getDataManagerErrorMessage(response));
+            });
+        });
+    }, Promise.resolve()).then(function() {
+        addLogEntry('Dodano ' + links.length + ' elementów jako affected items.', 'success');
+        return links;
+    });
+
+}
+function getERPQuickReleaseLifecycleTitle(value) {
+
+    if(isBlank(value)) return '';
+    if(typeof value === 'string') return value;
+    return value.title || value.name || value.value || '';
+
+}
+function getERPQuickReleaseLifecycleState(entry) {
+
+    let item = entry && entry.item ? entry.item : {};
+    let candidates = [entry && entry.currentState, entry && entry.lifecycle, entry && entry.lifecycleState, item.currentState, item.lifecycle, item.lifecycleState];
+    for(let value of candidates) {
+        let title = getERPQuickReleaseLifecycleTitle(value);
+        if(!isBlank(title)) return title;
+    }
+    return '';
+
+}
+function getERPQuickReleaseTargetLifecycle(currentState) {
+
+    let normalized = String(currentState || '').trim().toLowerCase();
+    if(normalized === 'working' || normalized === 'unreleased') return 'To Production';
+    if(normalized === 'production') return 'Production Revision';
+    return '';
+
+}
+function loadERPQuickReleaseLifecycleTransitions(itemLink, cache) {
+
+    let workspaceId = String(itemLink || '').split('/')[4] || '';
+    if(isBlank(workspaceId)) return Promise.reject(new Error('Nie udało się ustalić workspace affected item.'));
+    if(cache[workspaceId]) return cache[workspaceId];
+
+    cache[workspaceId] = $.get('/plm/workspace-lifecycle-transitions', {
+        wsId     : workspaceId,
+        link     : itemLink,
+        useCache : true
+    }).then(function(response) {
+        if(!response || response.error || !Array.isArray(response.data)) {
+            throw new Error('Nie udało się wczytać przejść lifecycle dla workspace ' + workspaceId + '.');
+        }
+        return response.data;
+    });
+    return cache[workspaceId];
+
+}
+function setERPQuickReleaseLifecycleTransitions(releaseLink) {
+
+    addLogEntry('Ustawianie przejść lifecycle dla affected items.', 'notice');
+    return $.get('/plm/manages', { link : releaseLink, useCache : false }).then(function(response) {
+        if(!response || response.error || !Array.isArray(response.data)) {
+            throw new Error('Nie udało się wczytać affected items Quick Release.');
+        }
+
+        let transitionCache = {};
+        return mapERPQuickReleaseRequests(response.data, 5, function(entry) {
+            let affectedItemLink = entry ? (entry.__self__ || entry.link || '') : '';
+            let itemLink = getERPQuickReleaseItemLink(entry && entry.item ? entry.item.link : '');
+            let itemTitle = entry && entry.item ? (entry.item.title || itemLink) : itemLink;
+            if(isBlank(affectedItemLink) || isBlank(itemLink)) throw new Error('Affected item nie zawiera prawidłowego odnośnika.');
+
+            let statePromise = Promise.resolve(getERPQuickReleaseLifecycleState(entry));
+            if(isBlank(getERPQuickReleaseLifecycleState(entry))) {
+                statePromise = $.get('/plm/details', { link : itemLink, useCache : false }).then(function(detailsResponse) {
+                    if(!detailsResponse || detailsResponse.error || !detailsResponse.data) {
+                        throw new Error('Nie udało się odczytać lifecycle elementu „' + itemTitle + '”.');
+                    }
+                    return getERPQuickReleaseLifecycleState(detailsResponse.data);
+                });
+            }
+
+            return statePromise.then(function(currentState) {
+                let targetName = getERPQuickReleaseTargetLifecycle(currentState);
+                if(isBlank(targetName)) throw new Error('Nieobsługiwany lifecycle „' + (currentState || 'brak wartości') + '” dla „' + itemTitle + '”.');
+                return loadERPQuickReleaseLifecycleTransitions(itemLink, transitionCache).then(function(transitions) {
+                    let target = transitions.find(function(transition) {
+                        return String(transition && (transition.name || transition.title) || '').trim().toLowerCase() === targetName.toLowerCase();
+                    });
+                    let transitionLink = target ? (target.__self__ || target.link || '') : '';
+                    if(isBlank(transitionLink)) throw new Error('Nie znaleziono przejścia lifecycle „' + targetName + '” dla „' + itemTitle + '”.');
+
+                    return $.post('/plm/update-managed-item', {
+                        link       : affectedItemLink,
+                        fields     : Array.isArray(entry.linkedFields) ? entry.linkedFields : [],
+                        transition : transitionLink
+                    }).then(function(updateResponse) {
+                        if(!updateResponse || updateResponse.error) {
+                            throw new Error('Nie udało się ustawić przejścia „' + targetName + '” dla „' + itemTitle + '”. ' + getDataManagerErrorMessage(updateResponse));
+                        }
+                        return { item : itemLink, transition : targetName };
+                    });
+                });
+            });
+        });
+    }).then(function(results) {
+        addLogEntry('Ustawiono przejścia lifecycle dla ' + results.length + ' affected items.', 'success');
+        return results;
+    });
+
+}
+function getERPRelevantAdminSectionId(sections) {
+
+    let adminSection = null;
+    for(let section of sections || []) {
+        let fields = Array.isArray(section.fields) ? section.fields : [];
+        let containsERPRelevant = fields.some(function(field) {
+            return getERPQuickReleaseFieldId(field) === erpFieldIDs.relevant;
+        });
+        if(containsERPRelevant) return getERPQuickReleaseFieldId(section);
+
+        let title = section && (section.title || section.name || section.displayName);
+        if(String(title || '').trim().toLowerCase() === 'admin') adminSection = section;
+    }
+    return adminSection ? getERPQuickReleaseFieldId(adminSection) : '';
+
+}
+function setERPQuickReleaseRelevant(releaseLink) {
+
+    addLogEntry('Ustawianie ERP_RELEVANT na Quick Release.', 'notice');
+    return $.get('/plm/sections', { link : releaseLink, useCache : true }).then(function(response) {
+        if(!response || response.error || !Array.isArray(response.data)) {
+            throw new Error('Nie udało się wczytać sekcji workspace Quick Release.');
+        }
+
+        let sectionId = getERPRelevantAdminSectionId(response.data);
+        if(isBlank(sectionId)) throw new Error('Nie znaleziono sekcji Admin zawierającej ERP_RELEVANT w workspace Quick Release.');
+
+        return $.post('/plm/edit', {
+            link     : releaseLink,
+            sections : response.data,
+            fields   : [{ fieldId : erpFieldIDs.relevant, sectionId : sectionId, value : true }]
+        }).then(function(updateResponse) {
+            if(!updateResponse || updateResponse.error) {
+                throw new Error('Nie udało się ustawić ERP_RELEVANT na Quick Release. ' + getDataManagerErrorMessage(updateResponse));
+            }
+            addLogEntry('Ustawiono ERP_RELEVANT = true na Quick Release.', 'success');
+            return updateResponse;
+        });
+    });
+
+}
+function performERPQuickReleaseTransition(releaseLink, transitionId, comment) {
+
+    return $.get('/plm/transitions', { link : releaseLink, useCache : false }).then(function(response) {
+        if(!response || response.error || !Array.isArray(response.data)) {
+            throw new Error('Nie udało się wczytać przejść workflow Quick Release.');
+        }
+        let transition = response.data.find(function(action) {
+            let link = action ? (action.__self__ || action.link || '') : '';
+            return String(link).split('/').pop() === String(transitionId);
+        });
+        if(!transition) throw new Error('Przejście ' + transitionId + ' nie jest dostępne dla Quick Release.');
+
+        return $.post('/plm/transition', {
+            link       : releaseLink,
+            transition : transition.__self__ || transition.link,
+            comment    : comment
+        }).then(function(transitionResponse) {
+            if(!transitionResponse || transitionResponse.error) {
+                throw new Error('Przejście ' + transitionId + ' nie powiodło się. ' + getDataManagerErrorMessage(transitionResponse));
+            }
+            return transitionResponse;
+        });
+    });
+
+}
+function getERPQuickReleaseWorkflowState(data) {
+
+    let state = data && (data.currentState || data.workflowState || data['workflow-state']);
+    if(!state && data && data.item) state = data.item.currentState;
+    if(typeof state === 'string') return { id : '', title : state };
+    state = state || {};
+    let link = state.link || state.__self__ || '';
+    return {
+        id    : String(state.systemId || state.id || String(link).split('/').pop() || ''),
+        title : String(state.title || state.name || '')
+    };
+
+}
+function waitForERPQuickReleaseState(releaseLink, expectedStateId) {
+
+    let started = Date.now();
+    let timeout = 600000;
+    let lastState = '';
+    function poll() {
+        return $.get('/plm/details', { link : releaseLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !response.data) throw new Error('Nie udało się odczytać statusu Quick Release.');
+            let state = getERPQuickReleaseWorkflowState(response.data);
+            let stateKey = state.id + '|' + state.title;
+            if(stateKey !== lastState) {
+                lastState = stateKey;
+                addLogEntry('Aktualny status Quick Release: ' + (state.title || state.id || 'nieznany') + '.', 'notice');
+            }
+            if(state.id === String(expectedStateId)) return state;
+            if(Date.now() - started >= timeout) {
+                throw new Error('Przekroczono czas oczekiwania na stan ' + expectedStateId + '. Ostatni status: ' + (state.title || state.id || 'nieznany') + '.');
+            }
+            return new Promise(function(resolve) { setTimeout(resolve, 2000); }).then(poll);
+        });
+    }
+    return poll();
+
+}
+function validateERPQuickReleasePayload(payload, erpCallName) {
+
+    let missingFields = [];
+    if(isBlank(payload.indeks)) missingFields.push('NUMBER → indeks');
+    if(isBlank(payload.nazwa_czesci)) missingFields.push('NAZWA_DEFRO → nazwa_czesci');
+    if(isBlank(payload.id_grupy)) missingFields.push('GRUPA_PRODUKTOWA → id_grupy');
+    if(erpCallName === 'modify-product' && isBlank(payload.indeks_czesci)) missingFields.push('INDEKS_CZESCI/NUMBER → indeks_czesci');
+    if(missingFields.length > 0) throw new Error('Brak wymaganych danych ERP: ' + missingFields.join(', ') + '.');
+
+}
+function addERPQuickReleaseError(candidate, error) {
+
+    let exists = run.errors.some(function(entry) { return entry.link === candidate.link; });
+    if(!exists) run.errors.push({ link : candidate.link, descriptor : candidate.descriptor });
+    return {
+        link       : candidate.link,
+        descriptor : candidate.descriptor,
+        success    : false,
+        error      : getDataManagerErrorMessage(error)
+    };
+
+}
+function sendERPQuickReleaseProduct(candidate) {
+
+    return $.get('/plm/details', { link : candidate.link, useCache : false }).then(function(response) {
+        if(!response || response.error || !response.data) throw new Error('Nie udało się ponownie wczytać zwolnionej wersji elementu.');
+
+        let details = response.data;
+        let syncStatus = getERPSyncStatus(details);
+        if(syncStatus === 'UP_TO_DATE') {
+            addLogEntry('Pominięto <a target="_blank" href="' + genItemURL({ link : candidate.link }) + '">' + candidate.descriptor + '</a>, ponieważ ERP_SYNC_STATUS = UP_TO_DATE.', 'notice');
+            run.success++;
+            return { link : candidate.link, descriptor : candidate.descriptor, success : true, skipped : true };
+        }
+
+        let erpCallName = getERPProductCallName(syncStatus);
+        if(isBlank(erpCallName)) throw new Error('ERP_SYNC_STATUS ma nieobsługiwaną wartość: ' + (syncStatus || '(brak wartości)') + '.');
+        let payload = buildERPSyncPayload(details, erpCallName);
+        validateERPQuickReleasePayload(payload, erpCallName);
+
+        return requestERPHash(payload).then(function(erpHash) {
+            return $.post('/plm/custom-erp/' + erpCallName, payload, null, 'json').then(function(erpResponse) {
+                if(!erpResponse || erpResponse.error || Number(erpResponse.status) !== 200) {
+                    if(erpResponse) addERPDumpLinks(erpResponse);
+                    throw new Error('ERP ' + erpCallName + ' zwrócił błąd: ' + getDataManagerErrorMessage(erpResponse));
+                }
+
+                let fields = [{ fieldId : erpFieldIDs.hash, value : 'pending:' + erpHash }];
+                let partIndex = getERPResponsePartIndex(erpResponse);
+                if(erpCallName === 'add-product' && !isBlank(partIndex)) fields.push({ fieldId : erpFieldIDs.partIndex, value : partIndex });
+
+                return $.post('/plm/edit', {
+                    link     : candidate.link,
+                    sections : details.sections || [],
+                    fields   : fields
+                }).then(function(updateResponse) {
+                    if(!updateResponse || updateResponse.error) {
+                        throw new Error('ERP przyjął dane, ale zapis ERP_HASH w PLM nie powiódł się. ' + getDataManagerErrorMessage(updateResponse));
+                    }
+                    addLogEntry('ERP ' + erpCallName + ' zakończono dla <a target="_blank" href="' + genItemURL({ link : candidate.link }) + '">' + candidate.descriptor + '</a>.', 'success');
+                    addERPDumpLinks(erpResponse);
+                    run.success++;
+                    return { link : candidate.link, descriptor : candidate.descriptor, success : true, erpCallName : erpCallName };
+                });
+            });
+        });
+    }).catch(function(error) {
+        let result = addERPQuickReleaseError(candidate, error);
+        addLogEntry('Błąd synchronizacji ERP dla <a target="_blank" href="' + genItemURL({ link : candidate.link }) + '">' + candidate.descriptor + '</a>: ' + result.error, 'error');
+        return result;
+    });
+
+}
+function sendERPQuickReleaseProducts(candidates) {
+
+    let results = [];
+    return candidates.reduce(function(sequence, candidate, index) {
+        return sequence.then(function() {
+            addLogEntry('Wysyłanie do ERP: ' + (index + 1) + ' z ' + candidates.length + ' — ' + candidate.descriptor + '.', 'notice');
+            return sendERPQuickReleaseProduct(candidate).then(function(result) { results.push(result); });
+        });
+    }, Promise.resolve()).then(function() { return results; });
+
+}
+function getERPQuickReleaseErrorComment(error, results) {
+
+    let lines = ['Błąd synchronizacji ERP uruchomionej przez Data Manager.'];
+    lines.push(getDataManagerErrorMessage(error));
+    (results || []).filter(function(result) { return !result.success; }).forEach(function(result) {
+        lines.push((result.descriptor || result.link) + ': ' + result.error);
+    });
+    return lines.join('\n').substring(0, 1900);
+
+}
+function finishERPQuickReleaseWorkflow() {
+
+    let candidates = [];
+    let seen = {};
+    (run.erpSyncCandidates || []).forEach(function(candidate) {
+        if(isBlank(candidate.link) || seen[candidate.link]) return;
+        seen[candidate.link] = true;
+        candidates.push(candidate);
+    });
+
+    if(candidates.length === 0) {
+        addLogEntry('Nie znaleziono elementów wymagających zwolnienia i synchronizacji ERP.', 'notice');
+        return Promise.resolve({ skipped : true, results : [] });
+    }
+
+    let releaseLink = '';
+    let pushStarted = false;
+    let results = [];
+    return createERPQuickRelease().then(function(link) {
+        releaseLink = link;
+        return addERPQuickReleaseAffectedItems(link, candidates);
+    }).then(function() {
+        return setERPQuickReleaseLifecycleTransitions(releaseLink);
+    }).then(function() {
+        return setERPQuickReleaseRelevant(releaseLink);
+    }).then(function() {
+        addLogEntry('Uruchamianie zwolnienia przejściem 509.', 'notice');
+        return performERPQuickReleaseTransition(releaseLink, '509', 'Zwolnienie elementów do synchronizacji ERP z Data Manager.');
+    }).then(function() {
+        addLogEntry('Oczekiwanie na stan zwolniony (286).', 'notice');
+        return waitForERPQuickReleaseState(releaseLink, '286');
+    }).then(function() {
+        addLogEntry('Uruchamianie Push to ERP przejściem 1255.', 'notice');
+        return performERPQuickReleaseTransition(releaseLink, '1255', 'Rozpoczęto wysyłanie produktów do ERP z Data Manager.');
+    }).then(function() {
+        pushStarted = true;
+        addLogEntry('Ponowne odczytywanie zwolnionych danych i wysyłanie produktów do ERP.', 'notice');
+        return sendERPQuickReleaseProducts(candidates);
+    }).then(function(syncResults) {
+        results = syncResults;
+        let failures = results.filter(function(result) { return !result.success; });
+        if(failures.length > 0) {
+            let error = new Error('Nie udało się zsynchronizować ' + failures.length + ' z ' + results.length + ' produktów.');
+            error.erpResults = results;
+            throw error;
+        }
+        return performERPQuickReleaseTransition(
+            releaseLink,
+            '1252',
+            'Wszystkie produkty wysłano do ERP. Liczba elementów: ' + results.length + '.'
+        );
+    }).then(function() {
+        addLogEntry('Quick Release zakończono przejściem 1252.', 'success');
+        return { release : releaseLink, results : results };
+    }).catch(function(error) {
+        if(!pushStarted || isBlank(releaseLink)) throw error;
+        let errorResults = error.erpResults || results;
+        return performERPQuickReleaseTransition(
+            releaseLink,
+            '1251',
+            getERPQuickReleaseErrorComment(error, errorResults)
+        ).then(function() {
+            addLogEntry('Quick Release zakończono błędem przejściem 1251.', 'error');
+            throw error;
+        }).catch(function(transitionError) {
+            if(transitionError === error) throw error;
+            error.failureTransitionError = transitionError;
+            throw error;
+        });
+    });
+
+}
+
 function getBOMRecords() {
 
     let link   = records[0].link;

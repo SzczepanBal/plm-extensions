@@ -233,11 +233,11 @@ block body
                                 .description Removes all additional owners (users and groups)
 
                         .action#sync-to-erp
-                            .action-title Sync to ERP
+                            .action-title Synchronizuj z ERP
                             .action-details
-                                .description Syncs each matching item to ERP. Uses add-product when WYSLANE_DO_ERP is false, and modify-product when WYSLANE_DO_ERP is true.
+                                .description Tworzy jeden Quick Release, zwalnia elementy wymagające synchronizacji i wysyła je do ERP. Dla ERP_SYNC_STATUS = NOT_SYNCED używa add-product, dla OUT_OF_DATE używa modify-product, a UP_TO_DATE pomija.
                                 .definition
-                                    .label Payload
+                                    .label Dane wysyłane
                                     .description
                                         code { "indeks": "NUMBER", "nazwa_czesci": "NAZWA_DEFRO (fallback: TITLE)", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [{ "Nazwa": "NAZWA_DEFRO (fallback: TITLE)" }, { "Opis": "OPIS" }] }
 

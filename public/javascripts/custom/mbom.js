@@ -5278,13 +5278,13 @@
     function isERPProductSynced(detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
-        return !isBlank(getSectionFieldValue(sections, fieldIds.erpPartIndex || 'INDEKS_CZESCI', '', 'object'));
+        return !isBlank(getSectionFieldValue(sections, customERPFieldIDs.partIndex, '', 'object'));
     }
 
     function isERPTechnologySynced(detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
-        return !isBlank(getSectionFieldValue(sections, fieldIds.erpVersionId || 'ID_WERSJI', '', 'object'));
+        return !isBlank(getSectionFieldValue(sections, customERPFieldIDs.versionId, '', 'object'));
     }
 
     function getERPTechnologyElementLink(elemItem) {
@@ -5705,7 +5705,7 @@
             ? config.workspaceMBOM.fieldIDs
             : {};
         let candidateIds = [
-            fieldIds.erpPartIndex || 'INDEKS_CZESCI',
+            customERPFieldIDs.partIndex,
             'INDEKS_CZESCI',
             'indeks_czesci'
         ];
@@ -6080,14 +6080,14 @@
             ? config.workspaceMBOM.fieldIDs
             : {};
         let numberValue = getERPTechnologySectionValue(sections, [
-            fieldIds.erpPartIndex || 'INDEKS_CZESCI',
+            customERPFieldIDs.partIndex,
             'INDEKS_CZESCI',
             'indeks_czesci'
         ], '');
 
         if(isBlank(numberValue) && part && part.details) {
             numberValue = getERPTechnologyPartDetailsValue(part, [
-                fieldIds.erpPartIndex || 'INDEKS_CZESCI',
+                customERPFieldIDs.partIndex,
                 'INDEKS_CZESCI',
                 'indeks_czesci'
             ]);
@@ -6125,14 +6125,14 @@
             ? config.workspaceMBOM.fieldIDs
             : {};
         let versionValue = getERPTechnologySectionValue(sections, [
-            fieldIds.erpVersionId || 'ID_WERSJI',
+            customERPFieldIDs.versionId,
             'ID_WERSJI',
             'id_wersji'
         ], '');
 
         if(isBlank(versionValue) && part && part.details) {
             versionValue = getERPTechnologyPartDetailsValue(part, [
-                fieldIds.erpVersionId || 'ID_WERSJI',
+                customERPFieldIDs.versionId,
                 'ID_WERSJI',
                 'id_wersji'
             ]);
@@ -6339,10 +6339,12 @@
         return String(getERPSyncBOMValue(part, [fieldIds.type, 'TYPE'], '')).trim().toLowerCase() === 'manufacturing';
     }
 
+    const customERPFieldIDs = common.erp.fieldIDs;
+
     function getERPSyncBOMProductState(part) {
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
         let manufacturing = isERPSyncBOMManufacturing(part);
-        let storedPartIndex = getERPSyncBOMValue(part, [fieldIds.erpPartIndex, 'INDEKS_CZESCI'], '');
+        let storedPartIndex = getERPSyncBOMValue(part, [customERPFieldIDs.partIndex], '');
 
         return {
             manufacturing : manufacturing,
@@ -6375,10 +6377,10 @@
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
         let requiredColumns = [
             { label : 'NUMBER', candidates : [fieldIds.number, 'NUMBER'] },
-            { label : 'INDEKS_CZESCI', candidates : [fieldIds.erpPartIndex, 'INDEKS_CZESCI'] },
-            { label : 'ID_WERSJI', candidates : [fieldIds.erpVersionId, 'ID_WERSJI'] },
-            { label : 'ERP_HASH', candidates : [fieldIds.erpHash, 'ERP_HASH'] },
-            { label : 'ERP_SYNC_STATUS', candidates : [fieldIds.erpSyncStatus, 'ERP_SYNC_STATUS'] },
+            { label : 'INDEKS_CZESCI', candidates : [customERPFieldIDs.partIndex] },
+            { label : 'ID_WERSJI', candidates : [customERPFieldIDs.versionId] },
+            { label : 'ERP_HASH', candidates : [customERPFieldIDs.hash] },
+            { label : 'ERP_SYNC_STATUS', candidates : [customERPFieldIDs.syncStatus] },
             { label : 'GRUPA_PRODUKTOWA', candidates : ['GRUPA_PRODUKTOWA'] },
             { label : 'TYPE', candidates : [fieldIds.type, 'TYPE'] },
             { label : 'PROCESS_CODE', candidates : [fieldIds.code, 'PROCESS_CODE'] },
@@ -6498,7 +6500,7 @@
 
     function getERPSyncBOMVersionId(part) {
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
-        let value = getERPSyncBOMValue(part, [fieldIds.erpVersionId, 'ID_WERSJI'], '');
+        let value = getERPSyncBOMValue(part, [customERPFieldIDs.versionId], '');
         let number = Number(value);
         return isBlank(value) || Number.isNaN(number) ? '' : Math.trunc(number);
     }
@@ -6512,13 +6514,12 @@
     }
 
     function getERPSyncBOMStoredHash(part) {
-        let fieldIds = config.workspaceMBOM.fieldIDs || {};
-        return String(getERPSyncBOMValue(part, [fieldIds.erpHash, 'ERP_HASH'], '') || '').trim();
+        return String(getERPSyncBOMValue(part, [customERPFieldIDs.hash], '') || '').trim();
     }
 
     function getERPSyncBOMStatus(part) {
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
-        return String(getERPSyncBOMValue(part, [fieldIds.erpSyncStatus, 'ERP_SYNC_STATUS'], '') || '')
+        return String(getERPSyncBOMValue(part, [customERPFieldIDs.syncStatus], '') || '')
             .trim()
             .toUpperCase();
     }
@@ -6542,6 +6543,21 @@
         };
     }
 
+    function getERPHashResponseValue(response) {
+        let containers = [
+            response,
+            response && response.data,
+            response && response.data && response.data.data,
+            response && response.body,
+            response && response.data && response.data.body
+        ];
+        for(let container of containers) {
+            if(container && typeof container === 'object' && !isBlank(container.hash)) return String(container.hash);
+            if(typeof container === 'string' && container.indexOf('v1:') === 0) return container;
+        }
+        return '';
+    }
+
     function calculateERPHash(job) {
         return $.ajax({
             url         : erpTechnologyProxyBaseUrl + 'hash',
@@ -6549,9 +6565,13 @@
             contentType : 'application/json',
             data        : JSON.stringify(buildERPHashInput(job))
         }).then(function(response) {
-            let hash = response && response.data ? response.data.hash : '';
-            if(isBlank(hash)) throw new Error('Serwer nie zwrócił skrótu danych ERP.');
-            job.erpHash = String(hash);
+            let hash = getERPHashResponseValue(response);
+            if(isBlank(hash)) {
+                let responseShape = response && typeof response === 'object' ? Object.keys(response).join(', ') : typeof response;
+                let dataShape = response && response.data && typeof response.data === 'object' ? Object.keys(response.data).join(', ') : typeof (response && response.data);
+                throw new Error('Serwer nie zwrócił skrótu danych ERP. Format odpowiedzi: [' + responseShape + '], data: [' + dataShape + '].');
+            }
+            job.erpHash = hash;
             job.erpOutOfDate = job.erpHash !== job.storedERPHash;
             return job;
         });
@@ -6603,7 +6623,7 @@
 
             operation.erpChildren.filter(function(child) { return !isERPSyncBOMOperation(child); }).forEach(function(component) {
                 let fieldIds = config.workspaceMBOM.fieldIDs || {};
-                let componentIndex = getERPSyncBOMValue(component, [fieldIds.erpPartIndex, 'INDEKS_CZESCI', fieldIds.number, 'NUMBER'], component.partNumber || '');
+                let componentIndex = getERPSyncBOMValue(component, [customERPFieldIDs.partIndex, fieldIds.number, 'NUMBER'], component.partNumber || '');
                 let type = String(getERPSyncBOMValue(component, [fieldIds.type, 'TYPE'], '')).trim().toLowerCase();
                 let componentVersionId = getERPSyncBOMVersionId(component);
                 let structureRow = {
@@ -6799,9 +6819,9 @@
         let fieldIds = workspaceConfig && workspaceConfig.fieldIDs
             ? workspaceConfig.fieldIDs
             : {};
-        let fieldIdERPVersion = fieldIds.erpVersionId || 'ID_WERSJI';
-        let fieldIdERPPartIndex = fieldIds.erpPartIndex || 'INDEKS_CZESCI';
-        let fieldIdERPHash = fieldIds.erpHash || 'ERP_HASH';
+        let fieldIdERPVersion = customERPFieldIDs.versionId;
+        let fieldIdERPPartIndex = customERPFieldIDs.partIndex;
+        let fieldIdERPHash = customERPFieldIDs.hash;
 
         function normalizeERPTextValue(value) {
             if(value === null || typeof value === 'undefined') return '';
@@ -6896,8 +6916,7 @@
                 fieldsRequested.push(fieldId);
             }
 
-            let isSimulatedUpdate = updateMode === 'simulation';
-            if((isTechnologyUpdate || isProductUpdate || isSimulatedUpdate) && !isBlank(erpHash)) {
+            if((isTechnologyUpdate || isProductUpdate) && !isBlank(erpHash)) {
                 addERPField(fieldIdERPHash, 'pending:' + String(erpHash).replace(/^pending:/, ''));
             }
             if(erpResponseBody && typeof erpResponseBody === 'object') {
@@ -7017,7 +7036,6 @@
             let success = !!response && !response.error && status === 200;
 
             let erpResponseBody = response && response.data ? response.data.body : null;
-            let simulated = !!(response && response.data && response.data.mode === 'simulation');
             let indexUpdatePromise = Promise.resolve(false);
             if(!testRun && success) {
                 let updateRequests = [];
@@ -7025,11 +7043,11 @@
 
                 updateRequests.push(updateERPSyncFields(
                     productSourceLink,
-                    simulated ? null : erpResponseBody,
-                    simulated ? 'simulation' : (currentJob.productUpdateMode || 'product'),
-                    currentJob.productUpdateMode === 'product' || simulated ? currentJob.erpHash : ''
+                    erpResponseBody,
+                    currentJob.productUpdateMode || 'product',
+                    currentJob.productUpdateMode === 'product' ? currentJob.erpHash : ''
                 ));
-                if(!simulated && normalizePLMLink(productSourceLink) !== normalizePLMLink(currentJob.link)) {
+                if(normalizePLMLink(productSourceLink) !== normalizePLMLink(currentJob.link)) {
                     updateRequests.push(updateERPSyncFields(currentJob.link, erpResponseBody, 'index'));
                 }
 
@@ -7303,7 +7321,6 @@
                                 let status = Number(response && response.status);
                                 let success = !!response && !response.error && status === 200;
                                 let erpResponseBody = response && response.data ? response.data.body : null;
-                                let simulated = !!(response && response.data && response.data.mode === 'simulation');
                                 console.log('MBOM custom: ERP technology raw response payload', {
                                     callName        : callName,
                                     status          : status,
@@ -7314,8 +7331,8 @@
                                 let flagUpdatePromise = (!testRun && success)
                                     ? updateERPSyncFields(
                                         currentJob.link,
-                                        simulated ? null : erpResponseBody,
-                                        simulated ? 'simulation' : 'technology',
+                                        erpResponseBody,
+                                        'technology',
                                         currentJob.erpHash
                                     )
                                     : Promise.resolve(false);
@@ -7426,7 +7443,6 @@
                             let status = Number(response && response.status);
                             let success = !!response && !response.error && status === 200;
                             let responseBody = response && response.data ? response.data.body : null;
-                            let simulated = !!(response && response.data && response.data.mode === 'simulation');
 
                             if(!success) {
                                 throw new Error((response && response.message) || 'Impuls nie zwrócił statusu 200 dla „' + currentJob.descriptor + '”.');
@@ -7434,8 +7450,8 @@
 
                             return updateERPSyncFields(
                                 currentJob.link,
-                                simulated ? null : responseBody,
-                                simulated ? 'simulation' : 'technology',
+                                responseBody,
+                                'technology',
                                 currentJob.erpHash
                             ).then(function(updated) {
                                 if(!updated) throw new Error('Nie udało się zapisać wyniku synchronizacji ERP w PLM dla „' + currentJob.descriptor + '”.');
@@ -7540,7 +7556,7 @@
 
             if(testRun && result.erpHash) {
                 html += '<div class="erp-status-line">Wyliczony ERP_HASH: ' + escapeERPStatusHtml(result.erpHash) + '</div>';
-                html += '<div class="erp-status-line">Symulacja onEdit: ERP_SYNC_STATUS = UP_TO_DATE, ERP_SYNC_DATE = bieżąca data i czas.</div>';
+                html += '<div class="erp-status-line">Przewidywany wynik onEdit: ERP_SYNC_STATUS = UP_TO_DATE, ERP_SYNC_DATE = bieżąca data i czas.</div>';
                 html += '<div class="erp-status-line">Tryb testowy nie zmienił żadnych pól w PLM.</div>';
             }
 
@@ -9666,6 +9682,43 @@
     }
 
 
+    function getMBOMERPRelevantAdminSectionId(sections) {
+        let adminSection = null;
+        for(let section of sections || []) {
+            let fields = Array.isArray(section.fields) ? section.fields : [];
+            let containsERPRelevant = fields.some(function(field) {
+                return getMBOMChangeOrderFieldId(field) === customERPFieldIDs.relevant;
+            });
+            if(containsERPRelevant) return getMBOMChangeOrderFieldId(section);
+
+            let title = section && (section.title || section.name || section.displayName);
+            if(normalizeComparisonValue(title) === 'admin') adminSection = section;
+        }
+        return adminSection ? getMBOMChangeOrderFieldId(adminSection) : '';
+    }
+
+    function setMBOMChangeOrderERPRelevant(changeOrderLink) {
+        return $.get('/plm/sections', { link : changeOrderLink, useCache : true }).then(function(response) {
+            if(!response || response.error || !Array.isArray(response.data)) {
+                throw new Error('Nie udało się wczytać sekcji workspace zlecenia zmian.');
+            }
+
+            let sectionId = getMBOMERPRelevantAdminSectionId(response.data);
+            if(isBlank(sectionId)) throw new Error('Nie znaleziono sekcji Admin zawierającej ERP_RELEVANT w workspace zlecenia zmian.');
+
+            return $.post('/plm/edit', {
+                link     : changeOrderLink,
+                sections : response.data,
+                fields   : [{ fieldId : customERPFieldIDs.relevant, sectionId : sectionId, value : true }]
+            }).then(function(updateResponse) {
+                if(!updateResponse || updateResponse.error) {
+                    throw new Error('Nie udało się ustawić pola ERP_RELEVANT na zleceniu zmian. ' + getRawMaterialErrorMessage(updateResponse));
+                }
+                return updateResponse;
+            });
+        });
+    }
+
     function getMBOMLifecycleTitle(value) {
         if(isBlank(value)) return '';
         if(typeof value === 'string') return value;
@@ -10002,12 +10055,14 @@
                 if(!startReleaseTransition) {
                     return { release : changeOrderLink, created : created, add : addResult, lifecycle : lifecycleResult, transitioned : false };
                 }
-                return performMBOMChangeOrderTransition(
-                    changeOrderLink,
-                    '1215',
-                    'Zwolnione w mBOM Editor'
-                ).then(function() {
-                    return { release : changeOrderLink, created : created, add : addResult, lifecycle : lifecycleResult, transitioned : true };
+                return setMBOMChangeOrderERPRelevant(changeOrderLink).then(function() {
+                    return performMBOMChangeOrderTransition(
+                        changeOrderLink,
+                        '1215',
+                        'Zwolnione w mBOM Editor'
+                    );
+                }).then(function() {
+                    return { release : changeOrderLink, created : created, add : addResult, lifecycle : lifecycleResult, erpRelevant : true, transitioned : true };
                 });
             });
         });
