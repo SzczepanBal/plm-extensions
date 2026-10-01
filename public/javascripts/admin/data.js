@@ -1205,7 +1205,7 @@ function getNextRecords() {
             setRecordsData(response);
 
             if(records.length === 0) {
-                if(run.actionId === 'sync-to-erp' && !options.testRun && !run.erpWorkflowFinishing) {
+                if(run.actionId === 'release-sync-to-erp' && !options.testRun && !run.erpWorkflowFinishing) {
                     run.erpWorkflowFinishing = true;
                     finishERPQuickReleaseWorkflow().catch(function(error) {
                         addLogEntry('Synchronizacja ERP nie powiodła się: ' + getDataManagerErrorMessage(error), 'error');
@@ -1370,7 +1370,7 @@ function genRequests(limit) {
 
         if((options.testRun) || stopped) {
 
-            if(options.testRun && run.actionId === 'sync-to-erp') {
+            if(options.testRun && ['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) {
                 requests.push($.get('/plm/details', params));
             }
 
@@ -1420,7 +1420,7 @@ function genRequests(limit) {
 
                 requests.push($.get('/plm/details', params));
 
-            } else if(run.actionId === 'sync-to-erp') {
+            } else if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) {
 
                 requests.push($.get('/plm/details', params));
 
@@ -1738,12 +1738,39 @@ function getERPSyncStatus(details) {
     return isBlank(value) ? '' : String(value);
 
 }
-function getERPProductCallName(syncStatus) {
+function isERPSyncRequired(syncStatus) {
 
-    if(syncStatus === 'NOT_SYNCED')  return 'add-product';
-    if(syncStatus === 'OUT_OF_DATE') return 'modify-product';
+    return syncStatus === 'NOT_SYNCED' || syncStatus === 'OUT_OF_DATE';
 
-    return '';
+}
+function normalizeERPBooleanValue(value) {
+
+    if(value === true || value === 1) return true;
+    if(value === false || value === 0 || value === null || typeof value === 'undefined') return false;
+    if(typeof value === 'string') return ['true', '1', 'yes', 'y', 'tak'].includes(value.trim().toLowerCase());
+    if(typeof value === 'object') {
+        if(Object.prototype.hasOwnProperty.call(value, 'value')) return normalizeERPBooleanValue(value.value);
+        if(Object.prototype.hasOwnProperty.call(value, 'title')) return normalizeERPBooleanValue(value.title);
+    }
+
+    return false;
+
+}
+function getERPSentToERP(details) {
+
+    let sections = (details && details.sections) ? details.sections : [];
+    let value = getSectionFieldValue(sections, erpFieldIDs.sentToERP, false, 'object');
+
+    return normalizeERPBooleanValue(value);
+
+}
+function getERPProductCallName(details) {
+
+    let sections = (details && details.sections) ? details.sections : [];
+    let sentToERP = getERPSentToERP(details);
+    let partIndex = getERPFieldValue(sections, erpFieldIDs.partIndex);
+
+    return sentToERP && !isBlank(partIndex) ? 'modify-product' : 'add-product';
 
 }
 function getERPHashResponseValue(response) {
@@ -1853,7 +1880,7 @@ function genUpdateRequests(responses) {
 
             requests.push($.post('/plm/edit', params));
 
-        } else if(run.actionId === 'sync-to-erp') {
+        } else if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) {
 
             let erpSyncStatus = getERPSyncStatus(response.data);
 
@@ -1866,8 +1893,17 @@ function genUpdateRequests(responses) {
                 }));
                 continue;
             }
+            if(!isERPSyncRequired(erpSyncStatus)) {
+                let displayedStatus = isBlank(erpSyncStatus) ? '(brak wartości)' : erpSyncStatus;
+                addLogEntry('Pominięto synchronizację ERP dla ' + params.descriptor + ', ponieważ ERP_SYNC_STATUS ma nieobsługiwaną wartość: ' + displayedStatus + '.', 'error');
+                run.errors.push({
+                    link       : params.link,
+                    descriptor : params.descriptor
+                });
+                continue;
+            }
 
-            if(!options.testRun) {
+            if(!options.testRun && run.actionId === 'release-sync-to-erp') {
                 run.erpSyncCandidates.push({
                     link             : params.link,
                     descriptor       : params.descriptor,
@@ -1881,17 +1917,7 @@ function genUpdateRequests(responses) {
                 }));
                 continue;
             }
-            let erpCallName = getERPProductCallName(erpSyncStatus);
-
-            if(isBlank(erpCallName)) {
-                let displayedStatus = isBlank(erpSyncStatus) ? '(brak wartości)' : erpSyncStatus;
-                addLogEntry('Pominięto synchronizację ERP dla ' + params.descriptor + ', ponieważ ERP_SYNC_STATUS ma nieobsługiwaną wartość: ' + displayedStatus + '.', 'error');
-                run.errors.push({
-                    link       : params.link,
-                    descriptor : params.descriptor
-                });
-                continue;
-            }
+            let erpCallName = getERPProductCallName(response.data);
 
 
             let payload = buildERPSyncPayload(response.data, erpCallName);
@@ -2016,7 +2042,7 @@ function genCompletionRequests(limit, responses) {
 
             } else if(record.link === response.params.link) {
 
-                if(run.actionId === 'sync-to-erp') erpResponse = response;
+                if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) erpResponse = response;
 
                 if(response.error) {
 
@@ -2031,7 +2057,7 @@ function genCompletionRequests(limit, responses) {
 
                     addLogEntry('Error while processing  <a target="_blank" href="' + link + '">' + response.params.descriptor + '</a>', 'error');
                     if(response.message !== '') addLogEntry('Error message: "' + response.message + '"', 'indent');
-                    if(run.actionId === 'sync-to-erp') addERPDumpLinks(response);
+                    if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) addERPDumpLinks(response);
 
                 }
 
@@ -2047,10 +2073,10 @@ function genCompletionRequests(limit, responses) {
 
         if(success) {
             
-            let erpDeferred = run.actionId === 'sync-to-erp' && erpResponse && erpResponse.erpDeferred;
+            let erpDeferred = run.actionId === 'release-sync-to-erp' && erpResponse && erpResponse.erpDeferred;
             if(!erpDeferred) run.success++;
 
-            if(run.actionId === 'sync-to-erp') {
+            if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) {
                 if(erpDeferred) {
                     addLogEntry('Przygotowano do zwolnienia i synchronizacji ERP: <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>.', 'notice');
                 } else if(erpResponse && erpResponse.erpSkipped) {
@@ -2083,10 +2109,11 @@ function genCompletionRequests(limit, responses) {
             if(options.saveUncheck !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveUncheck, 'false' );
             if(options.saveText    !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveText   , $('#save-text-value').val() );
             if(options.saveClear   !== '--') addFieldToPayload(params.sections, wsConfig.sections, null, options.saveClear  , null    );
-            if(run.actionId === 'sync-to-erp' && !options.testRun && !(erpResponse && erpResponse.erpDeferred)) {
+            if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId) && !options.testRun && !(erpResponse && erpResponse.erpDeferred)) {
                 if(erpResponse && !erpResponse.erpSkipped && Number(erpResponse.status) === 200) {
                     addFieldToPayload(params.sections, wsConfig.sections, null, erpFieldIDs.partIndex, getERPResponsePartIndex(erpResponse));
                     addFieldToPayload(params.sections, wsConfig.sections, null, erpFieldIDs.hash, 'pending:' + erpResponse.erpHash);
+                    if(erpResponse.erpCallName === 'add-product') addFieldToPayload(params.sections, wsConfig.sections, null, erpFieldIDs.sentToERP, true);
                 } else if(erpResponse && !erpResponse.erpSkipped) {
                     addLogEntry('Pominięto aktualizację ERP_HASH dla <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>, ponieważ ERP zwrócił status ' + erpResponse.status, 'notice');
                 }
@@ -2104,9 +2131,44 @@ function genCompletionRequests(limit, responses) {
 function getDataManagerErrorMessage(error) {
 
     if(!error) return 'Nieznany błąd.';
-    if(error.responseJSON && !isBlank(error.responseJSON.message)) return error.responseJSON.message;
-    if(error.data && !isBlank(error.data.message)) return error.data.message;
-    if(!isBlank(error.message)) return error.message;
+
+    if(error.responseJSON && error.responseJSON !== error) {
+        let responseMessage = getDataManagerErrorMessage(error.responseJSON);
+        if(responseMessage !== 'Nieznany błąd.') return responseMessage;
+    }
+
+    if(!isBlank(error.message)) return String(error.message);
+
+    if(typeof error.data === 'string' && !isBlank(error.data)) return error.data;
+    if(error.data && error.data !== error) {
+        let dataMessage = getDataManagerErrorMessage(error.data);
+        if(dataMessage !== 'Nieznany błąd.') return dataMessage;
+    }
+
+    if(Array.isArray(error)) {
+        let messages = error.map(getDataManagerErrorMessage).filter(function(message) {
+            return message !== 'Nieznany błąd.';
+        });
+        if(messages.length > 0) return messages.join('; ');
+    }
+
+    if(typeof error.responseText === 'string' && !isBlank(error.responseText)) {
+        try {
+            return getDataManagerErrorMessage(JSON.parse(error.responseText));
+        } catch(parseError) {
+            if(!/^\s*</.test(error.responseText)) return error.responseText;
+        }
+    }
+
+    if(!isBlank(error.status) || !isBlank(error.statusText)) {
+        return 'HTTP ' + String(error.status || '').trim() + ' ' + String(error.statusText || '').trim();
+    }
+
+    try {
+        let serialized = JSON.stringify(error);
+        if(serialized && serialized !== '{}') return serialized;
+    } catch(serializationError) {}
+
     return String(error);
 
 }
@@ -2460,9 +2522,9 @@ function sendERPQuickReleaseProduct(candidate) {
             run.success++;
             return { link : candidate.link, descriptor : candidate.descriptor, success : true, skipped : true };
         }
+        if(!isERPSyncRequired(syncStatus)) throw new Error('ERP_SYNC_STATUS ma nieobsługiwaną wartość: ' + (syncStatus || '(brak wartości)') + '.');
 
-        let erpCallName = getERPProductCallName(syncStatus);
-        if(isBlank(erpCallName)) throw new Error('ERP_SYNC_STATUS ma nieobsługiwaną wartość: ' + (syncStatus || '(brak wartości)') + '.');
+        let erpCallName = getERPProductCallName(details);
         let payload = buildERPSyncPayload(details, erpCallName);
         validateERPQuickReleasePayload(payload, erpCallName);
 
@@ -2475,7 +2537,10 @@ function sendERPQuickReleaseProduct(candidate) {
 
                 let fields = [{ fieldId : erpFieldIDs.hash, value : 'pending:' + erpHash }];
                 let partIndex = getERPResponsePartIndex(erpResponse);
-                if(erpCallName === 'add-product' && !isBlank(partIndex)) fields.push({ fieldId : erpFieldIDs.partIndex, value : partIndex });
+                if(erpCallName === 'add-product') {
+                    if(!isBlank(partIndex)) fields.push({ fieldId : erpFieldIDs.partIndex, value : partIndex });
+                    fields.push({ fieldId : erpFieldIDs.sentToERP, value : true });
+                }
 
                 return $.post('/plm/edit', {
                     link     : candidate.link,

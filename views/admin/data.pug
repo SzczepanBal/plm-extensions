@@ -235,12 +235,20 @@ block body
                         .action#sync-to-erp
                             .action-title Synchronizuj z ERP
                             .action-details
-                                .description Tworzy jeden Quick Release, zwalnia elementy wymagające synchronizacji i wysyła je do ERP. Dla ERP_SYNC_STATUS = NOT_SYNCED używa add-product, dla OUT_OF_DATE używa modify-product, a UP_TO_DATE pomija.
+                                .description Wysyła elementy bezpośrednio do ERP bez tworzenia Quick Release i bez zwalniania ich w PLM. ERP_SYNC_STATUS określa, czy element wymaga wysłania. WYSLANE_DO_ERP = true wraz z niepustym INDEKS_CZESCI wybiera modify-product; w pozostałych przypadkach używany jest add-product. Po poprawnej odpowiedzi zapisuje ERP_HASH oraz INDEKS_CZESCI w PLM.
                                 .definition
                                     .label Dane wysyłane
                                     .description
                                         code { "indeks": "NUMBER", "nazwa_czesci": "NAZWA_DEFRO (fallback: TITLE)", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [{ "Nazwa": "NAZWA_DEFRO (fallback: TITLE)" }, { "Opis": "OPIS" }] }
 
+                        .action#release-sync-to-erp
+                            .action-title Zwolnij w PLM i synchronizuj z ERP
+                            .action-details
+                                .description Tworzy jeden Quick Release, zwalnia elementy wymagające synchronizacji, a następnie wysyła je do ERP. ERP_SYNC_STATUS = UP_TO_DATE pomija element, natomiast NOT_SYNCED i OUT_OF_DATE wymagają wysłania. WYSLANE_DO_ERP = true wraz z niepustym INDEKS_CZESCI wybiera modify-product; w pozostałych przypadkach używany jest add-product.
+                                .definition
+                                    .label Dane wysyłane
+                                    .description
+                                        code { "indeks": "NUMBER", "nazwa_czesci": "NAZWA_DEFRO (fallback: TITLE)", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [{ "Nazwa": "NAZWA_DEFRO (fallback: TITLE)" }, { "Opis": "OPIS" }] }
                         .action.ws-type-2#perform-transition  
                             .action-title Perform Workflow Transition
                             .action-details   

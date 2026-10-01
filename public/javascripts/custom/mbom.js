@@ -10624,6 +10624,24 @@
         return mbomOperationTypePromise;
     }
 
+    function setMBOMOperationDefroName(fields, titleFieldId, titleSectionId) {
+        let titleField = fields.find(function(field) { return field.fieldId === titleFieldId; });
+        if(!titleField || isBlank(titleField.value)) return fields;
+
+        let defroFieldId = 'NAZWA_DEFRO';
+        let defroSectionId = getMBOMWorkspaceFieldSectionId(defroFieldId) || titleSectionId;
+        let defroField = fields.find(function(field) { return field.fieldId === defroFieldId; });
+
+        if(!defroField) {
+            defroField = { fieldId : defroFieldId, value : titleField.value };
+            fields.push(defroField);
+        } else {
+            defroField.value = titleField.value;
+        }
+        if(!isBlank(defroSectionId)) defroField.sectionId = defroSectionId;
+
+        return fields;
+    }
     if(typeof createNewItems === 'function') {
         let originalCreateNewItems = createNewItems;
         createNewItems = function() {
@@ -10649,6 +10667,7 @@
                             field.sectionId = basicSectionId;
                         }
                     }
+                    setMBOMOperationDefroName(data.fields, titleFieldId, basicSectionId);
 
                     let hasType = data.fields.some(function(field) {
                         return field.fieldId === typeFieldId;
@@ -10679,7 +10698,7 @@
                         console.error('MBOM custom: operation creation request failed', { status: status, response: xhr.responseJSON || xhr.responseText });
                         $('#save, #confirm-saving').removeClass('disabled');
                         $('#dialog-saving .in-work').removeClass('in-work');
-                        showErrorMessage('Operation creation failed',
+                        showErrorMessage('Nie udało się utworzyć operacji',
                             (status === 'timeout' ? 'PLM did not respond within 60 seconds.' : getRawMaterialErrorMessage(xhr))
                             + ' Reload the MBOM and check whether the item was created before retrying.');
                     });
@@ -10697,6 +10716,119 @@
         };
     }
 
+    function getMBOMTechnicalEditText(value) {
+        if(value === null || typeof value === 'undefined') return '';
+        if(typeof value === 'object') {
+            if(!isBlank(value.title)) return String(value.title).trim();
+            if(!isBlank(value.label)) return String(value.label).trim();
+            if(!isBlank(value.value) && typeof value.value !== 'object') return String(value.value).trim();
+            return '';
+        }
+        return String(value).trim();
+    }
+
+    function getMBOMTechnicalEditPendingHash(details) {
+        let sections = details && Array.isArray(details.sections) ? details.sections : [];
+        let typeValue = getSectionFieldValue(sections, config.workspaceEBOM.fieldIDs.type, '', 'object');
+        let syncStatus = getSectionFieldValue(sections, customERPFieldIDs.syncStatus, '', 'object');
+        let currentHash = getSectionFieldValue(sections, customERPFieldIDs.hash, '', 'object');
+
+        if(normalizeComparisonValue(getMBOMTechnicalEditText(typeValue)) !== 'mechanical') return '';
+        if(getMBOMTechnicalEditText(syncStatus).toUpperCase() !== 'UP_TO_DATE') return '';
+
+        currentHash = getMBOMTechnicalEditText(currentHash);
+        return /^v1:[0-9a-f]{64}$/i.test(currentHash) ? 'pending:' + currentHash : '';
+    }
+
+    function addMBOMTechnicalEditHash(details, fields) {
+        let pendingHash = getMBOMTechnicalEditPendingHash(details);
+        if(!isBlank(pendingHash)) fields.push({ fieldId : customERPFieldIDs.hash, value : pendingHash });
+        return fields;
+    }
+
+    function saveMBOMTechnicalEBOMFields(link, fields, details) {
+        function save(itemDetails, sections) {
+            let payloadFields = fields.slice();
+            addMBOMTechnicalEditHash(itemDetails, payloadFields);
+            return $.post('/plm/edit', {
+                link     : link,
+                sections : sections,
+                fields   : payloadFields
+            }, function(response) {
+                printResponseErrorMessagesToConsole(response);
+            });
+        }
+
+        if(details && Array.isArray(details.sections)) return save(details, details.sections);
+
+        return $.get('/plm/details', { link : link, useCache : false }).then(function(response) {
+            if(!response || response.error || !response.data) {
+                console.warn('MBOM custom: nie udało się odczytać statusu ERP podczas technicznej aktualizacji eBOM.', response);
+                return save(null, wsEBOM.sections);
+            }
+            return save(response.data, response.data.sections || wsEBOM.sections);
+        }, function(error) {
+            console.warn('MBOM custom: nie udało się odczytać statusu ERP podczas technicznej aktualizacji eBOM.', error);
+            return save(null, wsEBOM.sections);
+        });
+    }
+
+    if(typeof storeMBOMLink === 'function') {
+        storeMBOMLink = function storeMBOMLink(link) {
+            let timestamp = new Date();
+            let lastSync = timestamp.getFullYear() + '-' + (timestamp.getMonth() + 1) + '-' + timestamp.getDate();
+            let fields = [
+                { fieldId : config.workspaceEBOM.fieldIDs.mbom + siteSuffix, value : { link : links.mbom } },
+                { fieldId : config.workspaceEBOM.fieldIDs.lastMBOMSync + siteSuffix, value : lastSync },
+                { fieldId : config.workspaceEBOM.fieldIDs.lastMBOMUser + siteSuffix, value : userAccount.displayName }
+            ];
+            return saveMBOMTechnicalEBOMFields(link, fields);
+        };
+    }
+
+    if(typeof storeContextMBOMLink === 'function') {
+        storeContextMBOMLink = function storeContextMBOMLink() {
+            if(isBlank(links.context)) return Promise.resolve();
+
+            return $.get('/plm/details', { link : links.context, useCache : false }).then(function(response) {
+                if(!response || response.error || !response.data) throw new Error(getRawMaterialErrorMessage(response));
+                let valueMBOM = getSectionFieldValue(response.data.sections, urlParameters.contextfieldidmbom + siteSuffix, '', 'link');
+                if(!isBlank(valueMBOM)) return response;
+
+                return saveMBOMTechnicalEBOMFields(links.context, [{
+                    fieldId : urlParameters.contextfieldidmbom + siteSuffix,
+                    value   : { link : links.mbom }
+                }], response.data);
+            }).catch(function(error) {
+                console.warn('MBOM custom: nie udało się zapisać kontekstowego łącza mBOM.', error);
+            });
+        };
+    }
+
+    if(typeof endProcessing === 'function') {
+        endProcessing = function endProcessing() {
+            $('#confirm-saving').removeClass('disabled').addClass('default');
+            $('.in-work').removeClass('in-work');
+
+            let timestamp = new Date();
+            let lastSync = timestamp.getFullYear() + '-' + (timestamp.getMonth() + 1) + '-' + timestamp.getDate();
+            let ebomFields = [
+                { fieldId : config.workspaceEBOM.fieldIDs.lastMBOMSync, value : lastSync },
+                { fieldId : config.workspaceEBOM.fieldIDs.lastMBOMUser, value : userAccount.displayName }
+            ];
+            let mbomParams = {
+                link     : links.mbom,
+                sections : wsMBOM.sections,
+                fields   : [
+                    { fieldId : config.workspaceMBOM.fieldIDs.lastMBOMSync, value : lastSync },
+                    { fieldId : config.workspaceMBOM.fieldIDs.lastMBOMUser, value : userAccount.displayName }
+                ]
+            };
+
+            saveMBOMTechnicalEBOMFields(links.ebom, ebomFields);
+            $.post('/plm/edit', mbomParams, function(response) { printResponseErrorMessagesToConsole(response); });
+        };
+    }
     if(typeof createMBOMForEBOM === 'function') {
         createMBOMForEBOM = async function createMBOMForEBOM(ebomItemDetails, number, callback) {
             let hasBom;
@@ -10729,9 +10861,13 @@
             };
 
             for(let fieldToCopy of getMBOMPropertyRepairMappings()) {
+                let value = getSectionFieldValue(ebomItemDetails.sections, fieldToCopy.ebom);
+                if(fieldToCopy.mbom === 'NAZWA_DEFRO' && isBlank(value)) {
+                    value = getSectionFieldValue(ebomItemDetails.sections, 'TITLE', '');
+                }
                 params.fields.push({
                     fieldId : fieldToCopy.mbom,
-                    value   : getSectionFieldValue(ebomItemDetails.sections, fieldToCopy.ebom)
+                    value   : value
                 });
             }
 
@@ -10765,7 +10901,7 @@
             }, function(response) {
                 printResponseErrorMessagesToConsole(response);
                 if(response.error) {
-                    showErrorMessage('Error', 'Error while creating MBOM root item, the editor cannot be used at this time. Please review your server configuration.');
+                    showErrorMessage('Błąd', 'Nie udało się utworzyć głównego elementu mBOM. Edytor nie może teraz kontynuować pracy. Sprawdź konfigurację serwera.');
                 } else {
                     let createdLink = (response.data && response.data.__self__)
                         ? response.data.__self__
@@ -10777,7 +10913,7 @@
 
                     if(isBlank(createdLink)) {
                         console.error('MBOM custom: create response did not contain an MBOM link', response);
-                        showErrorMessage('Error', 'The MBOM root was created, but its link was missing from the server response.');
+                        showErrorMessage('Błąd', 'Główny element mBOM został utworzony, ale odpowiedź serwera nie zawiera jego łącza.');
                         return;
                     }
 

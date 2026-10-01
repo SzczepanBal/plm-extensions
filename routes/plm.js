@@ -783,7 +783,8 @@ function genPayloadSectionsFields(req, prefix, mode) {
             let fieldSection = getFieldSection(req.body.sections, field);
 
             if(fieldSection !== null) {
-                sectionId = fieldSection.__self__.split('/').pop();
+                let sectionReference = fieldSection.__self__ || fieldSection.link || fieldSection.urn || '';
+                sectionId = fieldSection.id || String(sectionReference).split(/[\/:.]/).pop();
             }
 
         }
@@ -851,39 +852,52 @@ function addPayloadSectionField(sections, prefix, insertion, sectionId, fieldDat
 }
 function getFieldSection(sections, field) {
 
-    for(let section of sections) {
+    let fieldReference = field ? (field.link || field.__self__ || field.urn || '') : '';
+    let fieldId = field && field.fieldId
+        ? String(field.fieldId)
+        : String(fieldReference).split(/[\/:.]/).pop();
 
-        if(typeof section.fields !== 'undefined') {
+    for(let section of sections || []) {
 
-            for(let sectionField of section.fields) {
+        if(!Array.isArray(section.fields)) continue;
 
-                if(field.fieldId === sectionField.link.split('/').pop()) return section;
-                if(field.link === sectionField.link) return section;
-                if(sectionField.type === 'MATRIX') {
-                    for(let matrix of section.matrices) {
-                        for(let matrixFields of matrix.fields) {
-                            for(let matrixField  of matrixFields) {
-                                if(matrixField !== null) {
-                                    if(typeof matrixField !== 'string') {
-                                        let temp = matrixField.link.split('/');
-                                        let id   = temp[temp.length - 1];
-                                        if(id === field.fieldId) {
-                                            return section;
-                                        }
-                                    }
-                                }
-                            }
+        for(let sectionField of section.fields) {
+
+            if(sectionField === null || typeof sectionField === 'undefined') continue;
+
+            let sectionFieldReference = (typeof sectionField === 'string')
+                ? sectionField
+                : (sectionField.link || sectionField.__self__ || sectionField.urn || '');
+            let sectionFieldId = (typeof sectionField === 'object' && sectionField.id)
+                ? String(sectionField.id)
+                : String(sectionFieldReference).split(/[\/:.]/).pop();
+
+            if(!isBlank(fieldId) && fieldId === sectionFieldId) return section;
+            if(!isBlank(fieldReference) && fieldReference === sectionFieldReference) return section;
+
+            if(typeof sectionField === 'object' && sectionField.type === 'MATRIX') {
+                for(let matrix of section.matrices || []) {
+                    for(let matrixFields of matrix.fields || []) {
+                        for(let matrixField of matrixFields || []) {
+                            if(matrixField === null || typeof matrixField === 'undefined') continue;
+                            let matrixReference = (typeof matrixField === 'string')
+                                ? matrixField
+                                : (matrixField.link || matrixField.__self__ || matrixField.urn || '');
+                            let matrixFieldId = (typeof matrixField === 'object' && matrixField.id)
+                                ? String(matrixField.id)
+                                : String(matrixReference).split(/[\/:.]/).pop();
+                            if(!isBlank(fieldId) && matrixFieldId === fieldId) return section;
+                            if(!isBlank(fieldReference) && matrixReference === fieldReference) return section;
                         }
                     }
                 }
-            }   
-        }   
+            }
+        }
     }
 
     return null;
 
-}
-function getFieldValue(field) {
+}function getFieldValue(field) {
 
     let value = field.value;
     let type  = (typeof field.type === 'undefined') ? 'string' : field.type.toLowerCase();

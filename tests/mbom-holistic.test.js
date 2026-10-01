@@ -539,6 +539,66 @@ async function testRawMaterialUnitWarning() {
 }
 testRawMaterialUnitWarning().catch(error => { console.error(error); process.exitCode = 1; });
 
+(function testOperationDefroNameMatchesTitle() {
+    const operationContext = {
+        isBlank: context.isBlank,
+        getMBOMWorkspaceFieldSectionId: fieldId => fieldId === 'NAZWA_DEFRO' ? 'technical-section' : ''
+    };
+    vm.createContext(operationContext);
+    vm.runInContext(extractFunction('setMBOMOperationDefroName'), operationContext);
+
+    const fields = [{ fieldId: 'TITLE', value: 'Cięcie', sectionId: 'basic-section' }];
+    operationContext.setMBOMOperationDefroName(fields, 'TITLE', 'basic-section');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(fields[1])), {
+        fieldId: 'NAZWA_DEFRO', value: 'Cięcie', sectionId: 'technical-section'
+    });
+
+    fields[0].value = 'Spawanie';
+    operationContext.setMBOMOperationDefroName(fields, 'TITLE', 'basic-section');
+    assert.strictEqual(fields.filter(field => field.fieldId === 'NAZWA_DEFRO').length, 1);
+    assert.strictEqual(fields[1].value, 'Spawanie');
+    console.log('Operation NAZWA_DEFRO creation tests passed');
+})();
+(function testMechanicalEBOMTechnicalEditsPreserveERPHash() {
+    const synchronizedHash = 'v1:' + 'b'.repeat(64);
+    const technicalEditContext = {
+        Array,
+        Object,
+        String,
+        isBlank: context.isBlank,
+        normalizeComparisonValue: context.normalizeComparisonValue,
+        getSectionFieldValue: context.getSectionFieldValue,
+        config: { workspaceEBOM: { fieldIDs: { type: 'TYPE' } } },
+        customERPFieldIDs: { syncStatus: 'ERP_SYNC_STATUS', hash: 'ERP_HASH' }
+    };
+    vm.createContext(technicalEditContext);
+    ['getMBOMTechnicalEditText', 'getMBOMTechnicalEditPendingHash', 'addMBOMTechnicalEditHash'].forEach(name => {
+        vm.runInContext(extractFunction(name), technicalEditContext);
+    });
+
+    function details(type, status, hash) {
+        return { sections: [{ fields: [
+            { id: 'TYPE', value: { title: type } },
+            { id: 'ERP_SYNC_STATUS', value: status },
+            { id: 'ERP_HASH', value: hash }
+        ] }] };
+    }
+
+    assert.strictEqual(
+        technicalEditContext.getMBOMTechnicalEditPendingHash(details('Mechanical', 'UP_TO_DATE', synchronizedHash)),
+        'pending:' + synchronizedHash
+    );
+    assert.strictEqual(technicalEditContext.getMBOMTechnicalEditPendingHash(details('Mechanical', 'OUT_OF_DATE', synchronizedHash)), '');
+    assert.strictEqual(technicalEditContext.getMBOMTechnicalEditPendingHash(details('Manufacturing', 'UP_TO_DATE', synchronizedHash)), '');
+    assert.strictEqual(technicalEditContext.getMBOMTechnicalEditPendingHash(details('Mechanical', 'UP_TO_DATE', 'dirty:' + synchronizedHash)), '');
+
+    const fields = [{ fieldId: 'LAST_MBOM_SYNC', value: '2026-10-01' }];
+    technicalEditContext.addMBOMTechnicalEditHash(details('Mechanical', 'UP_TO_DATE', synchronizedHash), fields);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(fields[1])), {
+        fieldId: 'ERP_HASH', value: 'pending:' + synchronizedHash
+    });
+    console.log('Mechanical eBOM technical edit ERP hash tests passed');
+})();
 (async function testMBOMCreationCopiesAccountingFields() {
     let payload;
     const configuredMappings = require('../settings/custom').applications.mbom.mbomRoot.fieldsToCopy;
@@ -578,6 +638,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     };
     await copyContext.createMBOMForEBOM(source, '');
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'HAS_BOM').value, true);
+    assert.strictEqual(payload.fields.find(f => f.fieldId === 'NAZWA_DEFRO').value, 'Part',
+        'New mBOMs use TITLE when the mandatory NAZWA_DEFRO source value is empty');
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'JEDNOSTKA_ROZLICZENIOWA').value,
         source.sections.JEDNOSTKA_ROZLICZENIOWA);
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'ILOSC_ROZLICZENIOWA').value, 2.5);
@@ -1761,6 +1823,25 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
     rawSyncStatus = 'not_synced';
     assert.strictEqual(statusContext.getERPSyncStatus({ sections: [] }), 'not_synced', 'ERP status must not be normalized');
 
+    const productCallContext = {
+        Object,
+        isBlank: context.isBlank,
+        erpFieldIDs: { sentToERP: 'WYSLANE_DO_ERP', partIndex: 'INDEKS_CZESCI' },
+        getSectionFieldValue: (sections, fieldId) => sections[fieldId],
+        getERPFieldValue: (sections, fieldId) => sections[fieldId]
+    };
+    vm.createContext(productCallContext);
+    ['isERPSyncRequired', 'normalizeERPBooleanValue', 'getERPSentToERP', 'getERPProductCallName'].forEach(name => {
+        vm.runInContext(extractDataFunction(name), productCallContext);
+    });
+    assert.strictEqual(productCallContext.isERPSyncRequired('NOT_SYNCED'), true);
+    assert.strictEqual(productCallContext.isERPSyncRequired('OUT_OF_DATE'), true);
+    assert.strictEqual(productCallContext.isERPSyncRequired('UP_TO_DATE'), false);
+    assert.strictEqual(productCallContext.getERPProductCallName({ sections: { WYSLANE_DO_ERP: true, INDEKS_CZESCI: 'ERP-1' } }), 'modify-product');
+    assert.strictEqual(productCallContext.getERPProductCallName({ sections: { WYSLANE_DO_ERP: false, INDEKS_CZESCI: 'ERP-1' } }), 'add-product');
+    assert.strictEqual(productCallContext.getERPProductCallName({ sections: { WYSLANE_DO_ERP: true, INDEKS_CZESCI: '' } }), 'add-product');
+    assert.strictEqual(productCallContext.getERPProductCallName({ sections: { WYSLANE_DO_ERP: { value: true }, INDEKS_CZESCI: 'ERP-2' } }), 'modify-product');
+
     const dataHashContext = { isBlank: context.isBlank };
     vm.createContext(dataHashContext);
     vm.runInContext(extractDataFunction('getERPHashResponseValue'), dataHashContext);
@@ -1843,5 +1924,51 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
         await runScenario(true),
         ['create', 'affected', 'lifecycle', 'erp-relevant', '509', 'state:286', '1255', 'send', '1251']
     );
+    const errorContext = { isBlank: context.isBlank, JSON, String, Array };
+    vm.createContext(errorContext);
+    vm.runInContext(extractDataFunction('getDataManagerErrorMessage'), errorContext);
+    assert.strictEqual(
+        errorContext.getDataManagerErrorMessage({ responseJSON: { error: true, data: { message: 'Element jest zablokowany.' } } }),
+        'Element jest zablokowany.'
+    );
+    assert.strictEqual(
+        errorContext.getDataManagerErrorMessage({ status: 500, statusText: 'Internal Server Error', responseText: '<html>Error</html>' }),
+        'HTTP 500 Internal Server Error'
+    );
     console.log('Data Manager ERP Quick Release workflow tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+(function testPLMEditFieldSectionResolution() {
+    const routePath = path.join(__dirname, '..', 'routes', 'plm.js');
+    const routeSource = fs.readFileSync(routePath, 'utf8');
+
+    function extractRouteFunction(name) {
+        const match = new RegExp('function\\s+' + name + '\\s*\\(').exec(routeSource);
+        if(!match) throw new Error('Could not find route function ' + name);
+        const bodyStart = routeSource.indexOf('{', match.index);
+        let depth = 0;
+        for(let index = bodyStart; index < routeSource.length; index++) {
+            if(routeSource[index] === '{') depth++;
+            if(routeSource[index] === '}' && --depth === 0) return routeSource.slice(match.index, index + 1);
+        }
+        throw new Error('Could not extract route function ' + name);
+    }
+
+    const routeContext = { isBlank: context.isBlank, String, Array };
+    vm.createContext(routeContext);
+    vm.runInContext(extractRouteFunction('getFieldSection'), routeContext);
+
+    const selfSection = {
+        __self__: '/api/v3/workspaces/57/items/1/views/1/sections/84',
+        fields: [{ __self__: '/api/v3/workspaces/57/items/1/views/1/fields/ERP_HASH' }]
+    };
+    assert.strictEqual(
+        routeContext.getFieldSection([selfSection], { fieldId: 'ERP_HASH' }),
+        selfSection,
+        'PLM edit must resolve fields represented by __self__ instead of link'
+    );
+
+    const idSection = { id: 85, fields: [{ id: 'ERP_SYNC_STATUS' }] };
+    assert.strictEqual(routeContext.getFieldSection([idSection], { fieldId: 'ERP_SYNC_STATUS' }), idSection);
+    console.log('PLM edit field-section resolution tests passed');
+})();

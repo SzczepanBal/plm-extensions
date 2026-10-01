@@ -28,7 +28,8 @@ exports.common = {
             syncDate  : 'ERP_SYNC_DATE',
             syncStatus: 'ERP_SYNC_STATUS',
             hash      : 'ERP_HASH',
-            relevant  : 'ERP_RELEVANT'
+            relevant  : 'ERP_RELEVANT',
+            sentToERP : 'WYSLANE_DO_ERP'
         }
     },
 
@@ -117,6 +118,7 @@ exports.applications = {
         mbomRoot : {
             fieldsToCopy : [
                 { ebom : 'TITLE'      , mbom : 'TITLE'       },
+                { ebom : 'NAZWA_DEFRO', mbom : 'NAZWA_DEFRO' },
                 { ebom : 'DESCRIPTION', mbom : 'DESCRIPTION' },
                 { ebom : 'OPIS'       , mbom : 'OPIS'        },
                 { ebom : 'MATERIAL'   , mbom : 'MATERIAL'    },
