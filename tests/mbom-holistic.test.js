@@ -5,6 +5,18 @@ const vm = require('vm');
 
 const sourcePath = path.join(__dirname, '..', 'public', 'javascripts', 'custom', 'mbom.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
+(function testRootMBOMUsesOpenedReleasedVersion() {
+    const standardPath = path.join(__dirname, '..', 'public', 'javascripts', 'apps', 'mbom.js');
+    const standardSource = fs.readFileSync(standardPath, 'utf8');
+    const paramsMatch = /let paramsMBOM\s*=\s*\{[\s\S]*?\n\s*\}/.exec(standardSource);
+
+    assert.ok(paramsMatch, 'Root MBOM request parameters must exist');
+    assert.match(paramsMatch[0], /revisionBias\s*:\s*'release'/,
+        'Root MBOM must preserve the released DMS version opened from the URL');
+    assert.doesNotMatch(paramsMatch[0], /revisionBias\s*:\s*'working'/,
+        'Root MBOM must not be switched automatically to Working');
+    console.log('Root MBOM opened-version selection tests passed');
+})();
 
 (function testFusionManageERPHashOnEditScript() {
     const scriptPath = path.join(__dirname, '..', 'docs', 'fusion-manage-erp-sync-on-edit.js');

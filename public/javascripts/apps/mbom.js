@@ -569,7 +569,7 @@ function processItemData(itemDetails) {
             link            : links.mbom,
             viewId          : wsMBOM.viewId,
             depth           : config.workspaceEBOM.depth,
-            revisionBias    : 'working',
+            revisionBias    : 'release',
             getBOMPartsList : true
         }
 
