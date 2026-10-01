@@ -2210,6 +2210,214 @@
         return elemMatch;
     }
 
+    function getLinkedMBOMRevision(elemItem) {
+        if(!elemItem || elemItem.length === 0) return '';
+        return elemItem.children('.item-head').children('.item-revision').first().text().trim();
+    }
+
+    function hasLinkedMBOMRevisionDifference(ebomRevision, mbomRevision) {
+        let normalizedEBOMRevision = normalizeComparisonValue(ebomRevision);
+        let normalizedMBOMRevision = normalizeComparisonValue(mbomRevision);
+        if([ 'w', 'working', 'wip' ].indexOf(normalizedMBOMRevision) >= 0) return false;
+        return !isBlank(normalizedEBOMRevision) &&
+            !isBlank(normalizedMBOMRevision) &&
+            normalizedEBOMRevision !== normalizedMBOMRevision;
+    }
+
+    function refreshLinkedMBOMRevisionStatus() {
+        $('#ebom .item').each(function() {
+            let elemEBOMItem = $(this);
+            let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(elemEBOMItem);
+            if(isBlank(linkedMBOM)) return;
+
+            let elemMBOMItem = findLinkedMBOMItemForEBOM(elemEBOMItem);
+            if(elemMBOMItem.length === 0) return;
+
+            let isDifferent = hasLinkedMBOMRevisionDifference(
+                getLinkedMBOMRevision(elemEBOMItem),
+                getLinkedMBOMRevision(elemMBOMItem)
+            );
+            let wasDifferent = elemEBOMItem.hasClass('linked-mbom-revision-different');
+
+            elemEBOMItem.toggleClass('linked-mbom-revision-different', isDifferent);
+            if(isDifferent) {
+                elemEBOMItem
+                    .removeClass('match')
+                    .addClass('different different-revision enable-update');
+            } else if(wasDifferent) {
+                elemEBOMItem.removeClass('different-revision');
+                if(!elemEBOMItem.hasClass('different-qty') && !elemEBOMItem.hasClass('additional')) {
+                    elemEBOMItem.removeClass('different').addClass('match');
+                }
+            }
+        });
+    }
+
+    function ensureLinkedMBOMRevisionDialog() {
+        let elemDialog = $('#dialog-update-linked-mbom-revision');
+        if(elemDialog.length > 0) return elemDialog;
+
+        elemDialog = $('<div></div>')
+            .attr('id', 'dialog-update-linked-mbom-revision')
+            .addClass('dialog')
+            .appendTo('body');
+
+        $('<div></div>')
+            .addClass('dialog-header')
+            .text('Nowa technologia')
+            .appendTo(elemDialog);
+
+        let elemContent = $('<div></div>')
+            .addClass('dialog-content')
+            .appendTo(elemDialog);
+        $('<span></span>').addClass('icon icon-factory').appendTo(elemContent);
+        $('<span></span>')
+            .text('Czy chcesz utworzyć nową technologię bazującą na nowej rewizji?')
+            .appendTo(elemContent);
+
+        let elemFooter = $('<div></div>').addClass('dialog-footer').appendTo(elemDialog);
+        $('<div></div>')
+            .attr('id', 'confirm-update-linked-mbom-revision')
+            .addClass('button default')
+            .text('Utwórz nową technologię')
+            .appendTo(elemFooter);
+        $('<div></div>')
+            .attr('id', 'cancel-update-linked-mbom-revision')
+            .addClass('button')
+            .text('Anuluj')
+            .appendTo(elemFooter);
+
+        return elemDialog;
+    }
+
+    function confirmLinkedMBOMRevisionUpdate() {
+        let elemDialog = ensureLinkedMBOMRevisionDialog();
+        $('#overlay').show();
+        elemDialog.show();
+
+        return new Promise(function(resolve) {
+            function closeDialog(confirmed) {
+                elemDialog.hide();
+                $('#overlay').hide();
+                resolve(confirmed);
+            }
+
+            $('#confirm-update-linked-mbom-revision').off('click').one('click', function() {
+                closeDialog(true);
+            });
+            $('#cancel-update-linked-mbom-revision').off('click').one('click', function() {
+                closeDialog(false);
+            });
+        });
+    }
+    function getMBOMVersionText(value) {
+        if(isBlank(value)) return '';
+        if(typeof value === 'object') {
+            value = value.title || value.label || value.value || value.name || '';
+        }
+        return String(value).trim();
+    }
+
+    function isWorkingMBOMVersion(version, index) {
+        if(!version || !version.item || isBlank(version.item.link)) return false;
+
+        let status = getMBOMVersionText(version.status).toLowerCase();
+        let revision = getMBOMVersionText(version.version).toLowerCase();
+        let workingValues = [ 'working', 'work in progress', 'wip', 'unreleased' ];
+
+        if(workingValues.indexOf(status) >= 0) return true;
+        if([ 'working', 'wip', 'w' ].indexOf(revision) >= 0) return true;
+
+        // Fusion Manage returns the working version first and without a revision value.
+        // Do not use this fallback when the record is explicitly marked as released.
+        return index === 0 && isBlank(revision) &&
+            [ 'released', 'production' ].indexOf(status) < 0;
+    }
+
+    function findWorkingMBOMVersion(versions) {
+        if(!Array.isArray(versions)) return null;
+
+        for(let index = 0; index < versions.length; index++) {
+            if(isWorkingMBOMVersion(versions[index], index)) return versions[index];
+        }
+
+        return null;
+    }
+
+    function resolveLinkedMBOMWorkingVersion(link) {
+        let itemLink = getPLMItemLevelLink(link);
+        if(isBlank(itemLink)) return Promise.reject(new Error('Nie znaleziono łącza sub-mBOM.'));
+
+        return $.get('/plm/versions', { link : itemLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !response.data || !Array.isArray(response.data.versions)) {
+                throw new Error('Nie udało się odczytać wersji sub-mBOM. ' + getRawMaterialErrorMessage(response));
+            }
+
+            let workingVersion = findWorkingMBOMVersion(response.data.versions);
+            if(!workingVersion) throw new Error('Powiązany sub-mBOM nie ma wersji roboczej.');
+
+            return {
+                link    : workingVersion.item.link,
+                version : workingVersion
+            };
+        });
+    }
+
+    if(typeof updateQuantityFromEBOMToMBOM === 'function') {
+        let originalUpdateQuantityFromEBOMToMBOM = updateQuantityFromEBOMToMBOM;
+        updateQuantityFromEBOMToMBOM = function updateQuantityFromEBOMToMBOM(elemAction) {
+            let elemEBOMItem = elemAction.closest('.item');
+            let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(elemEBOMItem);
+            let elemMBOMItem = isBlank(linkedMBOM) ? $() : findLinkedMBOMItemForEBOM(elemEBOMItem);
+
+            if(elemMBOMItem.length === 0) {
+                return originalUpdateQuantityFromEBOMToMBOM.apply(this, arguments);
+            }
+
+            let quantity = elemEBOMItem.attr('data-instance-qty');
+            let elemQuantity = elemMBOMItem.children('.item-head').find('.item-qty-input').first();
+            if(elemQuantity.length === 0) elemQuantity = elemMBOMItem.find('.item-qty-input').first();
+
+            elemQuantity.val(quantity);
+            elemMBOMItem.attr('data-instance-qty', quantity);
+            if(elemEBOMItem.hasClass('selected')) setBOMTotalQuantities(elemEBOMItem.attr('data-root'));
+
+            return true;
+        };
+    }
+
+    if(typeof updateRevisionFromEBOMToMBOM === 'function') {
+        let originalUpdateRevisionFromEBOMToMBOM = updateRevisionFromEBOMToMBOM;
+        updateRevisionFromEBOMToMBOM = function updateRevisionFromEBOMToMBOM(elemAction) {
+            let elemEBOMItem = elemAction.closest('.item');
+            let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(elemEBOMItem);
+            let elemMBOMItem = isBlank(linkedMBOM) ? $() : findLinkedMBOMItemForEBOM(elemEBOMItem);
+
+            if(elemMBOMItem.length === 0) {
+                return originalUpdateRevisionFromEBOMToMBOM.apply(this, arguments);
+            }
+
+            return confirmLinkedMBOMRevisionUpdate().then(function(confirmed) {
+                if(!confirmed) return false;
+                return resolveLinkedMBOMWorkingVersion(linkedMBOM);
+            }).then(function(result) {
+                if(result === false) return false;
+
+                let currentLink = elemMBOMItem.attr('data-link') || '';
+                elemMBOMItem.attr('data-link-db', currentLink);
+                elemMBOMItem.attr('data-link', result.link);
+                elemMBOMItem.attr('data-link-mbom', getPLMItemLevelLink(linkedMBOM));
+                elemMBOMItem.children('.item-head').find('.item-revision').first().text('W');
+                setStatusBar();
+                setStatusBarFilter();
+                return true;
+            }).catch(function(error) {
+                console.warn('MBOM custom: nie udało się zaktualizować rewizji powiązanego sub-mBOM.', error);
+                showErrorMessage('Aktualizacja rewizji', String(error && error.message ? error.message : error));
+                return false;
+            });
+        };
+    }
     function getLinkedEBOMAncestor(elemItem) {
         let elemCurrent = elemItem;
 
@@ -8766,6 +8974,7 @@
 
         applyHolisticTreeRollups('#mbom');
         refreshMissingLinkedMBOMStatus();
+        refreshLinkedMBOMRevisionStatus();
 
         ['additional', 'different', 'match'].forEach(function(state) {
             let elemBar = $('#status-' + state);
@@ -8853,6 +9062,7 @@
             mirrorStandardStatusToLinkedEBOMRows();
             applyImmediateStandardStatusRollups();
             refreshMissingLinkedMBOMStatus();
+            refreshLinkedMBOMRevisionStatus();
             refreshCustomStatusSummary();
             return result;
         };

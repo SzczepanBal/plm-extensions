@@ -539,6 +539,77 @@ async function testRawMaterialUnitWarning() {
 }
 testRawMaterialUnitWarning().catch(error => { console.error(error); process.exitCode = 1; });
 
+(async function testLinkedMBOMQuantityAndRevisionUpdates() {
+    let requestedUrl = '';
+    let versions = [
+        {
+            version: '',
+            status: { title: 'Working' },
+            item: { link: '/api/v3/workspaces/57/items/44/versions/7' }
+        },
+        {
+            version: 'A',
+            status: 'Released',
+            item: { link: '/api/v3/workspaces/57/items/44/versions/6' }
+        }
+    ];
+    const updateContext = {
+        Promise,
+        isBlank: context.isBlank,
+        normalizeComparisonValue: context.normalizeComparisonValue,
+        getPLMItemLevelLink: link => String(link || '').replace(/\/versions\/\d+$/i, ''),
+        getRawMaterialErrorMessage: () => 'Błąd PLM',
+        $: {
+            get: async url => {
+                requestedUrl = url;
+                return { data: { versions } };
+            }
+        }
+    };
+    vm.createContext(updateContext);
+    [
+        'hasLinkedMBOMRevisionDifference',
+        'getMBOMVersionText',
+        'isWorkingMBOMVersion',
+        'findWorkingMBOMVersion',
+        'resolveLinkedMBOMWorkingVersion'
+    ].forEach(name => {
+        vm.runInContext(extractFunction(name), updateContext);
+    });
+
+    const resolved = await updateContext.resolveLinkedMBOMWorkingVersion('/api/v3/workspaces/57/items/44/versions/6');
+    assert.strictEqual(requestedUrl, '/plm/versions');
+    assert.strictEqual(resolved.link, '/api/v3/workspaces/57/items/44/versions/7');
+
+    versions = [{
+        version: 'A',
+        status: 'Released',
+        item: { link: '/api/v3/workspaces/57/items/44/versions/6' }
+    }];
+    await assert.rejects(
+        () => updateContext.resolveLinkedMBOMWorkingVersion('/api/v3/workspaces/57/items/44/versions/6'),
+        /nie ma wersji roboczej/i
+    );
+
+    assert.strictEqual(updateContext.hasLinkedMBOMRevisionDifference('W', 'A'), true);
+    assert.strictEqual(updateContext.hasLinkedMBOMRevisionDifference(' W ', 'w'), false);
+    assert.strictEqual(updateContext.hasLinkedMBOMRevisionDifference('B', 'W'), false);
+    assert.strictEqual(updateContext.hasLinkedMBOMRevisionDifference('', 'A'), false);
+
+    const quantitySource = extractFunction('updateQuantityFromEBOMToMBOM');
+    const revisionSource = extractFunction('updateRevisionFromEBOMToMBOM');
+    const revisionStatusSource = extractFunction('refreshLinkedMBOMRevisionStatus');
+    const revisionDialogSource = extractFunction('ensureLinkedMBOMRevisionDialog');
+    assert.match(quantitySource, /findLinkedMBOMItemForEBOM/);
+    assert.match(quantitySource, /originalUpdateQuantityFromEBOMToMBOM/);
+    assert.match(revisionSource, /confirmLinkedMBOMRevisionUpdate/);
+    assert.match(revisionSource, /resolveLinkedMBOMWorkingVersion/);
+    assert.match(revisionSource, /originalUpdateRevisionFromEBOMToMBOM/);
+    assert.match(revisionStatusSource, /different different-revision enable-update/);
+    assert.match(revisionDialogSource, /icon-factory/);
+    assert.match(revisionDialogSource, /Czy chcesz utworzyć nową technologię bazującą na nowej rewizji/);
+    console.log('Linked sub-mBOM quantity and revision update tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
 (function testOperationDefroNameMatchesTitle() {
     const operationContext = {
         isBlank: context.isBlank,
