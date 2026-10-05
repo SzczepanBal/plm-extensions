@@ -453,3 +453,36 @@ body.details-on.no-viewer #tabs {
     height : 384px;
     top    : calc(50% - 192px);
 }
+
+/* Released root mBOMs are strictly read-only. */
+#mbom-viewing-mode-label {
+    align-items: center;
+    border: 1px solid var(--color-status-yellow);
+    border-radius: 3px;
+    color: var(--color-status-yellow);
+    display: flex;
+    font-weight: 700;
+    padding: 0 12px;
+}
+
+body.mbom-viewing-mode #save,
+body.mbom-viewing-mode #add-raw-materials,
+body.mbom-viewing-mode #start-mbom-approval,
+body.mbom-viewing-mode #release-mbom-technology,
+body.mbom-viewing-mode #sync-erp-technologies,
+body.mbom-viewing-mode #mode-add,
+body.mbom-viewing-mode #mode-operations,
+body.mbom-viewing-mode #mbom-add-process,
+body.mbom-viewing-mode #ebom .item-actions,
+body.mbom-viewing-mode #mbom .item-head-actions {
+    display: none !important;
+}
+
+body.mbom-viewing-mode #mbom-tree {
+    bottom: 0;
+}
+
+body.mbom-viewing-mode #mbom input,
+body.mbom-viewing-mode #mbom select {
+    pointer-events: none;
+}

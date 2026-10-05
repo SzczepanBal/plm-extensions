@@ -2210,6 +2210,140 @@
         return elemMatch;
     }
 
+    function isMBOMWorkingRevision(revision) {
+        return [ 'w', 'wip', 'working' ].indexOf(normalizeComparisonValue(revision)) >= 0;
+    }
+
+    function getMBOMRootRevision() {
+        let elemRoot = $('#mbom-tree').children('.item').first();
+        if(elemRoot.length === 0) return '';
+        return elemRoot.children('.item-head').children('.item-revision').first().text().trim();
+    }
+
+    function isMBOMViewingMode() {
+        return $('body').hasClass('mbom-viewing-mode');
+    }
+
+    function ensureMBOMViewingModeControls() {
+        let elemToolbar = $('#header-toolbar');
+        if(elemToolbar.length === 0) return;
+
+        if($('#mbom-viewing-mode-label').length === 0) {
+            $('<div></div>')
+                .attr('id', 'mbom-viewing-mode-label')
+                .addClass('mbom-viewing-mode-control')
+                .text('Tryb podglądu')
+                .insertBefore('#reset');
+        }
+
+        if($('#open-working-mbom').length === 0) {
+            $('<div></div>')
+                .attr('id', 'open-working-mbom')
+                .addClass('button default mbom-viewing-mode-control')
+                .text('Przejdź do wersji roboczej')
+                .on('click', openWorkingMBOMVersion)
+                .insertBefore('#reset');
+        }
+    }
+
+    function getMBOMWorkingVersionNavigation(link) {
+        return resolveLinkedMBOMWorkingVersion(link).then(function(result) {
+            let parts = String(result.link || '').split('/');
+            let workspaceIndex = parts.indexOf('workspaces');
+            let itemIndex = parts.indexOf('items');
+            let workspaceId = workspaceIndex >= 0 ? parts[workspaceIndex + 1] : '';
+            let itemId = itemIndex >= 0 ? parts[itemIndex + 1] : '';
+
+            if(isBlank(workspaceId) || isBlank(itemId)) {
+                throw new Error('Nie udało się odczytać identyfikatora wersji roboczej.');
+            }
+
+            return { wsId : workspaceId, dmsId : itemId, link : result.link };
+        });
+    }
+
+    function openWorkingMBOMVersion() {
+        let elemButton = $('#open-working-mbom');
+        if(elemButton.hasClass('disabled')) return;
+
+        elemButton.addClass('disabled').text('Otwieranie wersji roboczej…');
+        getMBOMWorkingVersionNavigation(links.mbom).then(function(target) {
+            let url = new URL(window.location.href);
+            url.searchParams.set('wsId', target.wsId);
+            url.searchParams.set('dmsId', target.dmsId);
+            window.location.assign(url.toString());
+        }).catch(function(error) {
+            elemButton.removeClass('disabled').text('Przejdź do wersji roboczej');
+            showErrorMessage(
+                'Wersja robocza mBOM',
+                String(error && error.message ? error.message : error)
+            );
+        });
+    }
+
+    function disableMBOMEditingWidgets() {
+        $('#mbom input, #mbom select').prop('disabled', true);
+
+        let elemRootBOM = $('#mbom-root-bom');
+        if(elemRootBOM.length > 0 && typeof elemRootBOM.sortable === 'function' && elemRootBOM.sortable('instance')) {
+            elemRootBOM.sortable('disable');
+        }
+
+        $('#mbom .item-head').each(function() {
+            let elemHead = $(this);
+            if(typeof elemHead.droppable === 'function' && elemHead.droppable('instance')) {
+                elemHead.droppable('disable');
+            }
+        });
+
+        $('#add .additional-item').each(function() {
+            let elemItem = $(this);
+            if(typeof elemItem.draggable === 'function' && elemItem.draggable('instance')) {
+                elemItem.draggable('disable');
+            }
+        });
+    }
+
+    function attachMBOMViewingModeGuard() {
+        let elemBody = document.body;
+        if(!elemBody || elemBody.getAttribute('data-mbom-viewing-guard') === 'true') return;
+        elemBody.setAttribute('data-mbom-viewing-guard', 'true');
+
+        elemBody.addEventListener('click', function(event) {
+            if(!isMBOMViewingMode()) return;
+
+            let blockedSelector = [
+                '#save',
+                '#mbom-add-button',
+                '#mbom-add-assembly-index',
+                '#add-raw-materials',
+                '#add-leaf-mboms-and-materials',
+                '#start-mbom-approval',
+                '#release-mbom-technology',
+                '#sync-erp-technologies',
+                '#ebom .item-action',
+                '#mbom .button-remove',
+                '#mbom .button-copy'
+            ].join(',');
+
+            if(event.target.closest(blockedSelector)) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }
+        }, true);
+    }
+
+    function applyMBOMRootAccessMode() {
+        let working = isMBOMWorkingRevision(getMBOMRootRevision());
+        $('body').toggleClass('mbom-viewing-mode', !working);
+        ensureMBOMViewingModeControls();
+        $('.mbom-viewing-mode-control').toggle(!working);
+        $('#save').toggleClass('disabled', !working)
+            .attr('title', working ? 'Zapisz zmiany' : 'Wydane wersje mBOM są dostępne tylko w trybie podglądu');
+
+        attachMBOMViewingModeGuard();
+        if(!working) disableMBOMEditingWidgets();
+    }
     function getLinkedMBOMRevision(elemItem) {
         if(!elemItem || elemItem.length === 0) return '';
         return elemItem.children('.item-head').children('.item-revision').first().text().trim();
@@ -3407,7 +3541,7 @@
         elemSave.attr('data-custom-save-guard', 'true');
         elemSave.off('click').on('click', function() {
             let elemButton = $(this);
-            if(elemButton.hasClass('disabled')) return;
+            if(elemButton.hasClass('disabled') || isMBOMViewingMode()) return;
 
             elemButton.addClass('disabled');
             let headers = collectMBOMParentsForSaveSync();
@@ -10726,6 +10860,7 @@
             insertAddAssemblyIndexButton();
             insertMBOMChangeOrderButtons();
             setupAddProcessPicker();
+            applyMBOMRootAccessMode();
             $('#confirm-raw-materials').off('click').on('click', function() {
                 if($(this).hasClass('disabled')) return;
                 $('#overlay').hide();

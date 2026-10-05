@@ -18,6 +18,7 @@ const source = fs.readFileSync(sourcePath, 'utf8');
     console.log('Root MBOM opened-version selection tests passed');
 })();
 
+
 (function testFusionManageERPHashOnEditScript() {
     const scriptPath = path.join(__dirname, '..', 'docs', 'fusion-manage-erp-sync-on-edit.js');
     const script = fs.readFileSync(scriptPath, 'utf8');
@@ -143,6 +144,45 @@ vm.createContext(context);
 ].forEach(function(name) {
     vm.runInContext(extractFunction(name), context);
 });
+
+(async function testMBOMViewingModeAndWorkingNavigation() {
+    const accessContext = {
+        Promise,
+        isBlank: context.isBlank,
+        normalizeComparisonValue: context.normalizeComparisonValue,
+        resolveLinkedMBOMWorkingVersion: async () => ({
+            link: '/api/v3/workspaces/57/items/9876'
+        })
+    };
+    vm.createContext(accessContext);
+    vm.runInContext(extractFunction('isMBOMWorkingRevision'), accessContext);
+    vm.runInContext(extractFunction('getMBOMWorkingVersionNavigation'), accessContext);
+
+    assert.strictEqual(accessContext.isMBOMWorkingRevision('W'), true);
+    assert.strictEqual(accessContext.isMBOMWorkingRevision('WIP'), true);
+    assert.strictEqual(accessContext.isMBOMWorkingRevision('Working'), true);
+    assert.strictEqual(accessContext.isMBOMWorkingRevision('A'), false);
+
+    const target = await accessContext.getMBOMWorkingVersionNavigation('/api/v3/workspaces/57/items/1234');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(target)), {
+        wsId: '57', dmsId: '9876', link: '/api/v3/workspaces/57/items/9876'
+    });
+
+    const accessModeSource = extractFunction('applyMBOMRootAccessMode');
+    const disableSource = extractFunction('disableMBOMEditingWidgets');
+    const navigationSource = extractFunction('openWorkingMBOMVersion');
+    assert.match(accessModeSource, /mbom-viewing-mode/);
+    assert.match(accessModeSource, /disableMBOMEditingWidgets/);
+    assert.match(disableSource, /sortable\('disable'\)/);
+    assert.match(disableSource, /droppable\('disable'\)/);
+    assert.match(navigationSource, /searchParams\.set\('dmsId'/);
+
+    const cssPath = path.join(__dirname, '..', 'public', 'stylesheets', 'custom', 'mbom.css');
+    const cssSource = fs.readFileSync(cssPath, 'utf8');
+    assert.match(cssSource, /body\.mbom-viewing-mode #save/);
+    assert.match(cssSource, /body\.mbom-viewing-mode #ebom \.item-actions/);
+    console.log('MBOM viewing mode and Working navigation tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
 
 async function run() {
     context.accountingPart = {
