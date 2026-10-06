@@ -2499,6 +2499,55 @@
         });
     }
 
+    function updateLinkedWorkingMBOMFromReleasedEBOM(elemEBOMItem, workingMBOMLink) {
+        let sourceEBOMLink = elemEBOMItem && elemEBOMItem.length > 0
+            ? (elemEBOMItem.attr('data-link') || '') : '';
+        let targetMBOMLink = getPLMItemLevelLink(workingMBOMLink);
+
+        if(isBlank(sourceEBOMLink)) {
+            return Promise.reject(new Error('Nie znaleziono łącza wydanej rewizji eBOM.'));
+        }
+        if(isBlank(targetMBOMLink)) {
+            return Promise.reject(new Error('Nie znaleziono łącza wersji roboczej sub-mBOM.'));
+        }
+        if(normalizePLMLink(sourceEBOMLink) === normalizePLMLink(targetMBOMLink)) {
+            return Promise.reject(new Error('Łącze eBOM nie może wskazywać na aktualizowany sub-mBOM.'));
+        }
+
+        return loadMBOMPropertyRepairDetails(sourceEBOMLink, 'released eBOM').then(function(sourceData) {
+            let sourceDetailsLink = sourceData && sourceData.__self__ ? sourceData.__self__ : '';
+            let releasedEBOMLink = /\/versions\/\d+/i.test(sourceEBOMLink)
+                ? sourceEBOMLink : sourceDetailsLink;
+            if(isBlank(releasedEBOMLink)) releasedEBOMLink = sourceEBOMLink;
+
+            let mappings = getMBOMPropertyRepairMappings();
+            let fields = buildMBOMPropertyRepairFields(sourceData.sections || [], mappings).filter(function(field) {
+                return field.fieldId !== config.workspaceMBOM.fieldIDs.ebom;
+            });
+            fields.push({
+                fieldId : config.workspaceMBOM.fieldIDs.ebom,
+                value   : { link : releasedEBOMLink }
+            });
+
+            console.info('MBOM custom: updating working sub-mBOM from released eBOM revision', {
+                sourceEBOM : releasedEBOMLink,
+                targetMBOM : targetMBOMLink,
+                fieldIds   : fields.map(function(field) { return field.fieldId; })
+            });
+
+            return $.post('/plm/edit', {
+                link     : targetMBOMLink,
+                sections : wsMBOM.sections,
+                fields   : fields
+            }).then(function(response) {
+                if(!response || response.error) {
+                    throw new Error((response && response.message) || 'PLM rejected the working sub-mBOM update.');
+                }
+                return releasedEBOMLink;
+            });
+        });
+    }
+
     if(typeof updateQuantityFromEBOMToMBOM === 'function') {
         let originalUpdateQuantityFromEBOMToMBOM = updateQuantityFromEBOMToMBOM;
         updateQuantityFromEBOMToMBOM = function updateQuantityFromEBOMToMBOM(elemAction) {
@@ -2536,6 +2585,12 @@
             return confirmLinkedMBOMRevisionUpdate().then(function(confirmed) {
                 if(!confirmed) return false;
                 return resolveLinkedMBOMWorkingVersion(linkedMBOM);
+            }).then(function(result) {
+                if(result === false) return false;
+
+                return updateLinkedWorkingMBOMFromReleasedEBOM(elemEBOMItem, result.link).then(function() {
+                    return result;
+                });
             }).then(function(result) {
                 if(result === false) return false;
 
@@ -10837,6 +10892,63 @@
                 });
 
             }
+        };
+    }
+
+    function getMBOMRootRevisionBias(itemDetails) {
+        let sections = itemDetails && Array.isArray(itemDetails.sections) ? itemDetails.sections : [];
+        let fieldId = (customERPFieldIDs && customERPFieldIDs.syncStatus)
+            ? customERPFieldIDs.syncStatus : 'ERP_SYNC_STATUS';
+        let value = getSectionFieldValue(sections, fieldId, '', 'object');
+        let status = getMBOMTechnicalEditText(value).replace(/[\s-]+/g, '_').toUpperCase();
+        return status === 'OUT_OF_DATE' ? 'working' : 'release';
+    }
+
+    function loadMBOMRootRevisionBias(link) {
+        let itemLink = getPLMItemLevelLink(link);
+        if(isBlank(itemLink)) return Promise.resolve('release');
+
+        return $.get('/plm/details', { link : itemLink, useCache : false }).then(function(response) {
+            if(!response || response.error || !response.data) return 'release';
+            return getMBOMRootRevisionBias(response.data);
+        }).catch(function(error) {
+            console.warn('MBOM custom: could not resolve ERP sync status; loading the released BOM.', error);
+            return 'release';
+        });
+    }
+
+    if(typeof processItemData === 'function') {
+        let originalProcessItemData = processItemData;
+        processItemData = function(itemDetails) {
+            let context = this;
+            let args = arguments;
+
+            return loadMBOMRootRevisionBias(links.mbom).then(function(mbomRevisionBias) {
+                if(mbomRevisionBias !== 'working') {
+                    return originalProcessItemData.apply(context, args);
+                }
+
+                let originalGet = $.get;
+                $.get = function(url, params) {
+                    let getArgs = Array.prototype.slice.call(arguments);
+                    let isRootMBOMRequest = url === '/plm/bom' && params
+                        && params.viewId === wsMBOM.viewId
+                        && normalizePLMLink(getPLMItemLevelLink(params.link))
+                            === normalizePLMLink(getPLMItemLevelLink(links.mbom));
+
+                    if(isRootMBOMRequest) {
+                        getArgs[1] = $.extend({}, params, { revisionBias : 'working' });
+                    }
+
+                    return originalGet.apply(this, getArgs);
+                };
+
+                try {
+                    return originalProcessItemData.apply(context, args);
+                } finally {
+                    $.get = originalGet;
+                }
+            });
         };
     }
 

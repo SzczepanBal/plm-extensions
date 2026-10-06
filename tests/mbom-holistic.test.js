@@ -5,17 +5,17 @@ const vm = require('vm');
 
 const sourcePath = path.join(__dirname, '..', 'public', 'javascripts', 'custom', 'mbom.js');
 const source = fs.readFileSync(sourcePath, 'utf8');
-(function testRootMBOMUsesOpenedReleasedVersion() {
+(function testStandardRootMBOMRemainsUnchanged() {
     const standardPath = path.join(__dirname, '..', 'public', 'javascripts', 'apps', 'mbom.js');
     const standardSource = fs.readFileSync(standardPath, 'utf8');
     const paramsMatch = /let paramsMBOM\s*=\s*\{[\s\S]*?\n\s*\}/.exec(standardSource);
 
     assert.ok(paramsMatch, 'Root MBOM request parameters must exist');
     assert.match(paramsMatch[0], /revisionBias\s*:\s*'release'/,
-        'Root MBOM must preserve the released DMS version opened from the URL');
-    assert.doesNotMatch(paramsMatch[0], /revisionBias\s*:\s*'working'/,
-        'Root MBOM must not be switched automatically to Working');
-    console.log('Root MBOM opened-version selection tests passed');
+        'Root MBOM must default to the released version');
+    assert.doesNotMatch(standardSource, /getMBOMRootRevisionBias|loadMBOMRootRevisionBias/,
+        'ERP-specific revision selection must stay in the custom extension');
+    console.log('Standard root MBOM loading remains unchanged');
 })();
 
 
@@ -65,6 +65,37 @@ function extractFunction(name) {
 
     throw new Error('Could not extract complete function ' + name);
 }
+
+(function testUpdateRevCopiesPropertiesBeforeNormalSave() {
+    const revisionSource = extractFunction('updateRevisionFromEBOMToMBOM');
+    assert.match(revisionSource, /updateLinkedWorkingMBOMFromReleasedEBOM/,
+        'Confirming Update Rev must update the working mBOM immediately');
+    assert.doesNotMatch(extractFunction('attachCustomSaveGuard'), /saveMBOMCopiedPropertiesBeforeSave\(\)/,
+        'The general Save pipeline must not repeat the Update Rev property synchronization');
+    console.log('Update Rev immediate working mBOM synchronization tests passed');
+})();
+
+(function testCustomRootMBOMRevisionFollowsERPSyncStatus() {
+    const revisionContext = {
+        Array,
+        customERPFieldIDs: { syncStatus: 'ERP_SYNC_STATUS' },
+        getSectionFieldValue(sections) { return sections[0] && sections[0].value; },
+        getMBOMTechnicalEditText(value) {
+            if(value && typeof value === 'object') return value.title || value.label || value.value || '';
+            return String(value || '');
+        }
+    };
+    vm.createContext(revisionContext);
+    vm.runInContext(extractFunction('getMBOMRootRevisionBias'), revisionContext);
+    assert.strictEqual(revisionContext.getMBOMRootRevisionBias({ sections: [{ value: 'OUT_OF_DATE' }] }), 'working',
+        'An out-of-date ERP status must load the working mBOM');
+    assert.strictEqual(revisionContext.getMBOMRootRevisionBias({ sections: [{ value: { title: 'Out of date' } }] }), 'working');
+    assert.strictEqual(revisionContext.getMBOMRootRevisionBias({ sections: [{ value: 'UP_TO_DATE' }] }), 'release',
+        'An up-to-date ERP status keeps the released mBOM');
+    assert.match(source, /getArgs\[1\]\s*=\s*\$\.extend\(\{\}, params, \{ revisionBias : 'working' \}\)/,
+        'The custom processItemData wrapper must override only the root mBOM request');
+    console.log('Custom root MBOM ERP-based revision selection tests passed');
+})();
 
 const context = {
     console,
@@ -639,6 +670,31 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.strictEqual(requestedUrl, '/plm/versions');
     assert.strictEqual(resolved.link, '/api/v3/workspaces/57/items/44/versions/7');
 
+    let editPayload;
+    updateContext.normalizePLMLink = link => String(link || '').replace(/\/versions\/\d+$/i, '').toLowerCase();
+    updateContext.loadMBOMPropertyRepairDetails = async link => ({ __self__: link, sections: [{ id: 'source' }] });
+    updateContext.getMBOMPropertyRepairMappings = () => [{ ebom: 'TITLE', mbom: 'TITLE' }];
+    updateContext.buildMBOMPropertyRepairFields = () => [{ fieldId: 'TITLE', value: 'Revised title' }];
+    updateContext.config = { workspaceMBOM: { fieldIDs: { ebom: 'EBOM' } } };
+    updateContext.wsMBOM = { sections: [{ id: 'target' }] };
+    updateContext.$.post = async (url, payload) => {
+        editPayload = { url, payload };
+        return { error: false };
+    };
+    vm.runInContext(extractFunction('updateLinkedWorkingMBOMFromReleasedEBOM'), updateContext);
+    const releasedEBOMLink = '/api/v3/workspaces/10/items/20/versions/4';
+    await updateContext.updateLinkedWorkingMBOMFromReleasedEBOM({
+        length: 1,
+        attr(name) { return name === 'data-link' ? releasedEBOMLink : ''; }
+    }, resolved.link);
+    assert.strictEqual(editPayload.url, '/plm/edit');
+    assert.strictEqual(editPayload.payload.link, '/api/v3/workspaces/57/items/44');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(editPayload.payload.fields)), [{
+        fieldId: 'TITLE', value: 'Revised title'
+    }, {
+        fieldId: 'EBOM', value: { link: releasedEBOMLink }
+    }], 'Confirming Update Rev must update the working mBOM properties and released eBOM link immediately');
+
     versions = [{
         version: 'A',
         status: 'Released',
@@ -662,6 +718,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.match(quantitySource, /originalUpdateQuantityFromEBOMToMBOM/);
     assert.match(revisionSource, /confirmLinkedMBOMRevisionUpdate/);
     assert.match(revisionSource, /resolveLinkedMBOMWorkingVersion/);
+    assert.match(revisionSource, /updateLinkedWorkingMBOMFromReleasedEBOM/);
     assert.match(revisionSource, /originalUpdateRevisionFromEBOMToMBOM/);
     assert.match(revisionStatusSource, /different different-revision enable-update/);
     assert.match(revisionDialogSource, /icon-factory/);
