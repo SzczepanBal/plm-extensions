@@ -2314,6 +2314,8 @@
 
             let blockedSelector = [
                 '#save',
+                '#add-all',
+                '#deselect-all',
                 '#mbom-add-button',
                 '#mbom-add-assembly-index',
                 '#add-raw-materials',

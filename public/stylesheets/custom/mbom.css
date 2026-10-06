@@ -466,6 +466,9 @@ body.details-on.no-viewer #tabs {
 }
 
 body.mbom-viewing-mode #save,
+body.mbom-viewing-mode #add-all,
+body.mbom-viewing-mode #add-leaf-mboms-and-materials,
+body.mbom-viewing-mode #deselect-all,
 body.mbom-viewing-mode #add-raw-materials,
 body.mbom-viewing-mode #start-mbom-approval,
 body.mbom-viewing-mode #release-mbom-technology,
