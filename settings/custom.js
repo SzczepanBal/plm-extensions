@@ -109,6 +109,7 @@ exports.applications = {
         // }]
     },
     mbom           : {
+        switchEBOMRevision : 'latest',
         // workspaceEBOM : {
         //     workspaceId : null, // uses common.workspaceIds.items per default
         // }, 
