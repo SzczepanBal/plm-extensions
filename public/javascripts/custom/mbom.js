@@ -44,7 +44,6 @@
     let directAssemblyIndexEditor = false;
     let mbomOperationTypeValue = '';
     let mbomOperationTypePromise = null;
-    let workingMBOMRevisionReplacements = {};
     let erpTechnologyPLMActiveRequests = 0;
     let erpTechnologyPLMRequestQueue = [];
 
@@ -2626,7 +2625,16 @@
             let elemMBOMItem = isBlank(linkedMBOM) ? $() : findLinkedMBOMItemForEBOM(elemEBOMItem);
 
             if(elemMBOMItem.length === 0) {
-                return originalUpdateRevisionFromEBOMToMBOM.apply(this, arguments);
+                let result = originalUpdateRevisionFromEBOMToMBOM.apply(this, arguments);
+                let ebomRoot = elemEBOMItem.attr('data-root');
+                $('#mbom .item').each(function() {
+                    let elemCandidate = $(this);
+                    let candidateRoot = elemCandidate.attr('data-ebom-root') || elemCandidate.attr('data-root');
+                    if(candidateRoot !== ebomRoot) return;
+                    if(normalizeComparisonValue(elemCandidate.attr('data-item-type')) === normalizeComparisonValue(rawMaterialTypeName)) return;
+                    setMBOMElementPinnedState(elemCandidate, true);
+                });
+                return result;
             }
 
             return confirmLinkedMBOMRevisionUpdate().then(function(confirmed) {
@@ -2644,7 +2652,8 @@
                 let currentLink = elemMBOMItem.attr('data-link') || '';
                 elemMBOMItem.attr('data-link-db', currentLink);
                 elemMBOMItem.attr('data-link', result.link);
-                elemMBOMItem.attr('data-link-mbom', getPLMItemLevelLink(linkedMBOM));
+                elemMBOMItem.attr('data-link-mbom', result.link);
+                setMBOMElementPinnedState(elemMBOMItem, false);
                 elemMBOMItem.children('.item-head').find('.item-revision').first().text('W');
                 setStatusBar();
                 setStatusBarFilter();
@@ -3061,6 +3070,89 @@
         }
 
         return '';
+    }
+
+    function parseMBOMPinnedValue(value) {
+        if(value === true || value === false) return value;
+        if(typeof value === 'string') {
+            let normalized = value.trim().toLowerCase();
+            if(normalized === 'true') return true;
+            if(normalized === 'false') return false;
+        }
+        return null;
+    }
+
+    function getMBOMPartTypeForPinning(part) {
+        if(!part) return '';
+        let fieldId = config && config.workspaceMBOM && config.workspaceMBOM.fieldIDs
+            ? config.workspaceMBOM.fieldIDs.type : 'TYPE';
+        let value = getMBOMAccountingFieldValue(part, fieldId);
+        if(isBlank(value)) value = part.type;
+        if(value && typeof value === 'object') value = value.title || value.label || value.name || value.value || '';
+        if(value && typeof value === 'object') value = value.title || value.label || value.name || '';
+        return normalizeComparisonValue(value);
+    }
+
+    function isRawMaterialPartForPinning(part) {
+        return getMBOMPartTypeForPinning(part) === normalizeComparisonValue(rawMaterialTypeName);
+    }
+
+    function annotateMBOMPartPinning(response) {
+        let data = response && response.data ? response.data : null;
+        let parts = data && Array.isArray(data.bomPartsList) ? data.bomPartsList : [];
+        let edges = data && Array.isArray(data.edges) ? data.edges : [];
+        let pinnedByEdge = {};
+
+        edges.forEach(function(edge) {
+            let edgeId = edge && (edge.edgeId || String(edge.edgeLink || '').split('/').pop());
+            if(isBlank(edgeId)) return;
+            let pinned = parseMBOMPinnedValue(edge.isPinned);
+            if(pinned === null) pinned = parseMBOMPinnedValue(edge.pinned);
+            if(pinned !== null) pinnedByEdge[String(edgeId)] = pinned;
+        });
+        parts.forEach(function(part) {
+            let edgeId = part && part.edgeId;
+            if(!isBlank(edgeId) && Object.prototype.hasOwnProperty.call(pinnedByEdge, String(edgeId))) {
+                part.isPinned = pinnedByEdge[String(edgeId)];
+            }
+        });
+        return response;
+    }
+
+    function setMBOMElementPinnedState(elemItem, pinned) {
+        if(!elemItem || elemItem.length === 0) return;
+        let current = parseMBOMPinnedValue(elemItem.attr('data-pinned'));
+        if(elemItem.attr('data-pinned-db') === undefined && current !== null) {
+            elemItem.attr('data-pinned-db', String(current));
+        }
+        elemItem.attr('data-pinned', String(pinned === true));
+    }
+
+    function getMBOMElementPinnedState(elemItem) {
+        if(!elemItem || elemItem.length === 0) return false;
+        if(normalizeComparisonValue(elemItem.attr('data-item-type')) === normalizeComparisonValue(rawMaterialTypeName)) {
+            return false;
+        }
+
+        let pinned = parseMBOMPinnedValue(elemItem.attr('data-pinned'));
+        if(pinned !== null) return pinned;
+        if(elemItem.hasClass('pending-addition') && hasMBOMShortcut(elemItem)) return false;
+        return elemItem.hasClass('is-ebom-item') && config.pinEBOMItemsInMBOM === true;
+    }
+
+    function applyMBOMElementPinningPolicy(elemItem, part) {
+        if(!elemItem || elemItem.length === 0 || !part || Number(part.level) === 0) return;
+        let type = getMBOMPartTypeForPinning(part);
+        elemItem.attr('data-item-type', type);
+
+        let pinned = parseMBOMPinnedValue(part.isPinned);
+        if(pinned !== null) elemItem.attr('data-pinned', String(pinned));
+        else if(isBlank(part.edgeId)) {
+            let pinNewItem = getBOMBooleanValue(part.isEBOMItem) && config.pinEBOMItemsInMBOM === true;
+            if(isManufacturingPartForRevisionPolicy(part) || isRawMaterialPartForPinning(part)) pinNewItem = false;
+            elemItem.attr('data-pinned', String(pinNewItem));
+        }
+        if(isRawMaterialPartForPinning(part)) setMBOMElementPinnedState(elemItem, false);
     }
 
     function getMBOMEditorUrl(linkMBOM) {
@@ -3638,6 +3730,97 @@
         console.log('MBOM custom: HAS_BOM checks completed', { items: pendingLinks.length, durationMs: Date.now() - started });
     }
 
+    function getWorkingSubMBOMSaveParams(elemItem, linkChild) {
+        let elemParent = elemItem.parent().closest('.item');
+        let linkParent = getMBOMSaveLink(elemParent);
+        if(isBlank(linkParent)) {
+            throw new Error('Nie udało się znaleźć wersji roboczej rodzica sub-mBOM.');
+        }
+
+        let fields = [];
+        let makeBuy = elemItem.find('.item-make-buy').first().val();
+        if(config.displayOptions.bomColumnMakeBuy && !isBlank(bomViewLinksMBOM.makeBuy) && !isBlank(makeBuy)) {
+            fields.push({ link : bomViewLinksMBOM.makeBuy, value : { link : makeBuy } });
+        }
+
+        return {
+            linkParent : linkParent,
+            linkChild  : linkChild,
+            edgeId     : elemItem.attr('data-edge'),
+            number     : elemItem.attr('data-number'),
+            pinned     : false,
+            quantity   : elemItem.find('.item-qty-input').first().val(),
+            fields     : fields
+        };
+    }
+
+    function setWorkingSubMBOMSaveState(elemItem, workingLink) {
+        elemItem
+            .attr('data-link', workingLink)
+            .attr('data-link-mbom', workingLink)
+            .attr('data-mbom', workingLink)
+            .attr('data-link-db', workingLink)
+            .attr('data-pinned', 'false')
+            .attr('data-pinned-db', 'false');
+        elemItem.children('.item-head').find('.item-revision').first().text('W');
+    }
+
+    async function prepareWorkingSubMBOMsForSave() {
+        if(isMBOMViewingMode()) return [];
+
+        let candidates = [];
+        $('#mbom .item').each(function() {
+            let elemItem = $(this);
+            if(elemItem.hasClass('root')) return;
+
+            let type = normalizeComparisonValue(elemItem.attr('data-item-type'));
+            if(type !== 'manufacturing' && !hasMBOMShortcut(elemItem)) return;
+
+            let link = getMBOMChildSaveLink(elemItem);
+            if(isBlank(link)) return;
+            candidates.push({
+                elemItem : elemItem,
+                link     : link,
+                depth    : elemItem.parents('.item').length
+            });
+        });
+
+        candidates.sort(function(left, right) { return left.depth - right.depth; });
+        let prepared = [];
+
+        // Work from the top of the rendered tree down. This makes every nested
+        // update address the working parent rather than a released parent link.
+        for(let candidate of candidates) {
+            let working = await resolveLinkedMBOMWorkingVersion(candidate.link);
+            let workingLink = working && working.link ? working.link : '';
+            if(isBlank(workingLink)) {
+                throw new Error('Nie udało się znaleźć wersji roboczej sub-mBOM.');
+            }
+
+            let edgeId = candidate.elemItem.attr('data-edge');
+            if(!isBlank(edgeId)) {
+                let params = getWorkingSubMBOMSaveParams(candidate.elemItem, workingLink);
+                let response = await $.post('/plm/bom-update', params);
+                if(!response || response.error) {
+                    throw new Error('Nie udało się odpiąć rewizji sub-mBOM przed zapisem. ' + getRawMaterialErrorMessage(response));
+                }
+            }
+
+            // Pending additions do not have an edge yet. Updating their DOM
+            // state makes the normal add request create an unpinned W link.
+            setWorkingSubMBOMSaveState(candidate.elemItem, workingLink);
+            prepared.push(workingLink);
+        }
+
+        if(prepared.length > 0) {
+            refreshLinkedMBOMRevisionStatus();
+            setStatusBar();
+            setStatusBarFilter();
+        }
+        console.log('MBOM custom: prepared working sub-mBOM relationships for save', { items: prepared.length });
+        return prepared;
+    }
+
     function attachCustomSaveGuard() {
         let elemSave = $('#save');
         if(elemSave.length === 0) return;
@@ -3656,6 +3839,8 @@
             syncExistingBOMStateBeforeSave(headers).then(function() {
                 completeSaveCheckDialog(headers.length);
                 startSaveProcessStep();
+                return prepareWorkingSubMBOMsForSave();
+            }).then(function() {
                 return saveAssemblyIndexPropertiesBeforeSave();
             }).then(function() {
                 updateSaveProcessStep(1);
@@ -9397,6 +9582,7 @@
                 elemInserted
                     .attr('data-link', workingVersion.link)
                     .attr('data-link-mbom', workingVersion.link);
+                setMBOMElementPinnedState(elemInserted, false);
                 elemInserted.children('.item-head').children('.item-revision').first().text('W');
                 $('#overlay').hide();
                 return result;
@@ -9587,6 +9773,7 @@
             }
 
             if(bomType === 'mbom') {
+                applyMBOMElementPinningPolicy(elemNode, resolvedNode);
                 enableSubMBOMOperationTarget(elemNode);
                 attachCustomMBOMItemSelection(elemNode);
                 attachCustomMBOMDropGuard(elemNode);
@@ -9733,8 +9920,15 @@
     if(typeof setSaveActions === 'function') {
         let originalSetSaveActions = setSaveActions;
         setSaveActions = function() {
-            applyWorkingSubMBOMRevisionReplacements();
             originalSetSaveActions.apply(this, arguments);
+            $('#mbom .item').each(function() {
+                let elemItem = $(this);
+                let storedPinned = parseMBOMPinnedValue(elemItem.attr('data-pinned-db'));
+                let selectedPinned = parseMBOMPinnedValue(elemItem.attr('data-pinned'));
+                if(storedPinned !== null && selectedPinned !== null && storedPinned !== selectedPinned) {
+                    elemItem.addClass('pending-update');
+                }
+            });
             rawMaterialStructuralSavePending = !!(
                 (Array.isArray(pendingActions) && (pendingActions[0] > 0 || pendingActions[2] > 0)) ||
                 (Array.isArray(pendingRemovals) && pendingRemovals.length > 0)
@@ -9776,7 +9970,7 @@
                             linkParent : linkParent,
                             linkChild  : (typeof linkMBOM !== 'undefined') ? linkMBOM : elemItem.attr('data-link'),
                             number     : elemItem.attr('data-number'),
-                            pinned     : (isEBOMItem && config.pinEBOMItemsInMBOM),
+                            pinned     : getMBOMElementPinnedState(elemItem),
                             quantity   : edQty,
                             fields     : []
                         };
@@ -9840,6 +10034,7 @@
                             elemItem.removeClass('pending-addition');
                             elemItem.attr('data-number-db', itemNumber);
                             elemItem.attr('data-edge', edgeId);
+                            elemItem.attr('data-pinned-db', elemItem.attr('data-pinned'));
 
                             if((typeof elemParent.attr('data-edges') === 'undefined') || (elemParent.attr('data-edges') === '')) {
                                 elemParent.attr('data-edges', edgeId);
@@ -10168,6 +10363,54 @@
         });
     }
 
+    function pinMBOMManufacturingRelationshipsForRelease() {
+        let candidates = [];
+
+        $('#mbom .item').each(function() {
+            let elemItem = $(this);
+            if(elemItem.hasClass('root') || isBlank(elemItem.attr('data-edge'))) return;
+            if(parseMBOMPinnedValue(elemItem.attr('data-pinned')) !== false) return;
+
+            let type = normalizeComparisonValue(elemItem.attr('data-item-type'));
+            if(type !== 'manufacturing' && !hasMBOMShortcut(elemItem)) return;
+
+            let elemParent = elemItem.parent().closest('.item');
+            let linkParent = getMBOMSaveLink(elemParent);
+            let linkChild = getMBOMChildSaveLink(elemItem);
+            if(isBlank(linkParent) || isBlank(linkChild)) {
+                throw new Error('Nie udało się przygotować łączy do przypięcia sub-mBOM przed zwolnieniem.');
+            }
+
+            let fields = [];
+            let makeBuy = elemItem.find('.item-make-buy').first().val();
+            if(config.displayOptions.bomColumnMakeBuy && !isBlank(bomViewLinksMBOM.makeBuy) && !isBlank(makeBuy)) {
+                fields.push({ link : bomViewLinksMBOM.makeBuy, value : { link : makeBuy } });
+            }
+            candidates.push({
+                elemItem : elemItem,
+                params   : {
+                    linkParent : linkParent,
+                    linkChild  : linkChild,
+                    edgeId     : elemItem.attr('data-edge'),
+                    number     : elemItem.attr('data-number'),
+                    pinned     : true,
+                    quantity   : elemItem.find('.item-qty-input').first().val(),
+                    fields     : fields
+                }
+            });
+        });
+
+        return mapPLMRequestsWithConcurrency(candidates, 5, function(candidate) {
+            return $.post('/plm/bom-update', candidate.params).then(function(response) {
+                if(!response || response.error) {
+                    throw new Error('Nie udało się przypiąć sub-mBOM przed zwolnieniem. ' + getRawMaterialErrorMessage(response));
+                }
+                candidate.elemItem.attr('data-pinned', 'true').attr('data-pinned-db', 'true');
+                return response;
+            });
+        });
+    }
+
     function loadMBOMChangeOrderAffectedItemLinks() {
         let rootItem = $('#mbom-tree').children('.item').first();
         let renderedRootLink = getMBOMSaveLink(rootItem);
@@ -10187,6 +10430,7 @@
                 getBOMPartsList : true
             });
         }).then(function(response) {
+            annotateMBOMPartPinning(response);
             let parts = response && response.data && Array.isArray(response.data.bomPartsList)
                 ? response.data.bomPartsList
                 : [];
@@ -10194,25 +10438,24 @@
                 throw new Error('Widok BOM „' + rawMaterialsBOMViewName + '” nie zwrócił żadnych elementów.');
             }
 
-            let fieldIds = config.workspaceMBOM.fieldIDs || {};
             let seen = {};
-            let affectedLinks = [rootLink];
+            let affectedLinks = [getPLMItemLevelLink(rootLink)];
             seen[normalizePLMLink(rootLink)] = true;
 
             parts.forEach(function(part) {
-                let type = normalizeComparisonValue(
-                    getMBOMAccountingFieldValue(part, fieldIds.type || 'TYPE')
-                );
-                if(type !== 'manufacturing' && type !== normalizeComparisonValue(rawMaterialTypeName)) return;
+                if(!isManufacturingPartForRevisionPolicy(part) || Number(part.level) === 0) return;
+                if(parseMBOMPinnedValue(part.isPinned) !== false) return;
 
-                let link = normalizePLMVersionLink(getPartItemLink(part));
+                let link = getPLMItemLevelLink(getPartItemLink(part));
                 let key = normalizePLMLink(link);
                 if(isBlank(link) || isBlank(key) || seen[key]) return;
                 seen[key] = true;
                 affectedLinks.push(link);
             });
 
-            return affectedLinks;
+            return mapPLMRequestsWithConcurrency(affectedLinks, 5, function(link) {
+                return resolveLinkedMBOMWorkingVersion(link).then(function(result) { return result.link; });
+            });
         });
     }
 
@@ -10617,7 +10860,9 @@
                 if(!startReleaseTransition) {
                     return { release : changeOrderLink, created : created, add : addResult, lifecycle : lifecycleResult, transitioned : false };
                 }
-                return setMBOMChangeOrderERPRelevant(changeOrderLink).then(function() {
+                return pinMBOMManufacturingRelationshipsForRelease().then(function() {
+                    return setMBOMChangeOrderERPRelevant(changeOrderLink);
+                }).then(function() {
                     return performMBOMChangeOrderTransition(
                         changeOrderLink,
                         '1215',
@@ -10703,6 +10948,20 @@
         return String(action && (action.name || action.title || action.label) || 'Workflow action');
     }
 
+    function openMBOMChangeOrderWorkflow(changeOrderLink) {
+        if(isBlank(changeOrderLink)) return false;
+
+        if(typeof genItemURL === 'function') {
+            window.open(genItemURL({ link : changeOrderLink, tab : 'workflow' }), '_blank');
+            return true;
+        }
+        if(typeof openItemByLink === 'function') {
+            openItemByLink(changeOrderLink);
+            return true;
+        }
+        return false;
+    }
+
     function loadMBOMChangeOrderWorkflow() {
         let workspaceId = getMBOMChangeOrderWorkspaceId();
         let rootItem = getSavedMBOMItems()[0];
@@ -10747,8 +11006,13 @@
         let transitionLink = elemWorkflow.val() || '';
         if(isBlank(changeOrderLink) || isBlank(transitionLink)) return;
 
-        let transitionId = String(transitionLink).split('/').pop();
         elemWorkflow.val('');
+        if(transitionLink === '__open_workflow__') {
+            openMBOMChangeOrderWorkflow(changeOrderLink);
+            return;
+        }
+
+        let transitionId = String(transitionLink).split('/').pop();
         if(transitionId === '1215') {
             runMBOMChangeOrderAction(true);
             return;
@@ -10799,7 +11063,8 @@
                 .attr('data-link', workflow.link)
                 .attr('title', 'Zlecenie zmian: ' + workflow.link + '; status: ' + stateLabel)
                 .empty()
-                .append($('<option></option>').attr('value', '').text('Workflow: ' + stateLabel));
+                .append($('<option></option>').attr('value', '').text('Workflow: ' + stateLabel))
+                .append($('<option></option>').attr('value', '__open_workflow__').text('Przejdź do workflow'));
 
             workflow.actions.forEach(function(action) {
                 let transitionLink = action && (action.__self__ || action.link) || '';
@@ -10810,9 +11075,7 @@
                     .appendTo(elemWorkflow);
             });
 
-            if(workflow.actions.length > 0) {
-                elemWorkflow.removeClass('disabled').removeAttr('disabled');
-            }
+            elemWorkflow.removeClass('disabled').removeAttr('disabled');
             return workflow;
         }).catch(function(error) {
             console.warn('MBOM custom: could not load change-order workflow controls', error);
@@ -11072,7 +11335,6 @@
                         let elemParent   = elemItem.parent().closest('.item');
                         let edQty        = elemItem.find('.item-qty-input').first().val();
                         let edMakeBuy    = elemItem.find('.item-make-buy').first().val();
-                        let isEBOMItem   = elemItem.hasClass('is-ebom-item');
                         let linkParent   = getMBOMSaveLink(elemParent);
                         let linkChild    = getMBOMChildSaveLink(elemItem);
 
@@ -11081,7 +11343,7 @@
                             linkChild  : linkChild,
                             edgeId     : elemItem.attr('data-edge'),
                             number     : elemItem.attr('data-number'),
-                            pinned     : (isEBOMItem && config.pinEBOMItemsInMBOM),
+                            pinned     : getMBOMElementPinnedState(elemItem),
                             quantity   : edQty,
                             fields     : []
                         };
@@ -11136,6 +11398,11 @@
                         }
                         if(typeof response.params.linkChild !== 'undefined') {
                             elemItem.attr('data-link-db', response.params.linkChild);
+                        }
+                        if(typeof response.params.pinned !== 'undefined') {
+                            elemItem
+                                .attr('data-pinned', String(response.params.pinned === true || response.params.pinned === 'true'))
+                                .attr('data-pinned-db', String(response.params.pinned === true || response.params.pinned === 'true'));
                         }
                         if(config.displayOptions.bomColumnMakeBuy &&
                             Array.isArray(response.params.fields) &&
@@ -11199,9 +11466,22 @@
     function isManufacturingPartForRevisionPolicy(part) {
         let fieldId = config && config.workspaceMBOM && config.workspaceMBOM.fieldIDs
             ? config.workspaceMBOM.fieldIDs.type : 'TYPE';
-        let value = part && part.details ? part.details[fieldId] : '';
+        let value = getMBOMAccountingFieldValue(part, fieldId);
         if(isBlank(value) && part) value = part.type;
-        if(value && typeof value === 'object') value = value.title || value.name || value.value || '';
+
+        let configuredTypeLink = config && config.mbomRoot ? config.mbomRoot.typeValue : '';
+        let valueLink = value && typeof value === 'object'
+            ? (value.link || value.__self__ || '')
+            : (/\/options\//i.test(String(value || '')) ? value : '');
+        if(!isBlank(configuredTypeLink) && !isBlank(valueLink) &&
+            normalizePLMVersionLink(configuredTypeLink) === normalizePLMVersionLink(valueLink)) {
+            return true;
+        }
+
+        if(value && typeof value === 'object') {
+            value = value.title || value.label || value.name || value.value || '';
+            if(value && typeof value === 'object') value = value.title || value.label || value.name || '';
+        }
         return normalizeComparisonValue(value) === 'manufacturing';
     }
 
@@ -11246,24 +11526,8 @@
         return part;
     }
 
-    function applyWorkingSubMBOMRevisionReplacements() {
-        $('#mbom .item').each(function() {
-            let elemItem = $(this);
-            if(elemItem.hasClass('root')) return;
-
-            let currentLink = elemItem.attr('data-link-mbom') || elemItem.attr('data-link') || '';
-            let replacement = workingMBOMRevisionReplacements[normalizePLMLink(currentLink)];
-            if(!replacement) return;
-
-            elemItem
-                .attr('data-link-db', replacement.storedLink)
-                .attr('data-link', replacement.workingLink)
-                .attr('data-link-mbom', replacement.workingLink);
-            elemItem.children('.item-head').children('.item-revision').first().text('W');
-        });
-    }
-
     function mergeEditingMBOMRevisionPolicy(workingResponse, standardResponse) {
+        annotateMBOMPartPinning(workingResponse);
         let workingParts = workingResponse && workingResponse.data && Array.isArray(workingResponse.data.bomPartsList)
             ? workingResponse.data.bomPartsList : [];
         let standardParts = standardResponse && standardResponse.data && Array.isArray(standardResponse.data.bomPartsList)
@@ -11279,10 +11543,14 @@
         workingParts.forEach(function(part) {
             let key = normalizePLMLink(getPartItemLink(part));
             if(isManufacturingPartForRevisionPolicy(part)) {
-                if(!isBlank(key)) {
+                let pinned = parseMBOMPinnedValue(part.isPinned);
+                if(Number(part.level) > 0 && pinned === false && !isBlank(key)) {
                     if(!manufacturingByItem[key]) manufacturingByItem[key] = [];
                     manufacturingByItem[key].push(part);
                 }
+                return;
+            }
+            if(!isRawMaterialPartForPinning(part) && parseMBOMPinnedValue(part.isPinned) === true) {
                 return;
             }
             if(!isBlank(key) && standardByItem[key]) {
@@ -11303,17 +11571,6 @@
                     ? result.version.index : 0;
 
                 parts.forEach(function(part) {
-                    let storedLink = getPartItemLink(part);
-                    let storedRevision = normalizeComparisonValue(part.revision || part.version || '');
-                    let alreadyWorking = part.workingVersion === true ||
-                        [ 'w', 'wip', 'working' ].indexOf(storedRevision) >= 0;
-
-                    if(!alreadyWorking && normalizePLMVersionLink(storedLink) !== normalizePLMVersionLink(result.link)) {
-                        workingMBOMRevisionReplacements[key] = {
-                            storedLink  : storedLink,
-                            workingLink : result.link
-                        };
-                    }
                     applyStandardVersionRecordToMBOMPart(part, result.version, selectedIndex);
                 });
             });
@@ -11419,7 +11676,6 @@
         initEditor = function() {
             refreshMBOMHierarchyFlags();
             originalInitEditor.apply(this, arguments);
-            applyWorkingSubMBOMRevisionReplacements();
             $('#mbom .item').each(function() {
                 attachCustomMBOMDropGuard($(this));
             });
