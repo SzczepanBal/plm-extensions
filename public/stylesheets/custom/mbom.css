@@ -370,6 +370,36 @@ body.details-on.no-viewer #tabs {
     background: var(--color-blue-500);
 }
 
+/* Editable item.WIELOSERYJNOSC value loaded through the Transition BOM view. */
+#mbom .item-multi-series {
+    align-items: center;
+    background: var(--color-surface-level-3);
+    border-bottom: 1px solid transparent;
+    border-top: 1px solid transparent;
+    display: flex;
+    justify-content: center;
+    max-width: 24px;
+    min-width: 24px;
+    width: 24px;
+}
+
+#mbom .item-multi-series > input {
+    cursor: pointer;
+    height: 14px;
+    margin: 0;
+    width: 14px;
+}
+
+#mbom .item.multi-series-saving > .item-head > .item-multi-series {
+    opacity: 0.55;
+}
+
+#mbom .item.selected > .item-head > .item-multi-series,
+#mbom .item-head:hover > .item-multi-series {
+    background: var(--color-selected-background);
+    border-color: var(--color-selected-border);
+}
+
 #dialog-confirm-raw-materials,
 #dialog-raw-materials {
     box-sizing: border-box;

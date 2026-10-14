@@ -1628,7 +1628,8 @@ const erpPropertyMappings = [
     ['PRD'         , 'Prąd'],
     ['WYDAJNO'     , 'Wydajność'],
     ['TEMPERATURA' , 'Temperatura'],
-    ['GSTO'        , 'Gęstość']
+    ['GSTO'        , 'Gęstość'],
+    ['UWAGI'       , 'Uwagi']
 ];
 function normalizeERPUnitOfMeasureValue(value) {
 
@@ -1709,17 +1710,33 @@ function buildERPSyncPayload(details, erpCallName) {
     let description = getERPFieldValue(sections, 'OPIS');
     let defroName = getERPFieldValue(sections, 'NAZWA_DEFRO');
     let partName = defroName || getERPFieldValue(sections, 'TITLE') || partNumber;
+    let makeOrBuy = getERPFieldValue(sections, 'MAKE_OR_BUY');
+    let isBuy = String(makeOrBuy || '').trim().toLowerCase() === 'buy';
+    let nameDescription = isBlank(description)
+        ? ''
+        : Array.from(String(description)).slice(0, 25).join('');
+    let erpPartName = isBuy
+        ? defroName
+        : ([defroName, nameDescription].filter(function(value) {
+            return !isBlank(value);
+        }).join(' - ') || partName);
 
     for(let mapping of erpPropertyMappings) {
         addERPProperty(properties, sections, mapping[0], mapping[1]);
     }
 
+    let multiSeries = normalizeERPBooleanValue(getSectionFieldValue(sections, 'WIELOSERYJNOSC', false, null));
+    addERPPropertyValue(properties, 'Wieloseryjność', multiSeries ? '2' : '1');
+
     payload = {
-        indeks          : partNumber,
-        nazwa_czesci    : getERPFieldValue(sections, 'NAZWA_DEFRO'),
-        id_grupy        : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
-        jednostka_miary : getERPUnitOfMeasure(sections),
-        wlasnosci       : properties
+        indeks                        : partNumber,
+        nazwa_czesci                  : erpPartName,
+        id_grupy                      : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
+        jednostka_miary               : getERPUnitOfMeasure(sections),
+        kontrola_serii                : 'T',
+        numery_seryjne                : 'WPD',
+        wersja_handlowa_edytowalna    : 'T',
+        wlasnosci                     : properties
     };
 
     if(erpCallName === 'modify-product') {

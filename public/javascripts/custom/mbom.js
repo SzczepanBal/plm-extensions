@@ -4017,6 +4017,188 @@
         return false;
     }
 
+    const erpMultiSeriesFieldId = 'WIELOSERYJNOSC';
+
+    function getMBOMMultiSeriesValue(node) {
+        if(!node) return false;
+        if(Object.prototype.hasOwnProperty.call(node, erpMultiSeriesFieldId)) {
+            return getBOMBooleanValue(node[erpMultiSeriesFieldId]);
+        }
+        if(node.details && Object.prototype.hasOwnProperty.call(node.details, erpMultiSeriesFieldId)) {
+            return getBOMBooleanValue(node.details[erpMultiSeriesFieldId]);
+        }
+        return false;
+    }
+
+    function isMBOMBuyComponent(elemNode, node) {
+        let values = [];
+        let makeBuy = node ? node.makeBuy : null;
+
+        if(typeof makeBuy === 'string') values.push(makeBuy);
+        else if(makeBuy && typeof makeBuy === 'object') {
+            values.push(makeBuy.title, makeBuy.name, makeBuy.value, makeBuy.label);
+        }
+
+        if(elemNode && elemNode.length > 0) {
+            let elemMakeBuy = elemNode.children('.item-head').children('.item-make-buy').first();
+            if(elemMakeBuy.length > 0) {
+                values.push(elemMakeBuy.children('option:selected').text());
+                values.push(elemMakeBuy.val());
+            }
+        }
+
+        return values.some(function(value) {
+            let normalized = normalizeComparisonValue(value);
+            return ['buy', 'purchased', 'purchase', 'kup', 'kupowany', 'zakup'].includes(normalized);
+        });
+    }
+
+    function setLinkedEBOMMultiSeriesValue(elemItem, node) {
+        let candidates = [];
+        let candidateKeys = {};
+
+        function addCandidate(value) {
+            let link = getERPTechnologyLinkedValue(value);
+            let key = normalizePLMLink(link);
+            if(isBlank(link) || isBlank(key) || candidateKeys[key]) return;
+            candidateKeys[key] = true;
+            candidates.push(link);
+        }
+
+        addCandidate(getERPTechnologyEBOMLink(elemItem, node, null));
+
+        let partNumber = (elemItem && elemItem.length > 0 ? elemItem.attr('data-part-number') : '') ||
+            (node && (node.partNumber || node.itemNumber || node.number)) || '';
+        if(!isBlank(partNumber)) {
+            $('#ebom .item').each(function() {
+                let elemEBOMItem = $(this);
+                if((elemEBOMItem.attr('data-part-number') || '') === String(partNumber)) {
+                    addCandidate(elemEBOMItem.attr('data-link'));
+                }
+            });
+        }
+
+        let elemLinkedEBOM = findLinkedEBOMItemForMBOM(elemItem);
+        if(elemLinkedEBOM.length > 0) addCandidate(elemLinkedEBOM.attr('data-link'));
+
+        let failedResponses = [];
+        function updateCandidate(index) {
+            if(index >= candidates.length) {
+                console.warn('MBOM custom: could not load linked eBOM for WIELOSERYJNOSC update', {
+                    candidates : candidates,
+                    responses  : failedResponses
+                });
+                throw new Error('Nie udało się wczytać elementu eBOM powiązanego z mBOM.');
+            }
+
+            let ebomLink = candidates[index];
+            return $.get('/plm/details', { link : ebomLink, useCache : false }).then(function(response) {
+                if(!response || response.error || !response.data) {
+                    failedResponses.push({ link : ebomLink, response : response });
+                    return updateCandidate(index + 1);
+                }
+
+                return $.post('/plm/edit', {
+                    link     : ebomLink,
+                    sections : response.data.sections || [],
+                    fields   : [{ fieldId : erpMultiSeriesFieldId, value : true }]
+                }).then(function(updateResponse) {
+                    if(!updateResponse || updateResponse.error) {
+                        throw new Error((updateResponse && (updateResponse.message || (updateResponse.data && updateResponse.data.message))) || 'PLM odrzucił zmianę pola na powiązanym eBOM.');
+                    }
+                    delete erpTechnologyDetailsCache[ebomLink];
+                    return { skipped : false, link : ebomLink };
+                });
+            }, function(error) {
+                failedResponses.push({ link : ebomLink, error : error });
+                return updateCandidate(index + 1);
+            });
+        }
+
+        let mbomLink = getMBOMSaveLink(elemItem);
+        if(isBlank(mbomLink)) return updateCandidate(0);
+
+        return $.get('/plm/details', { link : mbomLink, useCache : false }).then(function(response) {
+            if(response && !response.error && response.data) {
+                addCandidate(getERPTechnologyEBOMLink(elemItem, node, response.data));
+            } else {
+                failedResponses.push({ link : mbomLink, response : response, source : 'mBOM details' });
+            }
+            return updateCandidate(0);
+        }, function(error) {
+            failedResponses.push({ link : mbomLink, error : error, source : 'mBOM details' });
+            return updateCandidate(0);
+        });
+    }
+
+    function saveMBOMMultiSeriesValue(elemItem, elemCheckbox, node) {
+        let itemLink = getMBOMSaveLink(elemItem);
+        let selectedValue = elemCheckbox.prop('checked');
+        let storedValue = getBOMBooleanValue(elemItem.attr('data-multi-series-db'));
+        let mbomSaved = false;
+
+        if(isBlank(itemLink)) {
+            elemCheckbox.prop('checked', storedValue);
+            showErrorMessage('Wieloseryjność', 'Nie udało się znaleźć elementu mBOM do aktualizacji.');
+            return;
+        }
+
+        elemCheckbox.prop('disabled', true);
+        elemItem.addClass('multi-series-saving');
+
+        $.post('/plm/edit', {
+            link     : itemLink,
+            sections : wsMBOM.sections,
+            fields   : [{ fieldId : erpMultiSeriesFieldId, value : selectedValue }]
+        }).then(function(response) {
+            if(!response || response.error) {
+                throw new Error((response && (response.message || (response.data && response.data.message))) || 'PLM odrzucił zmianę pola.');
+            }
+
+            mbomSaved = true;
+            delete erpTechnologyDetailsCache[itemLink];
+            elemItem.attr('data-multi-series-db', String(selectedValue));
+            if(node) {
+                node[erpMultiSeriesFieldId] = selectedValue;
+                if(node.details) node.details[erpMultiSeriesFieldId] = selectedValue;
+            }
+            return selectedValue ? setLinkedEBOMMultiSeriesValue(elemItem, node) : null;
+        }).catch(function(error) {
+            if(!mbomSaved) elemCheckbox.prop('checked', storedValue);
+            showErrorMessage('Wieloseryjność', String(error && error.message ? error.message : error));
+        }).always(function() {
+            elemItem.removeClass('multi-series-saving');
+            if(!isMBOMViewingMode()) elemCheckbox.prop('disabled', false);
+        });
+    }
+
+    function addMBOMMultiSeriesCheckbox(elemNode, node) {
+        if(!elemNode || elemNode.length === 0 || !node) return;
+        if(getBOMBooleanValue(node.isProcess) || normalizeComparisonValue(node.type) === 'operation') return;
+        if(isMBOMBuyComponent(elemNode, node)) return;
+
+        let checked = getMBOMMultiSeriesValue(node);
+        let editable = !isMBOMViewingMode() && !isBlank(getMBOMSaveLink(elemNode));
+        let elemCell = $('<div></div>')
+            .addClass('item-multi-series')
+            .attr('title', editable ? 'Wieloseryjność' : 'Wieloseryjność (dostępna po zapisaniu elementu)')
+            .insertBefore(elemNode.children('.item-head').children('.item-revision').first());
+        let elemCheckbox = $('<input>')
+            .attr('type', 'checkbox')
+            .attr('aria-label', 'Wieloseryjność')
+            .prop('checked', checked)
+            .prop('disabled', !editable)
+            .appendTo(elemCell);
+
+        elemNode.attr('data-multi-series-db', String(checked));
+        elemCheckbox.on('click', function(event) {
+            event.stopPropagation();
+        }).on('change', function(event) {
+            event.stopPropagation();
+            saveMBOMMultiSeriesValue(elemNode, elemCheckbox, node);
+        });
+    }
+
     function prepareMBOMPartForCustomTree(mbomPart) {
         if(!mbomPart) return;
 
@@ -5884,6 +6066,7 @@
         ['Wariant', ['WARIANT'], assemblyIndexPLMDefaults.variant],
         ['Nazwa urządzenia', ['NAZWA_URZDZENIA'], '', true],
         ['Moc/Wielkość', ['MOC'], '', true],
+        ['Uwagi', ['UWAGI']],
         ['Lifecycle', ['LIFECYCLE']]
     ];
     const erpSubMBOMProductPropertyMappings = [
@@ -5912,7 +6095,8 @@
         ['Prąd', ['PRD']],
         ['Wydajność', ['WYDAJNO']],
         ['Temperatura', ['TEMPERATURA']],
-        ['Gęstość', ['GSTO']]
+        ['Gęstość', ['GSTO']],
+        ['Uwagi', ['UWAGI']]
     ];
     const erpTechnologyOperationCodeFieldId = 'KOD_OPERACJI';
     const erpTechnologyOperationCodeCandidates = [
@@ -6283,12 +6467,38 @@
         return combinedName || title || rawIndex;
     }
 
+    function addERPRequiredProductProperties(properties, multiSeries) {
+        let result = Array.isArray(properties) ? properties : [];
+        let propertyName = 'Wieloseryjność';
+        let propertyValue = getBOMBooleanValue(multiSeries) ? '2' : '1';
+        let existing = result.find(function(property) {
+            return property && Object.prototype.hasOwnProperty.call(property, propertyName);
+        });
+
+        if(existing) existing[propertyName] = propertyValue;
+        else {
+            let property = {};
+            property[propertyName] = propertyValue;
+            result.push(property);
+        }
+
+        return result;
+    }
+
+    function getERPProductMultiSeriesValue(itemPart, sections) {
+        if(itemPart && itemPart.details && Object.prototype.hasOwnProperty.call(itemPart.details, erpMultiSeriesFieldId)) {
+            return itemPart.details[erpMultiSeriesFieldId];
+        }
+        return getSectionFieldValue(sections, erpMultiSeriesFieldId, false, null);
+    }
+
     function buildERPAssemblyIndexProductPayload(elemItem, itemPart, detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
         let rawIndex = getERPTechnologySectionValue(sections, ['NUMBER'], '');
         let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
         let description = getERPTechnologySectionValue(sections, ['OPIS'], title);
         let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], erpAssemblyIndexProductGroupId);
+        let multiSeries = getERPProductMultiSeriesValue(itemPart, sections);
         let properties = [];
 
         erpAssemblyIndexProductPropertyMappings.forEach(function(mapping) {
@@ -6315,11 +6525,14 @@
         });
 
         return {
-            indeks          : rawIndex,
-            nazwa_czesci    : buildERPAddProductName(sections, title, rawIndex),
-            id_grupy        : groupId || erpAssemblyIndexProductGroupId,
-            jednostka_miary : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
-            wlasnosci       : properties
+            indeks                        : rawIndex,
+            nazwa_czesci                  : buildERPAddProductName(sections, title, rawIndex),
+            id_grupy                      : groupId || erpAssemblyIndexProductGroupId,
+            jednostka_miary               : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
+            wlasnosci                     : addERPRequiredProductProperties(properties, multiSeries),
+            kontrola_serii                : 'T',
+            numery_seryjne                : 'WPD',
+            wersja_handlowa_edytowalna    : 'T'
         };
     }
 
@@ -6406,6 +6619,7 @@
         let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
         let description = getERPTechnologySectionValue(sections, ['OPIS'], title);
         let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], '');
+        let multiSeries = getERPProductMultiSeriesValue(itemPart, sections);
         let properties = [];
 
         erpSubMBOMProductPropertyMappings.forEach(function(mapping) {
@@ -6419,11 +6633,14 @@
         });
 
         return {
-            indeks          : rawIndex,
-            nazwa_czesci    : buildERPAddProductName(sections, title, rawIndex),
-            id_grupy        : groupId,
-            jednostka_miary : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
-            wlasnosci       : properties
+            indeks                        : rawIndex,
+            nazwa_czesci                  : buildERPAddProductName(sections, title, rawIndex),
+            id_grupy                      : groupId,
+            jednostka_miary               : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
+            wlasnosci                     : addERPRequiredProductProperties(properties, multiSeries),
+            kontrola_serii                : 'T',
+            numery_seryjne                : 'WPD',
+            wersja_handlowa_edytowalna    : 'T'
         };
     }
 
@@ -7027,6 +7244,90 @@
         };
     }
 
+    function getERPSyncBOMLinkedEBOMLink(part) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let candidateIds = [fieldIds.ebom, 'EBOM'].filter(Boolean);
+
+        for(let fieldId of candidateIds) {
+            let fieldValue = getBOMPartFieldValue(part, fieldId);
+            let link = getERPTechnologyLinkedValue(fieldValue);
+            if(!isBlank(link)) return link;
+        }
+
+        return getERPTechnologyLinkedValue(part && (part.ebom || part.xbom));
+    }
+
+    function getERPLinkedProductCallName(detailsData) {
+        let sections = detailsData && detailsData.sections ? detailsData.sections : [];
+        let sentFieldId = customERPFieldIDs.sentToERP || 'WYSLANE_DO_ERP';
+        let sentToERP = normalizeERPBooleanText(getSectionFieldValue(sections, sentFieldId, false, 'object'));
+        let partIndex = getERPTechnologyStoredPartIndex(null, detailsData);
+        return sentToERP && !isBlank(partIndex) ? 'modify-product' : 'add-product';
+    }
+
+    function buildERPLinkedProductPayload(detailsData, callName) {
+        let payload = buildERPSubMBOMProductPayload(null, null, detailsData);
+        addERPRequiredProductProperties(payload.wlasnosci, true);
+
+        if(callName === 'modify-product') {
+            payload.indeks_czesci = getERPTechnologyStoredPartIndex(null, detailsData) || payload.indeks;
+        }
+
+        return payload;
+    }
+
+    function buildERPMultiSeriesLinkedProductJobs(parts) {
+        let seenLinks = new Set();
+
+        let candidates = (parts || []).filter(function(part) {
+            if(!part || isERPSyncBOMOperation(part)) return false;
+            if(normalizeERPBooleanText(getERPSyncBOMValue(part, [erpMultiSeriesFieldId], false))) return true;
+            return isERPSyncBOMManufacturing(part);
+        });
+
+        return mapPLMRequestsWithConcurrency(candidates, 6, function(part) {
+            return getERPTechnologyItemDetails(part.link).then(function(mbomDetailsData) {
+                let detailsValue = mbomDetailsData
+                    ? getSectionFieldValue(mbomDetailsData.sections || [], erpMultiSeriesFieldId, false, 'object')
+                    : false;
+                let viewValue = getERPSyncBOMValue(part, [erpMultiSeriesFieldId], false);
+                if(!normalizeERPBooleanText(viewValue) && !normalizeERPBooleanText(detailsValue)) return null;
+
+                let ebomLink = getERPSyncBOMLinkedEBOMLink(part) ||
+                    getERPTechnologyEBOMLink(null, part, mbomDetailsData);
+                let linkKey = normalizePLMLink(ebomLink);
+                if(isBlank(linkKey)) {
+                    throw new Error('mBOM „' + (part.title || part.partNumber || part.link) + '” ma zaznaczone WIELOSERYJNOSC, ale nie ma powiązanego elementu eBOM.');
+                }
+                if(seenLinks.has(linkKey)) return null;
+                seenLinks.add(linkKey);
+
+                return getERPTechnologyItemDetails(ebomLink).then(function(detailsData) {
+                    if(!detailsData) throw new Error('Nie udało się wczytać powiązanego elementu eBOM: ' + ebomLink);
+                    let callName = getERPLinkedProductCallName(detailsData);
+                    return {
+                        jobType                    : 'product',
+                        elemItem                   : $(),
+                        link                       : ebomLink,
+                        descriptor                 : detailsData.title || part.title || part.partNumber || '',
+                        level                      : Number(part.level) || 0,
+                        productRequired            : true,
+                        productCallName            : callName,
+                        productPayload             : buildERPLinkedProductPayload(detailsData, callName),
+                        productSourceLink          : ebomLink,
+                        productIndexToCopy         : '',
+                        productUpdateMode          : 'product',
+                        linkedEBOMMultiSeries      : true,
+                        linkedEBOMDetails          : detailsData,
+                        storedERPHash              : String(getSectionFieldValue(detailsData.sections || [], customERPFieldIDs.hash, '', null) || '')
+                    };
+                });
+            });
+        }).then(function(jobs) {
+            return jobs.filter(Boolean);
+        });
+    }
+
     function addERPSyncBOMHierarchy(parts) {
         let stack = [];
 
@@ -7137,6 +7438,7 @@
         let description = getERPSyncBOMValue(part, ['OPIS'], title);
         let partName = getERPSyncBOMValue(part, ['NAZWA_DEFRO'], '');
         let groupId = getERPSyncBOMValue(part, ['GRUPA_PRODUKTOWA'], assemblyIndex ? erpAssemblyIndexProductGroupId : '');
+        let multiSeries = getERPSyncBOMValue(part, ['WIELOSERYJNOSC'], false);
         let properties = [];
 
         mappings.forEach(function(mapping) {
@@ -7159,11 +7461,14 @@
         });
 
         return {
-            indeks          : rawIndex,
-            nazwa_czesci    : [partName].filter(function(value) { return !isBlank(value); }).join(' - ') || title || rawIndex,
-            id_grupy        : groupId,
-            jednostka_miary : getERPSyncBOMUnitOfMeasure(part),
-            wlasnosci       : properties
+            indeks                        : rawIndex,
+            nazwa_czesci                  : [partName].filter(function(value) { return !isBlank(value); }).join(' - ') || title || rawIndex,
+            id_grupy                      : groupId,
+            jednostka_miary               : getERPSyncBOMUnitOfMeasure(part),
+            wlasnosci                     : addERPRequiredProductProperties(properties, multiSeries),
+            kontrola_serii                : 'T',
+            numery_seryjne                : 'WPD',
+            wersja_handlowa_edytowalna    : 'T'
         };
     }
 
@@ -7394,9 +7699,18 @@
                 throw warning;
             }
 
-            let hashPromise = options.calculateHashes === false ? Promise.resolve(technologyJobs) : Promise.all(technologyJobs.map(calculateERPHash));
+            let technologyHashPromise = options.calculateHashes === false
+                ? Promise.resolve(technologyJobs)
+                : Promise.all(technologyJobs.map(calculateERPHash));
+            let linkedProductPromise = buildERPMultiSeriesLinkedProductJobs(parts).then(function(linkedProductJobs) {
+                return options.calculateHashes === false
+                    ? linkedProductJobs
+                    : Promise.all(linkedProductJobs.map(calculateERPHash));
+            });
 
-            return hashPromise.then(function(hashedJobs) {
+            return Promise.all([technologyHashPromise, linkedProductPromise]).then(function(jobGroups) {
+                let hashedJobs = jobGroups[0];
+                let linkedProductJobs = jobGroups[1];
                 let requiredTechnologies = options.calculateHashes === false
                     ? hashedJobs
                     : hashedJobs.filter(function(job) {
@@ -7405,11 +7719,11 @@
 
                 console.log('MBOM custom: ERP jobs built from one ERP Sync BOM response', {
                     parts        : parts.length,
-                    products     : 0,
+                    products     : linkedProductJobs.length,
                     technologies : requiredTechnologies.length
                 });
 
-                return orderERPTechnologyJobsBottomUp(requiredTechnologies);
+                return linkedProductJobs.concat(orderERPTechnologyJobsBottomUp(requiredTechnologies));
             });
         });
     }
@@ -7437,7 +7751,7 @@
                 if(job.jobType === 'product') {
                     previewItems.push({
                         order      : previewItems.length + 1,
-                        callName   : 'add-product',
+                        callName   : job.productCallName || 'add-product',
                         indeks     : job.productPayload ? job.productPayload.indeks : '',
                         descriptor : job.descriptor,
                         payload    : job.productPayload
@@ -7482,7 +7796,7 @@
         });
     }
 
-    function updateERPSyncFields(link, erpResponseBody, updateMode, erpHash) {
+    function updateERPSyncFields(link, erpResponseBody, updateMode, erpHash, productCallName) {
         if(isBlank(link)) {
             return Promise.resolve(false);
         }
@@ -7496,6 +7810,7 @@
         let fieldIdERPVersion = customERPFieldIDs.versionId;
         let fieldIdERPPartIndex = customERPFieldIDs.partIndex;
         let fieldIdERPHash = customERPFieldIDs.hash;
+        let fieldIdERPSent = customERPFieldIDs.sentToERP || 'WYSLANE_DO_ERP';
 
         function normalizeERPTextValue(value) {
             if(value === null || typeof value === 'undefined') return '';
@@ -7552,7 +7867,11 @@
             return '';
         }
 
-        let sectionsPromise = (typeof wsMBOM !== 'undefined' && Array.isArray(wsMBOM.sections) && wsMBOM.sections.length > 0)
+        let linkWorkspaceId = String(link || '').split('/')[4] || '';
+        let useMBOMSections = typeof wsMBOM !== 'undefined' &&
+            String(wsMBOM.wsId) === String(linkWorkspaceId) &&
+            Array.isArray(wsMBOM.sections) && wsMBOM.sections.length > 0;
+        let sectionsPromise = useMBOMSections
             ? Promise.resolve({ data : wsMBOM.sections })
             : $.get('/plm/sections', { link : link });
 
@@ -7592,6 +7911,9 @@
 
             if((isTechnologyUpdate || isProductUpdate) && !isBlank(erpHash)) {
                 addERPField(fieldIdERPHash, 'pending:' + String(erpHash).replace(/^pending:/, ''));
+            }
+            if(isProductUpdate && productCallName === 'add-product') {
+                addERPField(fieldIdERPSent, true);
             }
             if(erpResponseBody && typeof erpResponseBody === 'object') {
                 if(isTechnologyUpdate) {
@@ -7658,6 +7980,24 @@
         };
     }
 
+    function ensureERPLinkedEBOMMultiSeries(currentJob, testRun) {
+        if(!currentJob || !currentJob.linkedEBOMMultiSeries || testRun) return Promise.resolve(true);
+
+        let detailsData = currentJob.linkedEBOMDetails || {};
+        let sections = detailsData.sections || [];
+        return $.post('/plm/edit', {
+            link     : currentJob.productSourceLink || currentJob.link,
+            sections : sections,
+            fields   : [{ fieldId : erpMultiSeriesFieldId, value : true }]
+        }).then(function(response) {
+            if(!response || response.error) {
+                throw new Error((response && (response.message || (response.data && response.data.message))) || 'Nie udało się ustawić WIELOSERYJNOSC na powiązanym eBOM.');
+            }
+            delete erpTechnologyDetailsCache[currentJob.productSourceLink || currentJob.link];
+            return true;
+        });
+    }
+
     function ensureERPProductPrerequisite(currentJob, testRun, results) {
         if(!currentJob || !currentJob.productRequired) {
             if(!currentJob || testRun || isBlank(currentJob.productIndexToCopy) || isBlank(currentJob.link)) {
@@ -7692,7 +8032,19 @@
             return Promise.resolve(false);
         }
 
-        let callName = 'add-product';
+        let callName = currentJob.productCallName || 'add-product';
+        if(callName === 'modify-product' && isBlank(payload.indeks_czesci)) {
+            results.push({
+                order      : results.length + 1,
+                callName   : callName,
+                indeks     : payload.indeks || '',
+                descriptor : currentJob.descriptor,
+                testRun    : testRun,
+                success    : false,
+                error      : 'Dane produktu ERP są niekompletne: INDEKS_CZESCI -> indeks_czesci'
+            });
+            return Promise.resolve(false);
+        }
         let requestUrl = testRun
             ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
             : erpTechnologyProxyBaseUrl + callName;
@@ -7705,7 +8057,9 @@
             descriptor : currentJob.descriptor
         });
 
-        return $.post(requestUrl, payload, null, 'json').then(function(response) {
+        return ensureERPLinkedEBOMMultiSeries(currentJob, testRun).then(function() {
+            return $.post(requestUrl, payload, null, 'json');
+        }).then(function(response) {
             let status = Number(response && response.status);
             let success = !!response && !response.error && status === 200;
 
@@ -7719,7 +8073,8 @@
                     productSourceLink,
                     erpResponseBody,
                     currentJob.productUpdateMode || 'product',
-                    currentJob.productUpdateMode === 'product' ? currentJob.erpHash : ''
+                    currentJob.productUpdateMode === 'product' ? currentJob.erpHash : '',
+                    callName
                 ));
                 if(normalizePLMLink(productSourceLink) !== normalizePLMLink(currentJob.link)) {
                     updateRequests.push(updateERPSyncFields(currentJob.link, erpResponseBody, 'index'));
@@ -7745,7 +8100,7 @@
                     responseDump: response && response.data ? response.data.dumpUrl : '',
                     indexUpdated: indexUpdated,
                     erpHash     : currentJob.erpHash || '',
-                    error       : success ? '' : ((response && response.message) || 'Operacja ERP add-product nie zwróciła statusu 200.')
+                    error       : success ? '' : ((response && response.message) || 'Operacja ERP ' + callName + ' nie zwróciła statusu 200.')
                 });
 
                 return success;
@@ -8110,6 +8465,13 @@
                     applyERPChildTechnologyVersions(job, versionByIndex);
                     return calculateERPHash(job);
                 }).then(function(currentJob) {
+                    if(currentJob && currentJob.jobType === 'product') {
+                        return ensureERPProductPrerequisite(currentJob, false, results).then(function(productReady) {
+                            if(!productReady) throw new Error('Nie udało się zsynchronizować powiązanego produktu eBOM „' + currentJob.descriptor + '”.');
+                            return null;
+                        });
+                    }
+
                     return ensureERPProductPrerequisite(currentJob, false, results).then(function(productReady) {
                         if(!productReady) throw new Error('Nie udało się przygotować produktu ERP dla „' + currentJob.descriptor + '”.');
 
@@ -8153,12 +8515,17 @@
                     if(typeof onProgress === 'function') onProgress(index + 1, jobs.length, 'Wysłano „' + job.descriptor + '”.');
                 }).catch(function(error) {
                     let failure = getERPRequestFailureDetails(error);
+                    let failedCallName = job && job.jobType === 'product'
+                        ? (job.productCallName || 'add-product')
+                        : 'add-technology';
                     results.push({
                         order      : results.length + 1,
-                        callName   : 'add-technology',
-                        indeks     : job && job.payload ? job.payload.indeks : '',
+                        callName   : failedCallName,
+                        indeks     : job && job.jobType === 'product'
+                            ? ((job.productPayload && job.productPayload.indeks) || '')
+                            : (job && job.payload ? job.payload.indeks : ''),
                         descriptor : job ? job.descriptor : '',
-                        revision   : job && job.payload ? job.payload.rewizja : '',
+                        revision   : job && job.jobType === 'product' ? '' : (job && job.payload ? job.payload.rewizja : ''),
                         success    : false,
                         error      : error && error.message ? error.message : failure.message
                     });
@@ -9514,6 +9881,7 @@
         insertLoadFullMBOMButton();
         insertAddLeafMBOMsAndMaterialsButton();
         insertAddAssemblyIndexButton();
+        insertMBOMPropertyRepairButton();
         setupAddProcessPicker();
         setupCustomEBOMItemFocus();
         insertERPTab();
@@ -9777,6 +10145,7 @@
                 enableSubMBOMOperationTarget(elemNode);
                 attachCustomMBOMItemSelection(elemNode);
                 attachCustomMBOMDropGuard(elemNode);
+                addMBOMMultiSeriesCheckbox(elemNode, resolvedNode);
             }
 
             decorateMBOMQuantityWithUnit(elemNode, resolvedNode, bomType);
@@ -11691,6 +12060,7 @@
             }
 
             insertAddAssemblyIndexButton();
+            insertMBOMPropertyRepairButton();
             insertMBOMChangeOrderButtons();
             setupAddProcessPicker();
             applyMBOMRootAccessMode();
@@ -12008,6 +12378,18 @@
             $.post('/plm/edit', mbomParams, function(response) { printResponseErrorMessagesToConsole(response); });
         };
     }
+
+    function getMBOMCreationDefroName(value) {
+        if(isBlank(value)) return value;
+
+        let name = String(value).trim();
+        let suffix = (typeof config !== 'undefined' && !isBlank(config.suffixMBOMNumber))
+            ? String(config.suffixMBOMNumber) : '-M';
+        if(isBlank(suffix)) suffix = '-M';
+
+        return name.toLowerCase().endsWith(suffix.toLowerCase()) ? name : name + suffix;
+    }
+
     if(typeof createMBOMForEBOM === 'function') {
         createMBOMForEBOM = async function createMBOMForEBOM(ebomItemDetails, number, callback) {
             let hasBom;
@@ -12043,6 +12425,9 @@
                 let value = getSectionFieldValue(ebomItemDetails.sections, fieldToCopy.ebom);
                 if(fieldToCopy.mbom === 'NAZWA_DEFRO' && isBlank(value)) {
                     value = getSectionFieldValue(ebomItemDetails.sections, 'TITLE', '');
+                }
+                if(fieldToCopy.mbom === 'NAZWA_DEFRO') {
+                    value = getMBOMCreationDefroName(value);
                 }
                 params.fields.push({
                     fieldId : fieldToCopy.mbom,

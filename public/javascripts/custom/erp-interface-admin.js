@@ -4,10 +4,14 @@
     if(window.location.pathname.toLowerCase() !== '/data') return;
 
     const DEFAULT_MAPPING = {
-        version : 1,
+        version : 2,
         fields  : {
             index : { label : 'Part number', erpField : 'indeks', plmFields : ['NUMBER'] },
-            name : { label : 'Part name', erpField : 'nazwa_czesci', plmFields : ['NAZWA_DEFRO'], fallbackFields : ['TITLE', 'NUMBER'], separator : ' - ' },
+            name : {
+                label : 'Part name', erpField : 'nazwa_czesci', plmFields : ['NAZWA_DEFRO'],
+                descriptionFields : ['OPIS'], descriptionMaxLength : 25,
+                fallbackFields : ['TITLE', 'NUMBER'], separator : ' - '
+            },
             group : { label : 'Product group', erpField : 'id_grupy', plmFields : ['GRUPA_PRODUKTOWA'] },
             unit : { label : 'Unit of measure', erpField : 'jednostka_miary', plmFields : ['UNIT_OF_MEASURE', 'UOM', 'UNIT', 'BOM_UOM', 'ITEM_UOM'], defaultValue : 'szt' },
             partIndex : { label : 'ERP part index', erpField : 'indeks_czesci', plmFields : ['INDEKS_CZESCI'] }
@@ -20,7 +24,8 @@
             ['SZEROKOSC', 'Szerokość'], ['DUGOSC', 'Długość'], ['WYSOKOSC', 'Wysokość/grubość'],
             ['SREDNICA', 'Średnica'], ['KOLOR', 'Kolor'], ['POWLOKA', 'Powłoka'], ['MOC', 'Moc'],
             ['MOC_WIELKOSC', 'Moc/Wielkość'], ['NAPICIE', 'Napięcie'], ['PRD', 'Prąd'],
-            ['WYDAJNO', 'Wydajność'], ['TEMPERATURA', 'Temperatura'], ['GSTO', 'Gęstość']
+            ['WYDAJNO', 'Wydajność'], ['TEMPERATURA', 'Temperatura'], ['GSTO', 'Gęstość'],
+            ['UWAGI', 'Uwagi']
         ].map(function(entry) { return { plmField : entry[0], erpProperty : entry[1], enabled : true }; })
     };
 
@@ -50,12 +55,23 @@
         }
 
         let result = clone(DEFAULT_MAPPING);
+        let sourceVersion = Number(config.version) || 1;
         Object.keys(result.fields).forEach(function(key) {
             let source = config.fields[key];
             if(!source || typeof source !== 'object') return;
             let fields = cleanList(source.plmFields);
             if(fields.length) result.fields[key].plmFields = fields;
             if(Object.prototype.hasOwnProperty.call(result.fields[key], 'fallbackFields')) result.fields[key].fallbackFields = cleanList(source.fallbackFields);
+            if(Object.prototype.hasOwnProperty.call(result.fields[key], 'descriptionFields')) {
+                let descriptionFields = cleanList(source.descriptionFields);
+                if(descriptionFields.length) result.fields[key].descriptionFields = descriptionFields;
+            }
+            if(Object.prototype.hasOwnProperty.call(result.fields[key], 'descriptionMaxLength')) {
+                let descriptionMaxLength = Number(source.descriptionMaxLength);
+                if(Number.isFinite(descriptionMaxLength) && descriptionMaxLength > 0) {
+                    result.fields[key].descriptionMaxLength = Math.min(250, Math.trunc(descriptionMaxLength));
+                }
+            }
             if(Object.prototype.hasOwnProperty.call(result.fields[key], 'separator') && typeof source.separator === 'string') result.fields[key].separator = source.separator.substring(0, 10);
             if(Object.prototype.hasOwnProperty.call(result.fields[key], 'defaultValue') && typeof source.defaultValue === 'string') result.fields[key].defaultValue = source.defaultValue.trim().substring(0, 128);
         });
@@ -67,6 +83,12 @@
             if(!plmField || !erpProperty) throw new Error('Every property row requires both a PLM field ID and an ERP property.');
             return { plmField : plmField, erpProperty : erpProperty, enabled : !entry || entry.enabled !== false };
         });
+        if(sourceVersion < 2 && !result.properties.some(function(entry) {
+            return entry.plmField === 'UWAGI' && entry.erpProperty === 'Uwagi';
+        })) {
+            result.properties.push({ plmField : 'UWAGI', erpProperty : 'Uwagi', enabled : true });
+        }
+        result.version = DEFAULT_MAPPING.version;
         result.updatedAt = new Date().toISOString();
         return result;
     }
@@ -111,23 +133,36 @@
             let sections = (details && details.sections) ? details.sections : [];
             let nameConfig = mapping.fields.name;
             let partNumber = getFirstValue(sections, mapping.fields.index.plmFields, '');
-            let partName = nameConfig.plmFields.map(function(fieldId) {
+            let defroName = nameConfig.plmFields.map(function(fieldId) {
                 return window.getERPFieldValue(sections, fieldId);
             }).filter(function(value) { return !window.isBlank(value); }).join(nameConfig.separator);
+            let description = getFirstValue(sections, nameConfig.descriptionFields || ['OPIS'], '');
+            let descriptionLimit = Number(nameConfig.descriptionMaxLength) || 25;
+            let nameDescription = window.isBlank(description)
+                ? ''
+                : Array.from(String(description)).slice(0, descriptionLimit).join('');
+            let partName = [defroName, nameDescription].filter(function(value) {
+                return !window.isBlank(value);
+            }).join(nameConfig.separator);
             if(window.isBlank(partName)) partName = getFirstValue(sections, nameConfig.fallbackFields, partNumber);
 
             let properties = [];
             mapping.properties.forEach(function(entry) {
                 if(entry.enabled !== false) window.addERPProperty(properties, sections, entry.plmField, entry.erpProperty);
             });
+            let multiSeries = window.normalizeERPBooleanValue(window.getSectionFieldValue(sections, 'WIELOSERYJNOSC', false, null));
+            window.addERPPropertyValue(properties, 'Wieloseryjność', multiSeries ? '2' : '1');
 
             let rawUnit = getFirstValue(sections, mapping.fields.unit.plmFields, mapping.fields.unit.defaultValue);
             let payload = {
-                indeks          : partNumber,
-                nazwa_czesci    : partName,
-                id_grupy        : getFirstValue(sections, mapping.fields.group.plmFields, ''),
-                jednostka_miary : window.normalizeERPUnitOfMeasureValue(rawUnit),
-                wlasnosci       : properties
+                indeks                        : partNumber,
+                nazwa_czesci                  : partName,
+                id_grupy                      : getFirstValue(sections, mapping.fields.group.plmFields, ''),
+                jednostka_miary               : window.normalizeERPUnitOfMeasureValue(rawUnit),
+                kontrola_serii                : 'T',
+                numery_seryjne                : 'WPD',
+                wersja_handlowa_edytowalna    : 'T',
+                wlasnosci                     : properties
             };
 
             if(erpCallName === 'modify-product') {

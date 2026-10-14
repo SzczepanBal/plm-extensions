@@ -1,5 +1,7 @@
 // Custom ERP Interface Admin extension for the Data Manager.
 (function() {
+    const enableERPInterfaceAdmin = false;
+    if(!enableERPInterfaceAdmin) return;
     if(window.location.pathname.toLowerCase() !== '/data') return;
 
     let style = document.createElement('link');

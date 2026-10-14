@@ -7428,6 +7428,9 @@ const customErpCalls = {
             nazwa_czesci     : '000000144-M',
             id_grupy         : 'MZL',
             jednostka_miary  : 'szt',
+            kontrola_serii   : 'T',
+            numery_seryjne   : 'WPD',
+            wersja_handlowa_edytowalna : 'T',
             wlasnosci        : [
                 { Opis               : '000000144-M' },
                 { Nazwa              : '000000144-M' },
@@ -7446,8 +7449,11 @@ const customErpCalls = {
         method      : 'POST',
         path        : '/Api2/modify-product',
         defaultBody : {
-            indeks_czesci    : 'BWE-B-150-B/N',
-            numer_katalogowy : 'BETONIARKA'
+            indeks_czesci                 : 'BWE-B-150-B/N',
+            numer_katalogowy              : 'BETONIARKA',
+            kontrola_serii                : 'T',
+            numery_seryjne                : 'WPD',
+            wersja_handlowa_edytowalna    : 'T'
         }
     },
     'get-technology-list' : {
