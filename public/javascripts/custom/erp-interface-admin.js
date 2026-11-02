@@ -161,7 +161,7 @@
                 jednostka_miary               : window.normalizeERPUnitOfMeasureValue(rawUnit),
                 kontrola_serii                : 'T',
                 numery_seryjne                : 'WPD',
-                wersja_handlowa_edytowalna    : 'T',
+                edycja_wh                      : 'T',
                 wlasnosci                     : properties
             };
 

@@ -103,10 +103,16 @@ function extractFunction(name) {
     const stateSource = extractFunction('setWorkingSubMBOMSaveState');
     const paramsSource = extractFunction('getWorkingSubMBOMSaveParams');
 
-    assert.match(prepareSource, /resolveLinkedMBOMWorkingVersion\(candidate\.link\)/,
-        'Every rendered sub-mBOM must resolve its explicit W version');
+    assert.match(prepareSource, /resolveLinkedMBOMWorkingVersion\(currentLink\)/,
+        'Sub-mBOMs without a known W link must resolve their explicit working version');
+    assert.match(prepareSource, /\/versions\\\/\\d\+[\s\S]*isMBOMWorkingRevision\(currentRevision\)/,
+        'A version-specific row already displaying W must avoid a redundant versions request');
     assert.match(prepareSource, /await \$\.post\('\/plm\/bom-update', params\)/,
         'Existing sub-mBOM relationships must be updated before normal save');
+    assert.match(prepareSource, /relationshipAlreadyWorking[\s\S]*!relationshipAlreadyWorking/,
+        'An already-unpinned relationship to the same W version must not be written again');
+    assert.match(prepareSource, /mapPLMRequestsWithConcurrency\(levelCandidates, concurrency, prepareCandidate\)/,
+        'Independent sub-mBOM relationships at the same depth must be prepared concurrently');
     assert.match(paramsSource, /pinned\s*:\s*false/,
         'The pre-save relationship update must remove revision pinning');
     assert.match(stateSource, /\.attr\('data-link-mbom', workingLink\)/,
@@ -1047,8 +1053,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     };
     await copyContext.createMBOMForEBOM(source, '');
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'HAS_BOM').value, true);
-    assert.strictEqual(payload.fields.find(f => f.fieldId === 'NAZWA_DEFRO').value, 'Defro Part-M',
-        'New mBOMs copy NAZWA_DEFRO and add the manufacturing suffix');
+    assert.strictEqual(payload.fields.find(f => f.fieldId === 'NAZWA_DEFRO').value, 'Defro Part - Technologia',
+        'New mBOMs copy NAZWA_DEFRO and add the technology suffix');
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'JEDNOSTKA_ROZLICZENIOWA').value,
         source.sections.JEDNOSTKA_ROZLICZENIOWA);
     assert.strictEqual(payload.fields.find(f => f.fieldId === 'ILOSC_ROZLICZENIOWA').value, 2.5);
@@ -1065,8 +1071,13 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.deepStrictEqual(copyContext.config.mbomRoot.fieldsToCopy, configuredMappings, 'Do not mutate configured mappings');
     delete source.sections.NAZWA_DEFRO;
     await copyContext.createMBOMForEBOM(source, '');
-    assert.strictEqual(payload.fields.find(f => f.fieldId === 'NAZWA_DEFRO').value, 'Part-M',
-        'New mBOMs use TITLE plus the manufacturing suffix when NAZWA_DEFRO is empty');
+    assert.strictEqual(payload.fields.find(f => f.fieldId === 'NAZWA_DEFRO').value, 'Part - Technologia',
+        'New mBOMs use TITLE plus the technology suffix when NAZWA_DEFRO is empty');
+    source.sections.NAZWA_DEFRO = 'Existing - Technologia';
+    await copyContext.createMBOMForEBOM(source, '');
+    assert.strictEqual(payload.fields.find(f => f.fieldId === 'NAZWA_DEFRO').value, 'Existing - Technologia',
+        'The technology suffix must not be appended twice');
+    delete source.sections.NAZWA_DEFRO;
     assert.strictEqual(payload.fields.filter(f => f.fieldId === 'ILOSC_ROZLICZENIOWA').length, 1);
     copyContext.getSourceEBOMHasChildren = async () => false;
     delete copyContext.config.mbomRoot.fieldsToCopy;
@@ -1096,6 +1107,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
             }
             return fallbackValue;
         },
+        erpProductFields: { name: ['NAZWA_DEFRO', 'TITLE', 'NUMBER'] },
         isERPTechnologyMainRootItem: () => false,
         getERPTechnologyStoredPartIndex: (itemPart, detailsData) => detailsData.partIndex || ''
     };
@@ -1153,12 +1165,12 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
             const source = extractFunction(name);
             assert.match(source, /wlasnosci\s*:\s*addERPRequiredProductProperties\(properties, multiSeries\)/,
                 name + ' must map WIELOSERYJNOSC to the Wieloseryjność property');
-            assert.match(source, /kontrola_serii\s*:\s*'T'/,
-                name + ' must enable commercial-version control');
-            assert.match(source, /numery_seryjne\s*:\s*'WPD'/,
-                name + ' must require serial numbers on document items');
-            assert.match(source, /wersja_handlowa_edytowalna\s*:\s*'T'/,
-                name + ' must allow editing the commercial version');
+            assert.match(source, /kontrola_serii\s*:\s*erpProductDefaults\.serialControl/,
+                name + ' must obtain commercial-version control from the shared ERP mapping');
+            assert.match(source, /numery_seryjne\s*:\s*erpProductDefaults\.serialNumbers/,
+                name + ' must obtain serial-number behavior from the shared ERP mapping');
+            assert.match(source, /edycja_wh\s*:\s*erpProductDefaults\.commercialVersionEditable/,
+                name + ' must obtain commercial-version editing from the shared ERP mapping');
         });
 
     const checkboxSource = extractFunction('addMBOMMultiSeriesCheckbox');
@@ -1223,7 +1235,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         'The linked eBOM ERP payload must force Wieloseryjność to ERP value 2');
     assert.match(linkedPayloadSource, /callName\s*===\s*'modify-product'[\s\S]*payload\.indeks_czesci/,
         'The linked eBOM modify-product payload must include indeks_czesci');
-    assert.doesNotMatch(linkedPayloadSource, /delete payload\.(kontrola_serii|numery_seryjne|wersja_handlowa_edytowalna)/,
+    assert.doesNotMatch(linkedPayloadSource, /delete payload\.(kontrola_serii|numery_seryjne|edycja_wh)/,
         'The linked eBOM modify-product payload must preserve the commercial-version and serial-number fields');
 
     const releaseSource = extractFunction('sendReleasedMBOMTechnologiesToERP');
@@ -1297,6 +1309,181 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     ], 'Two checked sub-mBOM item fields must produce two linked eBOM add-product jobs');
     console.log('Checked sub-mBOM linked eBOM product job tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+(function testERPTechnologyJobsAreAlwaysBottomUp() {
+    const orderContext = {
+        Map,
+        Set,
+        Number,
+        console: { log() {} },
+        isBlank: value => value === null || typeof value === 'undefined' || String(value).trim() === ''
+    };
+    vm.createContext(orderContext);
+    vm.runInContext(extractFunction('normalizeERPTechnologyIndex'), orderContext);
+    vm.runInContext(extractFunction('getERPTechnologyJobIndexes'), orderContext);
+    vm.runInContext(extractFunction('orderERPTechnologyJobsBottomUp'), orderContext);
+
+    const jobs = [
+        {
+            link: '/main', level: 0, descriptor: 'Main',
+            payload: { indeks: 'MAIN-M', struktura: [{ indeks_skladowy: 'SUB-1' }, { indeks_skladowy: 'SUB-2' }] }
+        },
+        {
+            link: '/sub-1', level: 1, descriptor: 'Sub 1',
+            payload: { indeks: 'SUB-1-M', struktura: [] }
+        },
+        {
+            link: '/sub-2', level: 1, descriptor: 'Sub 2',
+            payload: { indeks: 'SUB-2-M', struktura: [] }
+        }
+    ];
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(orderContext.orderERPTechnologyJobsBottomUp(jobs).map(job => job.link))),
+        ['/sub-1', '/sub-2', '/main'],
+        'Sub-mBOM technologies must be sent before the main mBOM even when ERP indices use the -M variant'
+    );
+
+    const aliasedJobs = [
+        {
+            link: '/alias-main', level: 0, descriptor: 'Main',
+            payload: { indeks: 'P00001301-M', struktura: [{ indeks_skladowy: '2430' }] },
+            technologyIndexAliases: ['P00001301-M', '2442']
+        },
+        {
+            link: '/alias-child', level: 1, descriptor: 'Child',
+            payload: { indeks: 'P00001313-M', struktura: [] },
+            technologyIndexAliases: ['P00001313-M', '2430']
+        }
+    ];
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(orderContext.orderERPTechnologyJobsBottomUp(aliasedJobs).map(job => job.link))),
+        ['/alias-child', '/alias-main'],
+        'INDEKS_CZESCI aliases must connect parent structure rows to child technology jobs'
+    );
+
+    const fallbackJobs = [
+        { link: '/fallback-main', level: 0, descriptor: 'Main', payload: { indeks: 'MAIN', struktura: [] } },
+        { link: '/fallback-sub', level: 1, descriptor: 'Sub', payload: { indeks: 'SUB', struktura: [] } }
+    ];
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(orderContext.orderERPTechnologyJobsBottomUp(fallbackJobs).map(job => job.link))),
+        ['/fallback-sub', '/fallback-main'],
+        'Hierarchy depth must keep the main mBOM last when structure-index matching is unavailable'
+    );
+    console.log('ERP bottom-up technology ordering tests passed');
+})();
+
+(function testSubMBOMVersionIdsArePropagatedToParents() {
+    const versionContext = {
+        Number,
+        Object,
+        isBlank: value => value === null || typeof value === 'undefined' || String(value).trim() === ''
+    };
+    vm.createContext(versionContext);
+    vm.runInContext(extractFunction('normalizeERPTechnologyIndex'), versionContext);
+    vm.runInContext(extractFunction('rememberERPTechnologyVersion'), versionContext);
+    vm.runInContext(extractFunction('getERPTechnologyJobIndexes'), versionContext);
+    vm.runInContext(extractFunction('rememberERPTechnologyJobVersion'), versionContext);
+    vm.runInContext(extractFunction('getERPTechnologyTestVersionPlaceholder'), versionContext);
+    vm.runInContext(extractFunction('applyERPChildTechnologyVersions'), versionContext);
+    vm.runInContext(extractFunction('validateERPChildTechnologyVersions'), versionContext);
+
+    const versionByIndex = {};
+    assert.strictEqual(versionContext.rememberERPTechnologyVersion(versionByIndex, 'SUB-1-M', 4711), true);
+    const parentJob = {
+        payload: {
+            struktura: [{ indeks_skladowy: 'SUB-1', id_wersji_skladowej: 10 }]
+        }
+    };
+    assert.strictEqual(versionContext.applyERPChildTechnologyVersions(parentJob, versionByIndex), true);
+    assert.strictEqual(parentJob.payload.struktura[0].id_wersji_skladowej, 4711,
+        'The parent technology must use the latest ERP id_wersji returned for its sub-mBOM');
+    assert.strictEqual(versionContext.applyERPChildTechnologyVersions(parentJob, versionByIndex), false,
+        'Applying an unchanged sub-mBOM version must not force another ERP hash calculation');
+
+    const unsyncedChildJob = {
+        payload: { indeks: 'P00001313-M', struktura: [] },
+        technologyIndexAliases: ['P00001313-M', '2430']
+    };
+    const placeholder = versionContext.getERPTechnologyTestVersionPlaceholder(unsyncedChildJob);
+    assert.strictEqual(placeholder, '{{id_wersji_z_ERP:2430}}');
+    assert.strictEqual(versionContext.rememberERPTechnologyJobVersion(versionByIndex, unsyncedChildJob, 9901, false), true);
+    assert.strictEqual(versionByIndex['2430'], 9901,
+        'A returned child technology version must also be addressable through INDEKS_CZESCI');
+    assert.strictEqual(versionContext.rememberERPTechnologyJobVersion(versionByIndex, unsyncedChildJob, placeholder, true), true);
+    assert.strictEqual(versionByIndex['2430'], placeholder,
+        'Test export must propagate an explicit ERP-result placeholder to its parent request');
+    parentJob.requiredChildTechnologyIndexes = ['SUB-1'];
+    assert.strictEqual(versionContext.validateERPChildTechnologyVersions(parentJob), true);
+
+    const invalidParentJob = {
+        requiredChildTechnologyIndexes: ['SUB-2'],
+        payload: { struktura: [{ indeks_skladowy: 'SUB-2' }] }
+    };
+    assert.throws(
+        () => versionContext.validateERPChildTechnologyVersions(invalidParentJob),
+        /Brak id_wersji dla sub-mBOM: SUB-2/,
+        'A parent technology must not be sent without id_wersji_skladowej for every sub-mBOM'
+    );
+
+    const technologyBuilderSource = extractFunction('buildERPSyncBOMTechnologyJob');
+    assert.match(technologyBuilderSource, /payload\.id_wersji\s*=\s*technologyVersionId/,
+        'Every existing sub-mBOM technology payload must include its stored id_wersji');
+    assert.match(technologyBuilderSource, /technologyVersionId\s*:\s*technologyVersionId/,
+        'Technology jobs must retain their stored ERP version for parent propagation');
+    assert.match(technologyBuilderSource, /requiredChildTechnologyIndexes[\s\S]*type\s*===\s*'manufacturing'/,
+        'Technology jobs must identify every manufacturing sub-mBOM that requires id_wersji_skladowej');
+    assert.match(technologyBuilderSource, /if\(!isERPSyncBOMManufacturing\(part\)\) return null/,
+        'All Manufacturing mBOMs, including leaves without operations, must create technology jobs');
+    assert.doesNotMatch(technologyBuilderSource, /operations\.length\s*===\s*0[^\n]*return null/,
+        'A Manufacturing leaf must not be excluded merely because it has no operations');
+
+    const syncSource = extractFunction('syncERPTechnologies');
+    assert.match(syncSource, /\.always\(function\(\)/,
+        'ERP sync cleanup must use jQuery Deferred-compatible always()');
+    assert.doesNotMatch(syncSource, /\.finally\(/,
+        'ERP sync must not call unsupported Promise.finally() on a jQuery Deferred');
+    assert.match(syncSource, /applyERPChildTechnologyVersions\(job, versionByIndex\)[\s\S]*calculateERPHash\(job\)/,
+        'Normal ERP sync must update parent child-version IDs before hashing and sending');
+    assert.match(syncSource, /applyERPChildTechnologyVersions\(job, versionByIndex\)[\s\S]*validateERPChildTechnologyVersions\(job\)/,
+        'Normal ERP sync must reject incomplete parent structures without sub-mBOM version IDs');
+    assert.match(syncSource, /getERPTechnologyResponseVersionId\(erpResponseBody\)[\s\S]*rememberERPTechnologyJobVersion/,
+        'Normal ERP sync must propagate freshly returned sub-mBOM version IDs');
+    assert.match(syncSource, /testRun[\s\S]*getERPTechnologyTestVersionPlaceholder/,
+        'Test export must show the child-to-parent version dependency without requiring a live ERP response');
+
+    const previewSource = extractFunction('previewERPTechnologies');
+    assert.match(previewSource, /\.always\(function\(\)/,
+        'ERP preview cleanup must use jQuery Deferred-compatible always()');
+    assert.doesNotMatch(previewSource, /\.finally\(/,
+        'ERP preview must not call unsupported Promise.finally() on a jQuery Deferred');
+    console.log('Sub-mBOM ERP version propagation tests passed');
+})();
+
+(function testERPTechnologyResultSummary() {
+    const summaryContext = { Array };
+    vm.createContext(summaryContext);
+    vm.runInContext(extractFunction('getERPTechnologyResultSummary'), summaryContext);
+
+    const summary = summaryContext.getERPTechnologyResultSummary([
+        { callName: 'add-product', success: true },
+        { callName: 'add-product', success: true },
+        { callName: 'modify-product', success: true },
+        { callName: 'add-technology', success: true },
+        { callName: 'add-technology', success: true },
+        { callName: 'rebuild-or-sync', success: false }
+    ]);
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(summary)), {
+        addProduct: 2, modifyProduct: 1, technology: 2, success: 5, failed: 1
+    });
+    const rendererSource = extractFunction('renderERPTechnologySyncResults');
+    assert.match(rendererSource, /PODSUMOWANIE[\s\S]*add-product[\s\S]*modify-product[\s\S]*add-technology/,
+        'The mBOM ERP console must show operation counts before detailed records');
+    assert.match(rendererSource, /testRun \? 'Wyeksportowane żądania' : 'Wysłane do ERP'/,
+        'The summary must distinguish test exports from live sends');
+    console.log('ERP technology result summary tests passed');
+})();
 
 (async function testERPSyncUsesSingleBOMViewRequest() {
     let viewRequests = 0;
@@ -1452,6 +1639,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
             bomRequests++;
             assert.strictEqual(params.viewId, 88);
             assert.strictEqual(params.depth, 10);
+            assert.strictEqual(params.useCache, false, 'Raw-material discovery must reload the saved structure');
             assert.strictEqual(params.getBOMPartsList, true);
             return { data: { bomPartsList: [
                 manufacturingPart,
@@ -1541,8 +1729,12 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
 
     const startSource = extractFunction('startRawMaterialsFromMBOM');
     assert.match(startSource, /loadRawMaterialsBOMParts/);
-    assert.doesNotMatch(startSource, /resolveMBOMMaterials|\/plm\/details|ensureRawMaterialTreeExpanded/,
-        'The main Add Raw Materials flow must not load details or expand every mBOM separately');
+    assert.match(startSource, /ensureRawMaterialTreeExpanded/,
+        'The main Add Raw Materials flow must reload the live editor structure before discovery');
+    assert.match(startSource, /getRawMaterialDOMSourceParts[\s\S]*pendingParts/,
+        'Unsaved sub-mBOMs from the live editor must be included in discovery');
+    assert.match(startSource, /includeLoadedParts\s*:\s*false[\s\S]*includeDOMParts\s*:\s*false/,
+        'Only newly inserted sub-mBOMs should require direct detail resolution');
     console.log('Raw Materials single BOM-view request tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
@@ -2229,31 +2421,47 @@ testRepairRefreshesHasBOM().catch(error => { console.error(error); process.exitC
     let state;
     let missing;
     let addActionRemoved = false;
+    const attrs = {};
     const row = {
         hasClass: () => false,
         toggleClass(name, value) { missing = value; },
         children() { return this; },
-        attr() { return this; },
+        attr(name, value) {
+            if(arguments.length > 1) { attrs[name] = value; return this; }
+            return attrs[name];
+        },
+        removeAttr(name) { delete attrs[name]; return this; },
         remove() { addActionRemoved = true; }
+    };
+    const presentRow = {
+        length: 1,
+        hasClass(name) { return name === 'match'; }
     };
     Object.assign(ctx, {
         isBlank: context.isBlank,
         $(value) { return value === '#ebom' ? { find: () => ({ each: cb => cb.call(row) }) } : value; },
         getLinkedMBOMLinkFromEBOMElement: () => '/api/v3/workspaces/57/items/123',
-        findLinkedMBOMItemForEBOM: () => ({ length: present ? 1 : 0 }),
+        findLinkedMBOMItemForEBOM: () => present ? presentRow : ({ length: 0 }),
         addLinkedMBOMInsertAction() {},
         setLinkedEBOMBOMCheckPending(item, value) { pending = value; },
-        setHolisticItemState(item, value) { state = value; }
+        setHolisticItemState(item, value) { state = value; },
+        getStandardMBOMStatus(item) {
+            if(!item || item.length === 0) return '';
+            return item.hasClass('match') ? 'match' : '';
+        }
     });
     vm.runInContext(extractFunction('refreshMissingLinkedMBOMStatus'), ctx);
     ctx.refreshMissingLinkedMBOMStatus();
     assert.strictEqual(missing, true);
+    assert.strictEqual(attrs['data-linked-mbom-missing-state'], 'true');
     assert.strictEqual(state, 'additional', 'Linked MBOM absent from parent must be red');
     assert.strictEqual(pending, false, 'Missing item must not remain gray awaiting expansion');
     present = true;
     state = 'match';
     ctx.refreshMissingLinkedMBOMStatus();
     assert.strictEqual(missing, false);
+    assert.strictEqual(attrs['data-linked-mbom-missing-state'], undefined,
+        'Clear the stale missing marker as soon as the linked mBOM is rendered');
     assert.strictEqual(addActionRemoved, true, 'Remove stale Add MBOM action after nested MBOM is found');
     assert.strictEqual(state, 'match', 'Do not override comparison status when linked MBOM is present');
     const customSource = fs.readFileSync(sourcePath, 'utf8');
@@ -2261,6 +2469,10 @@ testRepairRefreshesHasBOM().catch(error => { console.error(error); process.exitC
         'Adding an existing linked sub-mBOM in editing mode must resolve W before cloning the eBOM row');
     assert.match(customSource, /children\('\.item-head'\)\.children\('\.item-revision'\)\.first\(\)\.text\('W'\)/,
         'The newly cloned sub-mBOM row must display W immediately');
+    assert.match(customSource, /attr\('data-new-linked-mbom', 'true'\)[\s\S]*callback\(links\.mbom\)/,
+        'A newly created mBOM must be identified before the conversion callback inserts it');
+    assert.match(customSource, /isNewlyCreatedMBOM[\s\S]*insertLinkedMBOMWithoutEBOMChildren/,
+        'A newly created working mBOM must be inserted without waiting for PLM version indexing');
     console.log('Existing linked MBOM insertion and status tests passed');
 })();
 
@@ -2490,6 +2702,9 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
     const customDataSource = fs.readFileSync(customDataPath, 'utf8');
     const plmRoutePath = path.join(__dirname, '..', 'routes', 'plm.js');
     const plmRouteSource = fs.readFileSync(plmRoutePath, 'utf8');
+    const erpRoutePath = path.join(__dirname, '..', 'routes', 'erp.js');
+    const erpRouteSource = fs.readFileSync(erpRoutePath, 'utf8');
+    const erpMapping = require('../settings/erp-mapping');
 
     function extractDataFunction(name) {
         const marker = 'function ' + name + '(';
@@ -2525,10 +2740,24 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
         'The active Data Manager override must include the UWAGI mapping');
     assert.match(customDataSource, /WIELOSERYJNOSC[\s\S]*multiSeries \? '2' : '1'/,
         'The Data Manager override must map WIELOSERYJNOSC false/true to ERP 1/2');
-    assert.match(customDataSource, /kontrola_serii\s*:\s*'T'[\s\S]*numery_seryjne\s*:\s*'WPD'[\s\S]*wersja_handlowa_edytowalna\s*:\s*'T'/,
+    assert.match(customDataSource, /kontrola_serii\s*:\s*'T'[\s\S]*numery_seryjne\s*:\s*'WPD'[\s\S]*edycja_wh\s*:\s*'T'/,
         'The Data Manager override must include the new fields for both add-product and modify-product');
-    assert.match(plmRouteSource, /'modify-product'\s*:\s*\{[\s\S]*?kontrola_serii\s*:\s*'T'[\s\S]*?numery_seryjne\s*:\s*'WPD'[\s\S]*?wersja_handlowa_edytowalna\s*:\s*'T'/,
+    assert.match(plmRouteSource, /router\.use\(require\('\.\/erp'\)/,
+        'The PLM router must mount the dedicated ERP router');
+    assert.doesNotMatch(plmRouteSource, /router\.(get|post)\('\/custom-erp/,
+        'ERP endpoints must not be defined directly in the PLM router');
+    assert.match(erpRouteSource, /'modify-product'\s*:\s*\{[\s\S]*?kontrola_serii\s*:\s*'T'[\s\S]*?numery_seryjne\s*:\s*'WPD'[\s\S]*?edycja_wh\s*:\s*'T'/,
         'The modify-product proxy example must document the new supported fields');
+    assert.match(erpRouteSource, /function applyRequiredProductControls[\s\S]*kontrola_serii[\s\S]*numery_seryjne[\s\S]*edycja_wh/,
+        'The ERP proxy must enforce the required product controls for every item request');
+    assert.match(erpRouteSource, /router\.get\('\/custom-erp\/mapping'/,
+        'The ERP router must expose the active shared mapping for administration');
+    assert.strictEqual(erpMapping.operations.modifyProduct.extends, 'addProduct',
+        'modify-product must inherit the common product mapping');
+    assert.strictEqual(erpMapping.operations.addTechnology.endpoint, 'add-technology',
+        'add-technology must have its own operation mapping');
+    assert.ok(Array.isArray(erpMapping.operations.addProduct.propertyProfiles.assemblyIndex),
+        'The common product mapping must include the assembly-index profile');
 
     let rawSyncStatus = 'NOT_SYNCED';
     const statusContext = {
@@ -2576,8 +2805,13 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
         'Released item details must be reloaded before building the ERP payload');
 
     const dataProductPayloadContext = {
-        erpPropertyMappings: [['UWAGI', 'Uwagi']],
+        erpPropertyMappings: [[['UWAGI'], 'Uwagi', false]],
         erpFieldIDs: { partIndex: 'INDEKS_CZESCI' },
+        erpProductFields: erpMapping.operations.addProduct.fields,
+        erpProductDefaults: erpMapping.operations.addProduct.defaults,
+        erpModifyProductMapping: {
+            fields: erpMapping.operations.addProduct.fields
+        },
         isBlank: context.isBlank,
         getERPFieldValue: (sections, fieldId) => sections[fieldId] || '',
         getSectionFieldValue: (sections, fieldId, fallback) => Object.prototype.hasOwnProperty.call(sections, fieldId) ? sections[fieldId] : fallback,
@@ -2589,7 +2823,8 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
             property[propertyName] = sections[fieldId];
             properties.push(property);
         },
-        addERPPropertyValue(properties, propertyName, value) {
+        addERPPropertyValue(properties, propertyName, value, includeWhenBlank) {
+            if(context.isBlank(value) && includeWhenBlank !== true) return;
             const property = {};
             property[propertyName] = value;
             properties.push(property);
@@ -2609,7 +2844,8 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
     ], 'Data Manager add-product maps UWAGI and includes Wieloseryjność');
     assert.strictEqual(addProductPayload.kontrola_serii, 'T');
     assert.strictEqual(addProductPayload.numery_seryjne, 'WPD');
-    assert.strictEqual(addProductPayload.wersja_handlowa_edytowalna, 'T');
+    assert.strictEqual(addProductPayload.edycja_wh, 'T');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(addProductPayload, 'wersja_handlowa_edytowalna'), false);
     const multiSeriesPayload = dataProductPayloadContext.buildERPSyncPayload({ sections: {
         NUMBER: 'P-2', NAZWA_DEFRO: 'Produkt wieloseryjny', GRUPA_PRODUKTOWA: 'GRP', WIELOSERYJNOSC: true
     } }, 'add-product');
@@ -2627,7 +2863,8 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
     ], 'Data Manager modify-product maps UWAGI and WIELOSERYJNOSC=false to ERP value 1');
     assert.strictEqual(modifyProductPayload.kontrola_serii, 'T');
     assert.strictEqual(modifyProductPayload.numery_seryjne, 'WPD');
-    assert.strictEqual(modifyProductPayload.wersja_handlowa_edytowalna, 'T');
+    assert.strictEqual(modifyProductPayload.edycja_wh, 'T');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(modifyProductPayload, 'wersja_handlowa_edytowalna'), false);
 
     const buySections = {
         NUMBER: 'B-1', NAZWA_DEFRO: 'Kupowany produkt', OPIS: 'Opis nie może trafić do nazwy',
@@ -2642,9 +2879,13 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
     assert.strictEqual(buyModifyPayload.nazwa_czesci, 'Kupowany produkt',
         'Buy modify-product uses only NAZWA_DEFRO for nazwa_czesci');
 
-    assert.match(dataSource, /\['UWAGI'\s*,\s*'Uwagi'\]/);
-    assert.match(source, /\['Uwagi', \['UWAGI'\]\]/,
-        'mBOM add-product maps the PLM UWAGI field to ERP Uwagi');
+    assert.strictEqual(erpMapping.operations.addProduct.propertyProfiles.default.some(mapping =>
+        mapping.erp === 'Uwagi' && mapping.plm.includes('UWAGI')), true,
+    'The shared mapping maps the PLM UWAGI field to ERP Uwagi');
+    assert.match(dataSource, /common\.erp\.mapping/,
+        'Data Manager consumes the shared ERP mapping');
+    assert.match(source, /common\.erp\.mapping/,
+        'mBOM consumes the shared ERP mapping');
 
     const lifecycleContext = { isBlank: context.isBlank };
     vm.createContext(lifecycleContext);

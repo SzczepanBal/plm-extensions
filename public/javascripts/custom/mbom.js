@@ -561,6 +561,7 @@
             let missing = findLinkedMBOMItemForEBOM(elemItem).length === 0;
             elemItem.toggleClass('linked-mbom-missing', missing);
             if(missing) {
+                elemItem.attr('data-linked-mbom-missing-state', 'true');
                 addLinkedMBOMInsertAction(elemItem);
                 setLinkedEBOMBOMCheckPending(elemItem, false);
                 setHolisticItemState(elemItem, 'additional');
@@ -569,6 +570,12 @@
             } else {
                 elemItem.children('.item-head').children('.item-actions')
                     .children('.item-action-add-linked-mbom').remove();
+                if(elemItem.attr('data-linked-mbom-missing-state') === 'true') {
+                    elemItem.removeAttr('data-linked-mbom-missing-state');
+                    let elemMBOMItem = findLinkedMBOMItemForEBOM(elemItem);
+                    let state = getStandardMBOMStatus(elemMBOMItem);
+                    setHolisticItemState(elemItem, isBlank(state) ? 'match' : state);
+                }
             }
         });
     }
@@ -3787,23 +3794,50 @@
 
         candidates.sort(function(left, right) { return left.depth - right.depth; });
         let prepared = [];
+        let updatedRelationships = 0;
+        let workingVersionRequests = {};
+        let concurrency = Math.max(1, Math.min(5, typeof maxRequests === 'number' ? maxRequests : 5));
+        let started = Date.now();
 
-        // Work from the top of the rendered tree down. This makes every nested
-        // update address the working parent rather than a released parent link.
-        for(let candidate of candidates) {
-            let working = await resolveLinkedMBOMWorkingVersion(candidate.link);
-            let workingLink = working && working.link ? working.link : '';
+        function resolveCandidateWorkingLink(candidate) {
+            let currentLink = candidate.link;
+            let currentRevision = getLinkedMBOMRevision(candidate.elemItem);
+
+            // A version-specific row already displaying W needs no additional
+            // versions request. This is the common case after the first save.
+            if(/\/versions\/\d+(?:[/?#]|$)/i.test(currentLink) && isMBOMWorkingRevision(currentRevision)) {
+                return Promise.resolve(currentLink);
+            }
+
+            let requestKey = normalizePLMLink(getPLMItemLevelLink(currentLink));
+            if(!workingVersionRequests[requestKey]) {
+                workingVersionRequests[requestKey] = Promise.resolve(resolveLinkedMBOMWorkingVersion(currentLink));
+            }
+
+            return workingVersionRequests[requestKey].then(function(working) {
+                return working && working.link ? working.link : '';
+            });
+        }
+
+        async function prepareCandidate(candidate) {
+            let workingLink = await resolveCandidateWorkingLink(candidate);
             if(isBlank(workingLink)) {
                 throw new Error('Nie udało się znaleźć wersji roboczej sub-mBOM.');
             }
 
             let edgeId = candidate.elemItem.attr('data-edge');
-            if(!isBlank(edgeId)) {
+            let storedLink = candidate.elemItem.attr('data-link-db') || '';
+            let storedPinned = parseMBOMPinnedValue(candidate.elemItem.attr('data-pinned-db'));
+            let relationshipAlreadyWorking = storedPinned === false &&
+                normalizePLMVersionLink(storedLink) === normalizePLMVersionLink(workingLink);
+
+            if(!isBlank(edgeId) && !relationshipAlreadyWorking) {
                 let params = getWorkingSubMBOMSaveParams(candidate.elemItem, workingLink);
                 let response = await $.post('/plm/bom-update', params);
                 if(!response || response.error) {
                     throw new Error('Nie udało się odpiąć rewizji sub-mBOM przed zapisem. ' + getRawMaterialErrorMessage(response));
                 }
+                updatedRelationships++;
             }
 
             // Pending additions do not have an edge yet. Updating their DOM
@@ -3812,12 +3846,28 @@
             prepared.push(workingLink);
         }
 
+        // Work from the top of the rendered tree down. This makes every nested
+        // update address the working parent rather than a released parent link.
+        // Rows at the same depth are independent and can be prepared in parallel.
+        let depths = Array.from(new Set(candidates.map(function(candidate) { return candidate.depth; }))).sort(function(left, right) {
+            return left - right;
+        });
+        for(let depth of depths) {
+            let levelCandidates = candidates.filter(function(candidate) { return candidate.depth === depth; });
+            await mapPLMRequestsWithConcurrency(levelCandidates, concurrency, prepareCandidate);
+        }
+
         if(prepared.length > 0) {
             refreshLinkedMBOMRevisionStatus();
             setStatusBar();
             setStatusBarFilter();
         }
-        console.log('MBOM custom: prepared working sub-mBOM relationships for save', { items: prepared.length });
+        console.log('MBOM custom: prepared working sub-mBOM relationships for save', {
+            items                : prepared.length,
+            updatedRelationships : updatedRelationships,
+            workingVersionCalls  : Object.keys(workingVersionRequests).length,
+            durationMs           : Date.now() - started
+        });
         return prepared;
     }
 
@@ -3841,9 +3891,9 @@
                 startSaveProcessStep();
                 return prepareWorkingSubMBOMsForSave();
             }).then(function() {
+                updateSaveProcessStep(1);
                 return saveAssemblyIndexPropertiesBeforeSave();
             }).then(function() {
-                updateSaveProcessStep(1);
                 return normalizeProcessCodesBeforeSave();
             }).then(function() {
                 updateSaveProcessStep(2);
@@ -5124,6 +5174,7 @@
                 viewId          : view.id,
                 depth           : getCustomMBOMDepth(),
                 revisionBias    : 'working',
+                useCache        : false,
                 getBOMPartsList : true
             });
         }).then(function(response) {
@@ -5248,13 +5299,16 @@
         });
     }
 
-    async function resolveMBOMMaterials(mbomParts) {
-        await refreshRawMaterialPartsListIfNeeded();
-        await ensureRawMaterialTreeExpanded();
+    async function resolveMBOMMaterials(mbomParts, options) {
+        let settings = options || {};
+        if(settings.skipStructureRefresh !== true) await refreshRawMaterialPartsListIfNeeded();
+        if(settings.skipTreeExpansion !== true) await ensureRawMaterialTreeExpanded();
         let inputParts = Array.isArray(mbomParts) ? mbomParts : [];
-        let allParts = inputParts
-            .concat(Array.isArray(mbomPartsList) ? mbomPartsList : [])
-            .concat(getRawMaterialDOMSourceParts());
+        let allParts = inputParts.slice();
+        if(settings.includeLoadedParts !== false) {
+            allParts = allParts.concat(Array.isArray(mbomPartsList) ? mbomPartsList : []);
+        }
+        if(settings.includeDOMParts !== false) allParts = allParts.concat(getRawMaterialDOMSourceParts());
         let mbomSourceParts = getRawMaterialSourceParts(allParts);
 
         console.log('MBOM custom: raw material sources restricted to MBOM roots', {
@@ -5964,8 +6018,34 @@
         initRawMaterialsDialog(0, 0);
         setRawMaterialsDialogPendingState();
 
-        return loadRawMaterialsBOMParts().then(function(parts) {
+        return loadRawMaterialsBOMParts().then(async function(parts) {
+            // Always replace the cached source structure with a fresh server response.
+            // Newly inserted sub-mBOMs are not present there until the root is saved, so
+            // expand the live editor and resolve only its additional mBOM roots directly.
+            mbomPartsList = parts;
+            rawMaterialDetailsPromises = {};
+            refreshMBOMHierarchyFlags();
+            await ensureRawMaterialTreeExpanded();
+
             let mbomMaterials = resolveRawMaterialsBOMViewParts(parts);
+            let loadedLinks = new Set(mbomMaterials.map(function(entry) {
+                return normalizePLMLink(getPLMItemLevelLink(getPartItemLink(entry.part)));
+            }));
+            let pendingParts = getRawMaterialDOMSourceParts().filter(function(part) {
+                let link = normalizePLMLink(getPLMItemLevelLink(getPartItemLink(part)));
+                return !isBlank(link) && !loadedLinks.has(link);
+            });
+
+            if(pendingParts.length > 0) {
+                let pendingMaterials = await resolveMBOMMaterials(pendingParts, {
+                    skipStructureRefresh : true,
+                    skipTreeExpansion    : true,
+                    includeLoadedParts   : false,
+                    includeDOMParts      : false
+                });
+                mbomMaterials = mbomMaterials.concat(pendingMaterials);
+            }
+
             return addRawMaterialsToMBOM(mbomMaterials, mode);
         }).catch(function(error) {
             console.warn('MBOM custom: failed to load the Raw Materials BOM view', error);
@@ -6046,66 +6126,44 @@
 
     const erpTechnologyProxyBaseUrl = '/plm/custom-erp/';
     const erpSyncBOMViewName = 'ERP Sync';
-    const erpTechnologyPropertyMappings = [
-        ['Grupa Produktowa', ['GRUPA_PRODUKTOWA']],
-        ['Typ czesci', ['TYP_CZESCI']]
-    ];
+    const erpCentralMapping = common.erp.mapping || { operations : {} };
+
+    function getERPOperationMapping(operationName) {
+        let operation = erpCentralMapping.operations[operationName] || {};
+        if(isBlank(operation.extends)) return operation;
+
+        let base = erpCentralMapping.operations[operation.extends] || {};
+        return Object.assign({}, base, operation, {
+            fields           : Object.assign({}, base.fields || {}, operation.fields || {}),
+            defaults         : Object.assign({}, base.defaults || {}, operation.defaults || {}),
+            propertyProfiles : Object.assign({}, base.propertyProfiles || {}, operation.propertyProfiles || {})
+        });
+    }
+
+    function toERPPropertyMappings(mappings, defaults) {
+        return (mappings || []).map(function(mapping) {
+            let defaultValue = !isBlank(mapping.defaultKey) ? defaults[mapping.defaultKey] : undefined;
+            return [mapping.erp, mapping.plm || [], defaultValue, mapping.includeWhenBlank === true];
+        });
+    }
+
+    const erpAddProductMapping = getERPOperationMapping('addProduct');
+    const erpAddTechnologyMapping = getERPOperationMapping('addTechnology');
+    const erpProductFields = erpAddProductMapping.fields || {};
+    const erpProductDefaults = erpAddProductMapping.defaults || {};
+    const erpTechnologyFields = erpAddTechnologyMapping.fields || {};
+    const erpTechnologyDefaults = erpAddTechnologyMapping.defaults || {};
+    const erpTechnologyPropertyMappings = toERPPropertyMappings(erpAddTechnologyMapping.properties, {});
     const erpAssemblyIndexProductGroupId = assemblyIndexPLMDefaults.productGroup;
-    const erpAssemblyIndexProductPropertyMappings = [
-        ['Opis', ['OPIS']],
-        ['Nazwa', ['NAZWA']],
-        ['Tytuł', ['TITLE']],
-        ['Tutuł', ['TITLE']],
-        ['Rewizja', ['REVISION']],
-        ['Materiał', ['MATERIAL']],
-        ['Specyfikacja', ['SPECYFIKACJA'], assemblyIndexPLMDefaults.specification],
-        ['Status', ['STATUS']],
-        ['Grupa produktowa', ['GRUPA_PRODUKTOWA'], assemblyIndexPLMDefaults.productGroup],
-        ['Typ części', ['TYP_CZESCI'], assemblyIndexPLMDefaults.partType],
-        ['Rodzaj', ['RODZAJ'], assemblyIndexPLMDefaults.kind],
-        ['Wariant', ['WARIANT'], assemblyIndexPLMDefaults.variant],
-        ['Nazwa urządzenia', ['NAZWA_URZDZENIA'], '', true],
-        ['Moc/Wielkość', ['MOC'], '', true],
-        ['Uwagi', ['UWAGI']],
-        ['Lifecycle', ['LIFECYCLE']]
-    ];
-    const erpSubMBOMProductPropertyMappings = [
-        ['Materiał', ['MATERIAL']],
-        ['Masa', ['ITEM_WEIGHT']],
-        ['Opis', ['OPIS']],
-        ['Nazwa', ['NAZWA']],
-        ['Tytuł', ['TITLE']],
-        ['Tutuł', ['TITLE']],
-        ['Grupa produktowa', ['GRUPA_PRODUKTOWA']],
-        ['Nazwa urządzenia', ['NAZWA_URZDZENIA']],
-        ['Typ części', ['TYP_CZESCI']],
-        ['Rodzaj', ['RODZAJ']],
-        ['Wariant', ['WARIANT']],
-        ['Specyfikacja', ['SPECYFIKACJA']],
-        ['Producent', ['PRODUCENT']],
-        ['Szerokość', ['WIDTH']],
-        ['Długość', ['LENGTH']],
-        ['Wysokość/grubość', ['HEIGHT']],
-        ['Średnica', ['SREDNICA']],
-        ['Kolor', ['KOLOR']],
-        ['Powłoka', ['POWLOKA']],
-        ['Moc', ['MOC']],
-        ['Moc/Wielkość', ['MOC']],
-        ['Napięcie', ['NAPICIE']],
-        ['Prąd', ['PRD']],
-        ['Wydajność', ['WYDAJNO']],
-        ['Temperatura', ['TEMPERATURA']],
-        ['Gęstość', ['GSTO']],
-        ['Uwagi', ['UWAGI']]
-    ];
-    const erpTechnologyOperationCodeFieldId = 'KOD_OPERACJI';
-    const erpTechnologyOperationCodeCandidates = [
-        erpTechnologyOperationCodeFieldId,
-        'KOD OPERACJI',
-        'OPERATION_CODE',
-        'OPERATION CODE',
-        'KODOPERACJI'
-    ];
+    const erpAssemblyIndexProductPropertyMappings = toERPPropertyMappings(
+        (erpAddProductMapping.propertyProfiles || {}).assemblyIndex,
+        assemblyIndexPLMDefaults
+    );
+    const erpSubMBOMProductPropertyMappings = toERPPropertyMappings(
+        (erpAddProductMapping.propertyProfiles || {}).default,
+        assemblyIndexPLMDefaults
+    );
+    const erpTechnologyOperationCodeCandidates = erpTechnologyFields.operationCode || [];
     let erpTechnologyDetailsCache = {};
     let erpSyncBOMViewPromise = null;
 
@@ -6459,7 +6517,7 @@
     }
 
     function buildERPAddProductName(sections, title, rawIndex) {
-        let partName = getERPTechnologySectionValue(sections, ['NAZWA_DEFRO'], '');
+        let partName = getERPTechnologySectionValue(sections, erpProductFields.name || [], '');
         let combinedName = [partName].filter(function(value) {
             return !isBlank(value);
         }).join(' - ');
@@ -6494,10 +6552,10 @@
 
     function buildERPAssemblyIndexProductPayload(elemItem, itemPart, detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        let rawIndex = getERPTechnologySectionValue(sections, ['NUMBER'], '');
-        let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
-        let description = getERPTechnologySectionValue(sections, ['OPIS'], title);
-        let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], erpAssemblyIndexProductGroupId);
+        let rawIndex = getERPTechnologySectionValue(sections, erpProductFields.index || [], '');
+        let title = getERPTechnologySectionValue(sections, erpProductFields.name || [], (detailsData && detailsData.title) ? detailsData.title : '');
+        let description = getERPTechnologySectionValue(sections, erpProductFields.description || [], title);
+        let groupId = getERPTechnologySectionValue(sections, erpProductFields.group || [], erpAssemblyIndexProductGroupId);
         let multiSeries = getERPProductMultiSeriesValue(itemPart, sections);
         let properties = [];
 
@@ -6530,9 +6588,9 @@
             id_grupy                      : groupId || erpAssemblyIndexProductGroupId,
             jednostka_miary               : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
             wlasnosci                     : addERPRequiredProductProperties(properties, multiSeries),
-            kontrola_serii                : 'T',
-            numery_seryjne                : 'WPD',
-            wersja_handlowa_edytowalna    : 'T'
+            kontrola_serii                : erpProductDefaults.serialControl || 'T',
+            numery_seryjne                : erpProductDefaults.serialNumbers || 'WPD',
+            edycja_wh                      : erpProductDefaults.commercialVersionEditable || 'T'
         };
     }
 
@@ -6615,10 +6673,10 @@
 
     function buildERPSubMBOMProductPayload(elemItem, itemPart, detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        let rawIndex = getERPTechnologySectionValue(sections, ['NUMBER'], '');
-        let title = getERPTechnologySectionValue(sections, ['TITLE'], (detailsData && detailsData.title) ? detailsData.title : '');
-        let description = getERPTechnologySectionValue(sections, ['OPIS'], title);
-        let groupId = getERPTechnologySectionValue(sections, ['GRUPA_PRODUKTOWA'], '');
+        let rawIndex = getERPTechnologySectionValue(sections, erpProductFields.index || [], '');
+        let title = getERPTechnologySectionValue(sections, erpProductFields.name || [], (detailsData && detailsData.title) ? detailsData.title : '');
+        let description = getERPTechnologySectionValue(sections, erpProductFields.description || [], title);
+        let groupId = getERPTechnologySectionValue(sections, erpProductFields.group || [], '');
         let multiSeries = getERPProductMultiSeriesValue(itemPart, sections);
         let properties = [];
 
@@ -6638,9 +6696,9 @@
             id_grupy                      : groupId,
             jednostka_miary               : getERPTechnologyComponentUnitOfMeasure(itemPart, detailsData, elemItem),
             wlasnosci                     : addERPRequiredProductProperties(properties, multiSeries),
-            kontrola_serii                : 'T',
-            numery_seryjne                : 'WPD',
-            wersja_handlowa_edytowalna    : 'T'
+            kontrola_serii                : erpProductDefaults.serialControl || 'T',
+            numery_seryjne                : erpProductDefaults.serialNumbers || 'WPD',
+            edycja_wh                      : erpProductDefaults.commercialVersionEditable || 'T'
         };
     }
 
@@ -6749,7 +6807,7 @@
 
     function getERPTechnologyRevision(detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        let revision = getSectionFieldValue(sections, 'REVISION', '', null);
+        let revision = getERPTechnologySectionValue(sections, erpTechnologyFields.revision || [], '');
         if(typeof revision === 'string' && revision.trim() !== '') return revision.trim();
         if(detailsData && detailsData.workingVersion) return 'Working';
         if(detailsData && typeof detailsData.versionId !== 'undefined' && detailsData.versionId !== null) return String(detailsData.versionId);
@@ -6766,15 +6824,15 @@
 
     function buildERPTechnologyDescription(detailsData, part) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        let description = getERPTechnologySectionValue(sections, ['OPIS'], '');
+        let description = getERPTechnologySectionValue(sections, erpTechnologyFields.description || [], '');
         if(isBlank(description)) {
             description = getERPTechnologySectionValue(
                 sections,
-                ['TITLE'],
+                erpTechnologyFields.name || [],
                 (detailsData && detailsData.title) ? detailsData.title : ''
             );
         }
-        let technologyId = getERPTechnologySectionValue(sections, ['ID_TECHNOLOGI', 'id_technologi'], '');
+        let technologyId = getERPTechnologySectionValue(sections, erpTechnologyFields.technologyId || [], '');
 
         if(isBlank(technologyId) && part && part.details) {
             technologyId = getERPTechnologyPartDetailsValue(part, ['ID_TECHNOLOGI', 'id_technologi']);
@@ -7060,11 +7118,11 @@
                 alreadySynced
             );
             let payload = {
-                indeks          : normalizeERPTechnologyIndex(getERPTechnologySectionValue(sections, ['NUMBER'], '')),
-                nazwa_czesci    : getERPTechnologySectionValue(sections, ['NAZWA_DEFRO', 'TITLE'], detailsData.title || ''),
+                indeks          : normalizeERPTechnologyIndex(getERPTechnologySectionValue(sections, erpTechnologyFields.index || [], '')),
+                nazwa_czesci    : getERPTechnologySectionValue(sections, erpTechnologyFields.name || [], detailsData.title || ''),
                 opis            : buildERPTechnologyDescription(detailsData, itemPart),
                 rewizja         : getERPTechnologyRevision(detailsData),
-                czy_zatwierdzona: 'N',
+                czy_zatwierdzona: erpTechnologyDefaults.approved || 'N',
                 id_wersji       : technologyVersionId,
                 wlasnosci       : buildERPTechnologyProperties(detailsData),
                 operacje        : [],
@@ -7077,7 +7135,7 @@
             }
 
             if(alreadySynced) {
-                payload.zablokowana = 'N';
+                payload.zablokowana = erpTechnologyDefaults.locked || 'N';
             }
 
             payload.zalaczniki = getERPTechnologyAttachments(getERPTechnologyAttachmentItemLink(elemItem, itemPart, itemLink));
@@ -7158,7 +7216,9 @@
         let visited = new Set();
 
         jobs.forEach(function(job) {
-            if(!isBlank(job.payload.indeks)) jobsByIndex.set(job.payload.indeks, job);
+            getERPTechnologyJobIndexes(job).forEach(function(normalizedIndex) {
+                jobsByIndex.set(normalizedIndex, job);
+            });
         });
 
         function visit(job) {
@@ -7168,7 +7228,8 @@
             visiting.add(job.link);
 
             job.payload.struktura.forEach(function(structureRow) {
-                let dependency = jobsByIndex.get(structureRow.indeks_skladowy);
+                let dependencyIndex = normalizeERPTechnologyIndex(structureRow.indeks_skladowy);
+                let dependency = jobsByIndex.get(dependencyIndex);
                 if(dependency) visit(dependency);
             });
 
@@ -7177,7 +7238,14 @@
             ordered.push(job);
         }
 
-        jobs.forEach(visit);
+        let hierarchyOrder = jobs.map(function(job, originalIndex) {
+            return { job : job, originalIndex : originalIndex };
+        }).sort(function(left, right) {
+            let levelDifference = (Number(right.job.level) || 0) - (Number(left.job.level) || 0);
+            return levelDifference || left.originalIndex - right.originalIndex;
+        });
+
+        hierarchyOrder.forEach(function(entry) { visit(entry.job); });
 
         console.log('MBOM custom: ERP technology jobs ordered bottom-up', ordered.map(function(job, index) {
             return {
@@ -7420,25 +7488,21 @@
 
     function getERPSyncBOMUnitOfMeasure(part) {
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
-        return normalizeERPTechnologyUnitOfMeasure(getERPSyncBOMValue(part, [
-            fieldIds.unitOfMeasure,
-            fieldIds.uom,
-            'UNIT_OF_MEASURE',
-            'UOM',
-            'UNIT',
-            'BOM_UOM',
-            'ITEM_UOM'
-        ], ''));
+        return normalizeERPTechnologyUnitOfMeasure(getERPSyncBOMValue(
+            part,
+            [fieldIds.unitOfMeasure, fieldIds.uom].concat(erpProductFields.unit || []),
+            erpProductDefaults.unit || ''
+        ));
     }
 
     function buildERPSyncBOMProductPayload(part, assemblyIndex) {
         let mappings = assemblyIndex ? erpAssemblyIndexProductPropertyMappings : erpSubMBOMProductPropertyMappings;
-        let rawIndex = getERPSyncBOMValue(part, ['NUMBER'], part.partNumber || '');
-        let title = getERPSyncBOMValue(part, ['TITLE'], part.title || '');
-        let description = getERPSyncBOMValue(part, ['OPIS'], title);
-        let partName = getERPSyncBOMValue(part, ['NAZWA_DEFRO'], '');
-        let groupId = getERPSyncBOMValue(part, ['GRUPA_PRODUKTOWA'], assemblyIndex ? erpAssemblyIndexProductGroupId : '');
-        let multiSeries = getERPSyncBOMValue(part, ['WIELOSERYJNOSC'], false);
+        let rawIndex = getERPSyncBOMValue(part, erpProductFields.index || [], part.partNumber || '');
+        let title = getERPSyncBOMValue(part, erpProductFields.name || [], part.title || '');
+        let description = getERPSyncBOMValue(part, erpProductFields.description || [], title);
+        let partName = getERPSyncBOMValue(part, (erpProductFields.name || []).slice(0, 1), '');
+        let groupId = getERPSyncBOMValue(part, erpProductFields.group || [], assemblyIndex ? erpAssemblyIndexProductGroupId : '');
+        let multiSeries = getERPSyncBOMValue(part, erpProductFields.multiSeries || [], false);
         let properties = [];
 
         mappings.forEach(function(mapping) {
@@ -7466,9 +7530,9 @@
             id_grupy                      : groupId,
             jednostka_miary               : getERPSyncBOMUnitOfMeasure(part),
             wlasnosci                     : addERPRequiredProductProperties(properties, multiSeries),
-            kontrola_serii                : 'T',
-            numery_seryjne                : 'WPD',
-            wersja_handlowa_edytowalna    : 'T'
+            kontrola_serii                : erpProductDefaults.serialControl || 'T',
+            numery_seryjne                : erpProductDefaults.serialNumbers || 'WPD',
+            edycja_wh                      : erpProductDefaults.commercialVersionEditable || 'T'
         };
     }
 
@@ -7498,9 +7562,9 @@
 
     function getERPSyncBOMStatus(part) {
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
-        return String(getERPSyncBOMValue(part, [customERPFieldIDs.syncStatus], '') || '')
-            .trim()
-            .toUpperCase();
+        let status = String(getERPSyncBOMValue(part, [customERPFieldIDs.syncStatus], '') || '')
+            .trim().toUpperCase();
+        return isBlank(status) ? 'NOT_SYNCED' : status;
     }
 
     function buildERPHashInput(job) {
@@ -7558,28 +7622,35 @@
 
     function buildERPSyncBOMTechnologyJob(part, isMainRoot) {
         let operations = part.erpChildren.filter(isERPSyncBOMOperation);
-        if(operations.length === 0) return null;
+        if(!isERPSyncBOMManufacturing(part)) return null;
 
         let technologyVersionId = getERPSyncBOMVersionId(part);
         let productState = getERPSyncBOMProductState(part);
         let technologySynced = !isBlank(technologyVersionId);
         let assemblyIndex = isAssemblyIndexNode(part);
-        let rawIndex = getERPSyncBOMValue(part, ['NUMBER'], part.partNumber || '');
-        let description = getERPSyncBOMValue(part, ['OPIS'], getERPSyncBOMValue(part, ['TITLE'], part.title || ''));
-        let technologyId = getERPSyncBOMValue(part, ['ID_TECHNOLOGI'], '');
+        let rawIndex = getERPSyncBOMValue(part, erpTechnologyFields.index || [], part.partNumber || '');
+        let storedPartIndex = getERPSyncBOMValue(part, [customERPFieldIDs.partIndex], '');
+        let description = getERPSyncBOMValue(part, erpTechnologyFields.description || [], getERPSyncBOMValue(part, erpTechnologyFields.name || [], part.title || ''));
+        let technologyId = getERPSyncBOMValue(part, erpTechnologyFields.technologyId || [], '');
         let revision = getERPSyncBOMRevision(part);
         let revisionDescription = isBlank(revision) ? '' : 'Rewizja: ' + revision;
+        let requiredChildTechnologyIndexes = [];
         let payload = {
             indeks          : normalizeERPTechnologyIndex(rawIndex),
-            nazwa_czesci    : getERPSyncBOMValue(part, ['NAZWA_DEFRO', 'TITLE'], part.title || ''),
+            nazwa_czesci    : getERPSyncBOMValue(part, erpTechnologyFields.name || [], part.title || ''),
             opis            : [description, technologyId, revisionDescription].filter(function(value) { return !isBlank(value); }).join(' | '),
             rewizja         : revision,
-            czy_zatwierdzona: 'N',
+            czy_zatwierdzona: erpTechnologyDefaults.approved || 'N',
             wlasnosci       : [],
             operacje        : [],
             struktura       : [],
             zalaczniki      : getERPTechnologyAttachments(part.link)
         };
+
+        if(!isBlank(technologyVersionId)) {
+            payload.id_wersji = technologyVersionId;
+            payload.zablokowana = erpTechnologyDefaults.locked || 'N';
+        }
 
 
         erpTechnologyPropertyMappings.forEach(function(mapping) {
@@ -7605,14 +7676,18 @@
                 let componentIndex = getERPSyncBOMValue(component, [customERPFieldIDs.partIndex, fieldIds.number, 'NUMBER'], component.partNumber || '');
                 let type = String(getERPSyncBOMValue(component, [fieldIds.type, 'TYPE'], '')).trim().toLowerCase();
                 let componentVersionId = getERPSyncBOMVersionId(component);
+                let normalizedComponentIndex = normalizeERPTechnologyIndex(componentIndex);
                 let structureRow = {
                     numer_operacji  : processNumber,
-                    indeks_skladowy : normalizeERPTechnologyIndex(componentIndex),
+                    indeks_skladowy : normalizedComponentIndex,
                     rewizja         : type === 'manufacturing' ? getERPSyncBOMRevision(component) : '',
                     ilosc_stala     : 0,
                     ilosc_jednostek : Number(component.quantity) || 1,
                     jednostka_miary : getERPSyncBOMUnitOfMeasure(component)
                 };
+                if(type === 'manufacturing' && !requiredChildTechnologyIndexes.includes(normalizedComponentIndex)) {
+                    requiredChildTechnologyIndexes.push(normalizedComponentIndex);
+                }
                 if(!isBlank(componentVersionId)) structureRow.id_wersji_skladowej = componentVersionId;
                 payload.struktura.push(structureRow);
             });
@@ -7628,6 +7703,8 @@
             descriptor        : part.title || rawIndex,
             level             : Number(part.level) || 0,
             synced            : technologySynced,
+            technologyVersionId: technologyVersionId,
+            technologyIndexAliases: [rawIndex, storedPartIndex],
             isMainRoot        : isMainRoot,
             isAssemblyIndex   : assemblyIndex,
             productRequired   : !productState.productExists,
@@ -7636,6 +7713,7 @@
             productSourceLink : part.link,
             productIndexToCopy: '',
             productUpdateMode : productState.updateMode,
+            requiredChildTechnologyIndexes: requiredChildTechnologyIndexes,
             payload           : payload,
             storedERPHash     : getERPSyncBOMStoredHash(part),
             erpSyncStatus     : getERPSyncBOMStatus(part)
@@ -7678,7 +7756,7 @@
             let technologyJobs = parts.map(function(part, index) {
                 return buildERPSyncBOMTechnologyJob(part, index === 0);
             }).filter(function(job) {
-                return !!job && !!job.payload && !isBlank(job.payload.indeks) && job.payload.operacje.length > 0;
+                return !!job && !!job.payload && !isBlank(job.payload.indeks);
             });
 
             let componentWarnings = productJobs.filter(function(job) {
@@ -7791,7 +7869,7 @@
                 error      : String(error && error.message ? error.message : error || ''),
                 komponenty : error && error.erpComponentWarnings ? error.erpComponentWarnings : undefined
             }, true);
-        }).finally(function() {
+        }).always(function() {
             elemButton.removeClass('disabled').text('Podgląd JSON technologii');
         });
     }
@@ -8286,13 +8364,30 @@
             let chain = Promise.resolve();
             let completedJobs = 0;
             let allProductsReady = true;
+            let versionByIndex = {};
+
+            jobs.forEach(function(job) {
+                if(!job || job.jobType !== 'technology' || !job.payload) return;
+                rememberERPTechnologyJobVersion(
+                    versionByIndex,
+                    job,
+                    job.technologyVersionId || job.payload.id_wersji,
+                    false
+                );
+            });
 
             jobs.forEach(function(job, index) {
                 chain = chain.then(function() {
                     // The PLM payload was already built during the bounded parallel
                     // discovery phase. Reuse it so ERP requests stay sequential
                     // without repeating all PLM detail and structure reads.
-                    return Promise.resolve(job).then(function(currentJob) {
+                    if(job && job.jobType === 'technology') {
+                        let versionChanged = applyERPChildTechnologyVersions(job, versionByIndex);
+                        validateERPChildTechnologyVersions(job);
+                        if(versionChanged) return calculateERPHash(job);
+                    }
+                    return Promise.resolve(job);
+                }).then(function(currentJob) {
                         if(currentJob && currentJob.jobType === 'product') {
                             return ensureERPProductPrerequisite(currentJob, testRun, results).then(function(productReady) {
                                 if(!productReady) allProductsReady = false;
@@ -8312,7 +8407,7 @@
                             return null;
                         }
 
-                        if(!currentJob || !currentJob.payload || isBlank(currentJob.payload.indeks) || !Array.isArray(currentJob.payload.operacje) || currentJob.payload.operacje.length === 0) {
+                        if(!currentJob || !currentJob.payload || isBlank(currentJob.payload.indeks) || !Array.isArray(currentJob.payload.operacje)) {
                             results.push({
                                 order      : results.length + 1,
                                 callName   : 'skipped',
@@ -8350,6 +8445,13 @@
                                 let status = Number(response && response.status);
                                 let success = !!response && !response.error && status === 200;
                                 let erpResponseBody = response && response.data ? response.data.body : null;
+                                let newVersionId = getERPTechnologyResponseVersionId(erpResponseBody);
+                                if(success && testRun && isBlank(newVersionId)) {
+                                    newVersionId = getERPTechnologyTestVersionPlaceholder(currentJob);
+                                }
+                                if(success && !isBlank(newVersionId)) {
+                                    rememberERPTechnologyJobVersion(versionByIndex, currentJob, newVersionId, testRun);
+                                }
                                 console.log('MBOM custom: ERP technology raw response payload', {
                                     callName        : callName,
                                     status          : status,
@@ -8381,6 +8483,7 @@
                                     responseDump: response && response.data ? response.data.dumpUrl : '',
                                     flagUpdated : flagUpdated,
                                     erpHash     : currentJob.erpHash || '',
+                                    erpVersionId: newVersionId,
                                     error       : success ? '' : ((response && response.message) || 'ERP technology request did not return status 200.')
                                     });
                                 });
@@ -8395,8 +8498,7 @@
                             success    : false,
                             error      : String(error || '')
                         });
-                    });
-                }).then(function() {
+                    }).then(function() {
                     completedJobs++;
                     updateERPSyncSendingProgress(completedJobs, totalJobs);
                 });
@@ -8424,7 +8526,7 @@
                 komponenty : error && error.erpComponentWarnings ? error.erpComponentWarnings : undefined
             }, true);
             completeERPSyncProgressDialog(totalJobs, true);
-        }).finally(function() {
+        }).always(function() {
             elemButton.removeClass('disabled').text('Synchronizuj technologię z ERP');
         });
     }
@@ -8438,14 +8540,78 @@
         return isBlank(value) || Number.isNaN(number) ? '' : Math.trunc(number);
     }
 
+    function rememberERPTechnologyVersion(versionByIndex, index, versionId) {
+        let normalizedIndex = normalizeERPTechnologyIndex(index);
+        let normalizedVersionId = Number(versionId);
+        if(isBlank(normalizedIndex) || isBlank(versionId) || Number.isNaN(normalizedVersionId)) return false;
+        versionByIndex[normalizedIndex] = Math.trunc(normalizedVersionId);
+        return true;
+    }
+
+    function getERPTechnologyJobIndexes(job) {
+        if(!job) return [];
+        let indexes = [];
+        if(job.payload) indexes.push(job.payload.indeks);
+        if(Array.isArray(job.technologyIndexAliases)) indexes = indexes.concat(job.technologyIndexAliases);
+
+        return indexes.map(normalizeERPTechnologyIndex).filter(function(index, position, values) {
+            return !isBlank(index) && values.indexOf(index) === position;
+        });
+    }
+
+    function rememberERPTechnologyJobVersion(versionByIndex, job, versionId, allowPlaceholder) {
+        if(isBlank(versionId)) return false;
+
+        let numericVersionId = Number(versionId);
+        let storedVersionId = Number.isNaN(numericVersionId)
+            ? (allowPlaceholder ? String(versionId) : '')
+            : Math.trunc(numericVersionId);
+        if(isBlank(storedVersionId)) return false;
+
+        let remembered = false;
+        getERPTechnologyJobIndexes(job).forEach(function(index) {
+            versionByIndex[index] = storedVersionId;
+            remembered = true;
+        });
+        return remembered;
+    }
+
+    function getERPTechnologyTestVersionPlaceholder(job) {
+        let indexes = getERPTechnologyJobIndexes(job);
+        let payloadIndex = normalizeERPTechnologyIndex(job && job.payload ? job.payload.indeks : '');
+        let dependencyIndex = indexes.find(function(index) { return index !== payloadIndex; }) || payloadIndex || 'sub-mBOM';
+        return '{{id_wersji_z_ERP:' + dependencyIndex + '}}';
+    }
+
     function applyERPChildTechnologyVersions(job, versionByIndex) {
-        if(!job || !job.payload || !Array.isArray(job.payload.struktura)) return;
+        if(!job || !job.payload || !Array.isArray(job.payload.struktura)) return false;
+        let changed = false;
         job.payload.struktura.forEach(function(row) {
-            let index = String(row.indeks_skladowy || '');
+            let index = normalizeERPTechnologyIndex(row.indeks_skladowy);
             if(Object.prototype.hasOwnProperty.call(versionByIndex, index)) {
+                if(row.id_wersji_skladowej !== versionByIndex[index]) changed = true;
                 row.id_wersji_skladowej = versionByIndex[index];
             }
         });
+        return changed;
+    }
+
+    function validateERPChildTechnologyVersions(job) {
+        if(!job || !job.payload || !Array.isArray(job.payload.struktura)) return true;
+        let requiredIndexes = new Set((job.requiredChildTechnologyIndexes || []).map(normalizeERPTechnologyIndex));
+        if(requiredIndexes.size === 0) return true;
+
+        let missingIndexes = [];
+        job.payload.struktura.forEach(function(row) {
+            let index = normalizeERPTechnologyIndex(row.indeks_skladowy);
+            if(requiredIndexes.has(index) && isBlank(row.id_wersji_skladowej) && !missingIndexes.includes(index)) {
+                missingIndexes.push(index);
+            }
+        });
+        if(missingIndexes.length > 0) {
+            throw new Error('Brak id_wersji dla sub-mBOM: ' + missingIndexes.join(', ') + '. Technologia nadrzędna nie zostanie wysłana.');
+        }
+        return true;
     }
 
     function sendReleasedMBOMTechnologiesToERP(onProgress) {
@@ -8463,6 +8629,7 @@
             jobs.forEach(function(job, index) {
                 chain = chain.then(function() {
                     applyERPChildTechnologyVersions(job, versionByIndex);
+                    validateERPChildTechnologyVersions(job);
                     return calculateERPHash(job);
                 }).then(function(currentJob) {
                     if(currentJob && currentJob.jobType === 'product') {
@@ -8493,7 +8660,7 @@
                                 if(!updated) throw new Error('Nie udało się zapisać wyniku synchronizacji ERP w PLM dla „' + currentJob.descriptor + '”.');
 
                                 let newVersionId = getERPTechnologyResponseVersionId(responseBody);
-                                if(!isBlank(newVersionId)) versionByIndex[String(currentJob.payload.indeks || '')] = newVersionId;
+                                rememberERPTechnologyJobVersion(versionByIndex, currentJob, newVersionId, false);
 
                                 results.push({
                                     order       : results.length + 1,
@@ -8573,10 +8740,43 @@
         setERPStatusHtml(title, '<pre>' + escapeERPStatusHtml(text) + '</pre>', isError);
     }
 
+    function getERPTechnologyResultSummary(results) {
+        let summary = {
+            addProduct    : 0,
+            modifyProduct : 0,
+            technology    : 0,
+            success       : 0,
+            failed        : 0
+        };
+
+        (Array.isArray(results) ? results : []).forEach(function(result) {
+            if(!result || !result.success) {
+                summary.failed++;
+                return;
+            }
+
+            summary.success++;
+            if(result.callName === 'add-product') summary.addProduct++;
+            else if(result.callName === 'modify-product') summary.modifyProduct++;
+            else if(result.callName === 'add-technology') summary.technology++;
+        });
+
+        return summary;
+    }
+
     function renderERPTechnologySyncResults(title, results, isError, testRun) {
-        let successCount = results.filter(function(result) { return result.success; }).length;
-        let failedCount = results.length - successCount;
+        let summary = getERPTechnologyResultSummary(results);
+        let actionLabel = testRun ? 'Wyeksportowane żądania' : 'Wysłane do ERP';
         let html = '<div class="erp-status-run">';
+
+        html += '<div class="erp-status-line"><strong>PODSUMOWANIE</strong></div>';
+        html += '<div class="erp-status-line">' + actionLabel + ' — add-product: <strong>' + summary.addProduct + '</strong></div>';
+        html += '<div class="erp-status-line">' + actionLabel + ' — modify-product: <strong>' + summary.modifyProduct + '</strong></div>';
+        html += '<div class="erp-status-line">' + actionLabel + ' — add-technology: <strong>' + summary.technology + '</strong></div>';
+        html += '<div class="erp-status-line">Łącznie zakończone powodzeniem: <strong>' + summary.success + '</strong></div>';
+        html += '<div class="erp-status-line' + (summary.failed > 0 ? ' error' : '') + '">Błędy: <strong>' + summary.failed + '</strong></div>';
+        html += '<div class="erp-status-line">&nbsp;</div>';
+        html += '<div class="erp-status-line"><strong>SZCZEGÓŁY</strong></div>';
 
         results.forEach(function(result) {
             let descriptor = escapeERPStatusHtml(result.descriptor || result.indeks || '');
@@ -8612,9 +8812,6 @@
             html += '<div class="erp-status-line">&nbsp;</div>';
         });
 
-        html += '<div class="erp-status-line"><strong>PODSUMOWANIE</strong></div>';
-        html += '<div class="erp-status-line">Operacje zakończone powodzeniem: ' + successCount + '</div>';
-        html += '<div class="erp-status-line">Operacje zakończone błędem: ' + failedCount + '</div>';
         html += '</div>';
 
         setERPStatusHtml(title, html, isError);
@@ -9917,11 +10114,18 @@
 
             let source = elemAction.closest('.item');
             let linkedMBOM = getLinkedMBOMLinkFromEBOMElement(source);
-            if(isBlank(linkedMBOM) || isMBOMViewingMode()) {
+            let isNewlyCreatedMBOM = source.attr('data-new-linked-mbom') === 'true';
+            if(isBlank(linkedMBOM) || isMBOMViewingMode() || isNewlyCreatedMBOM) {
                 let result = isBlank(linkedMBOM)
                     ? originalInsertFromEBOMToMBOM.apply(this, arguments)
                     : insertLinkedMBOMWithoutEBOMChildren(elemAction, originalInsertFromEBOMToMBOM);
                 refreshNewLinkedMBOMControls();
+                if(isNewlyCreatedMBOM) {
+                    source.removeAttr('data-new-linked-mbom');
+                    let elemInserted = findRenderedMBOMItemByLink(linkedMBOM);
+                    completeLinkedEBOMBOMCheckForMBOM(elemInserted);
+                    refreshMissingLinkedMBOMStatus();
+                }
                 return result;
             }
 
@@ -12383,9 +12587,9 @@
         if(isBlank(value)) return value;
 
         let name = String(value).trim();
-        let suffix = (typeof config !== 'undefined' && !isBlank(config.suffixMBOMNumber))
-            ? String(config.suffixMBOMNumber) : '-M';
-        if(isBlank(suffix)) suffix = '-M';
+        let suffix = (typeof config !== 'undefined' && !isBlank(config.suffixMBOMName))
+            ? String(config.suffixMBOMName) : ' - Technologia';
+        if(isBlank(suffix)) suffix = ' - Technologia';
 
         return name.toLowerCase().endsWith(suffix.toLowerCase()) ? name : name + suffix;
     }
@@ -12485,8 +12689,17 @@
                     let preservedEBOMBranch = elemConvertedEBOM.children('.item-bom').first().detach();
 
                     links.mbom = createdLink;
-                    storeMBOMLink(ebomItemDetails.__self__);
-                    storeContextMBOMLink();
+                    let linkSave = storeMBOMLink(ebomItemDetails.__self__);
+                    let contextLinkSave = storeContextMBOMLink();
+
+                    // The stock conversion callback inserts the row immediately. Give it the
+                    // newly created mBOM identity first and skip the versions lookup: a new item
+                    // is already the working version and may not yet be visible in /versions.
+                    elemConvertedEBOM
+                        .attr('data-mbom', createdLink)
+                        .attr('data-link-mbom', createdLink)
+                        .attr('data-linked-mbom', createdLink)
+                        .attr('data-new-linked-mbom', 'true');
                     if(typeof callback === 'function') callback(links.mbom);
 
                     if(elemConvertedEBOM.length > 0 && preservedEBOMBranch.length > 0) {
@@ -12506,10 +12719,23 @@
                         insertEBOMActions(elemHead, false);
                         removeEBOMMBOMNavigationButtons(elemConvertedEBOM);
                         addLinkedMBOMMarker(elemConvertedEBOM, createdLink);
-
-                        setTotalQuantities();
-                        setStatusBar();
                     }
+
+                    // The callback has now cloned the row into the selected operation.
+                    // Recalculate both sides immediately, including leaf Make items for
+                    // which there is no preserved engineering branch.
+                    refreshNewLinkedMBOMControls();
+                    refreshMissingLinkedMBOMStatus();
+                    setTotalQuantities();
+                    setStatusBar();
+                    setStatusBarFilter();
+
+                    return Promise.all([
+                        Promise.resolve(linkSave),
+                        Promise.resolve(contextLinkSave)
+                    ]).catch(function(error) {
+                        console.warn('MBOM custom: the new mBOM was inserted, but its link could not be persisted.', error);
+                    });
                 }
             });
 

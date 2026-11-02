@@ -118,6 +118,7 @@ router.get('/variants'      , function(req, res, next) { launch('apps/variants' 
     ADMINISTRATION UTILITIES
    ------------------------------------------------------------------------------ */
 router.get('/data'            , function(req, res, next) { launch('admin/data'            , ''        , 'Data Manager'             , req, res, next); });
+router.get('/itemmgr'         , function(req, res, next) { launch('admin/data'            , ''        , 'Item Manager'             , req, res, next, 'itemmgr'); });
 router.get('/insights'        , function(req, res, next) { launch('admin/insights'        , 'insights', 'Tenant Insights Dashboard', req, res, next); });
 router.get('/outstanding-work', function(req, res, next) { launch('admin/outstanding-work', ''        , 'Outstanding Work Report'  , req, res, next); });
 router.get('/shortcuts'       , function(req, res, next) { launch('admin/shortcuts'       , ''        , 'Admin Shortcuts Panel'    , req, res, next); });
@@ -181,9 +182,9 @@ router.get('/worklist'     , function(req, res, next) { launch('dev/worklist'   
 /* ------------------------------------------------------------------------------
     LAUNCH APPLICATION
    ------------------------------------------------------------------------------ */
-function launch(appURL, appSettings, appTitle, req, res) {
+function launch(appURL, appSettings, appTitle, req, res, next, serviceName) {
 
-    if(isServiceDisabled(appURL, req, res)) return;
+    if(isServiceDisabled(serviceName || appURL, req, res)) return;
 
     let redirect = false;
     let refresh  = false;

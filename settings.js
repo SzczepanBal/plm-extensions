@@ -667,6 +667,7 @@ exports.applications = {
         labelInsertNode       : 'Add Process',
         pinEBOMItemsInMBOM    : true,
         suffixMBOMNumber      : '-M',
+        suffixMBOMName        : ' - Technologia',
 
         predefinedSearchesInAddItems : [
             { title : 'Purchased Parts', query : 'ITEM_DETAILS:MAKE_OR_BUY%3DBuy' },
@@ -1389,6 +1390,11 @@ exports.menu = [
             subtitle : 'Automate data processing tasks',
             url      : '/data'
         },{
+            icon     : 'icon-edit',
+            title    : 'Item Manager',
+            subtitle : 'Manage and update Items workspace records',
+            url      : '/itemmgr'
+        },{
             icon     : 'icon-rules',
             title    : 'Tenant Comparison',
             subtitle : 'Deploy changes securely with automated comparison',
@@ -1452,6 +1458,7 @@ exports.server = {
         // Administration Utitliies
         comparison         : true,  // Tenant Comparison
         data               : true,  // Data Manager
+        itemmgr            : true,  // Item Manager
         insights           : true,  // Tenant Insights
         'outstanding-work' : true,  // Outstanding Works Report
         shortcuts          : true,  // Administration Shortcuts
@@ -1501,23 +1508,29 @@ exports.chrome = {
         icon  : 'zmdi-storage',
         order : 102
     },{
+        id    : 'itemmgr',
+        url   : '/itemmgr',
+        label : 'Item Manager',
+        icon  : 'zmdi-edit',
+        order : 103
+    },{
         id    : 'workspace-comparison',
         url   : '/workspace-comparison',
         label : 'Workspace Comparison',
         icon  : 'zmdi-blur-linear',
-        order : 103
+        order : 104
     },{   
         id    : 'insights',
         url   : '/insights',
         label : 'Tenant Insights',
         icon  : 'zmdi-graphic-eq',
-        order : 104
+        order : 105
     },{
         id    : 'outstanding-work',
         url   : '/outstanding-work',
         label : 'Outstanding Work Report',
         icon  : 'zmdi-assignment-account',
-        order : 105 
+        order : 106
     }],  
     buttons : [{
         id         : 'cia',

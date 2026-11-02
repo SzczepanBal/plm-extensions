@@ -5,6 +5,27 @@ let run              = {};
 let records          = null;
 const erpQuickReleaseWorkspaceId = 78;
 const erpFieldIDs = common.erp.fieldIDs;
+const itemManagerMode = /^\/itemmgr\/?$/i.test(window.location.pathname);
+const erpCentralMapping = common.erp.mapping || { operations : {} };
+
+function getERPOperationMapping(operationName) {
+
+    let operation = erpCentralMapping.operations[operationName] || {};
+    if(isBlank(operation.extends)) return operation;
+
+    let base = erpCentralMapping.operations[operation.extends] || {};
+    return Object.assign({}, base, operation, {
+        fields           : Object.assign({}, base.fields || {}, operation.fields || {}),
+        defaults         : Object.assign({}, base.defaults || {}, operation.defaults || {}),
+        propertyProfiles : Object.assign({}, base.propertyProfiles || {}, operation.propertyProfiles || {})
+    });
+
+}
+
+const erpAddProductMapping = getERPOperationMapping('addProduct');
+const erpModifyProductMapping = getERPOperationMapping('modifyProduct');
+const erpProductFields = erpAddProductMapping.fields || {};
+const erpProductDefaults = erpAddProductMapping.defaults || {};
 
 
 // let actions = [
@@ -16,6 +37,7 @@ $(document).ready(function() {
 
     setUIEvents();
     insertMenu();
+    if(itemManagerMode) $('.item-manager-only').removeClass('hidden');
 
     validateSystemAdminAccess(function(isAdmin) {
 
@@ -178,11 +200,20 @@ function setUIEvents() {
 // During startup retrieve all workspaces and users
 function setWorkspaces(response) {
 
-    sortArray(response.data.items, 'title');
+    let workspaces = response.data.items;
+
+    if(itemManagerMode) {
+        let itemsWorkspaceId = String(common.workspaceIds.items);
+        workspaces = workspaces.filter(function(workspace) {
+            return String(workspace.link).split('/').pop() === itemsWorkspaceId;
+        });
+    }
+
+    sortArray(workspaces, 'title');
 
     let elemSelect = $('#workspace');
 
-    for(let workspace of response.data.items) {
+    for(let workspace of workspaces) {
 
         $('<option></option>').appendTo(elemSelect)    
             .html(workspace.title)
@@ -190,7 +221,8 @@ function setWorkspaces(response) {
 
     }
 
-    updatefilters();
+    if(workspaces.length > 0) updatefilters();
+    else addLogEntry('The configured Items workspace is not available.', 'error');
 
 }
 function setUserSelectors(response) {
@@ -1116,6 +1148,7 @@ function startProcessing() {
     run.storage      = '';
     run.prev         = {};
     run.erpSyncCandidates = [];
+    run.erpResendCandidates = [];
     run.erpQuickReleaseLink = '';
     run.erpWorkflowFinishing = false;
 
@@ -1205,7 +1238,14 @@ function getNextRecords() {
             setRecordsData(response);
 
             if(records.length === 0) {
-                if(run.actionId === 'release-sync-to-erp' && !options.testRun && !run.erpWorkflowFinishing) {
+                if(run.actionId === 'resend-to-erp' && !options.testRun && !run.erpWorkflowFinishing) {
+                    run.erpWorkflowFinishing = true;
+                    finishERPResendWorkflows().catch(function(error) {
+                        addLogEntry('Ponowne przesyłanie do ERP nie powiodło się: ' + getDataManagerErrorMessage(error), 'error');
+                    }).then(function() {
+                        endProcessing();
+                    });
+                } else if(run.actionId === 'release-sync-to-erp' && !options.testRun && !run.erpWorkflowFinishing) {
                     run.erpWorkflowFinishing = true;
                     finishERPQuickReleaseWorkflow().catch(function(error) {
                         addLogEntry('Synchronizacja ERP nie powiodła się: ' + getDataManagerErrorMessage(error), 'error');
@@ -1372,6 +1412,8 @@ function genRequests(limit) {
 
             if(options.testRun && ['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) {
                 requests.push($.get('/plm/details', params));
+            } else if(options.testRun && run.actionId === 'resend-to-erp') {
+                requests.push(getERPResendCandidateRequest(record, params, true));
             }
 
         } else {
@@ -1423,6 +1465,10 @@ function genRequests(limit) {
             } else if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) {
 
                 requests.push($.get('/plm/details', params));
+
+            } else if(run.actionId === 'resend-to-erp') {
+
+                requests.push(getERPResendCandidateRequest(record, params, false));
 
             } else if(run.actionId === 'clear-field') {
 
@@ -1602,35 +1648,9 @@ function addERPProperty(properties, sections, fieldId, propertyName, includeWhen
     addERPPropertyValue(properties, propertyName, getERPFieldValue(sections, fieldId), includeWhenBlank);
 
 }
-const erpPropertyMappings = [
-    ['MATERIAL'    , 'Materiał'],
-    ['ITEM_WEIGHT' , 'Masa'],
-    ['OPIS'        , 'Opis'],
-    ['NAZWA'       , 'Nazwa'],
-    ['TITLE'       , 'Tytuł'],
-    ['TITLE'       , 'Tutuł'],
-    ['GRUPA_PRODUKTOWA', 'Grupa produktowa'],
-    ['NAZWA_URZDZENIA', 'Nazwa urządzenia'],
-    ['TYP_CZESCI'  , 'Typ części'],
-    ['RODZAJ'      , 'Rodzaj'],
-    ['WARIANT'     , 'Wariant'],
-    ['SPECYFIKACJA', 'Specyfikacja'],
-    ['PRODUCENT'   , 'Producent'],
-    ['SZEROKOSC'   , 'Szerokość'],
-    ['DUGOSC'      , 'Długość'],
-    ['WYSOKOSC'    , 'Wysokość/grubość'],
-    ['SREDNICA'    , 'Średnica'],
-    ['KOLOR'       , 'Kolor'],
-    ['POWLOKA'     , 'Powłoka'],
-    ['MOC'         , 'Moc'],
-    ['MOC_WIELKOSC', 'Moc/Wielkość'],
-    ['NAPICIE'     , 'Napięcie'],
-    ['PRD'         , 'Prąd'],
-    ['WYDAJNO'     , 'Wydajność'],
-    ['TEMPERATURA' , 'Temperatura'],
-    ['GSTO'        , 'Gęstość'],
-    ['UWAGI'       , 'Uwagi']
-];
+const erpPropertyMappings = ((erpAddProductMapping.propertyProfiles || {}).default || []).map(function(mapping) {
+    return [mapping.plm || [], mapping.erp, mapping.includeWhenBlank === true];
+});
 function normalizeERPUnitOfMeasureValue(value) {
 
     if(isBlank(value)) return 'szt';
@@ -1685,20 +1705,14 @@ function normalizeERPUnitOfMeasureValue(value) {
 }
 function getERPUnitOfMeasure(sections) {
 
-    let candidateIds = [
-        'UNIT_OF_MEASURE',
-        'UOM',
-        'UNIT',
-        'BOM_UOM',
-        'ITEM_UOM'
-    ];
+    let candidateIds = erpProductFields.unit || [];
 
     for(let fieldId of candidateIds) {
         let value = getERPFieldValue(sections, fieldId);
         if(!isBlank(value)) return normalizeERPUnitOfMeasureValue(value);
     }
 
-    return 'szt';
+    return erpProductDefaults.unit || 'szt';
 
 }
 function buildERPSyncPayload(details, erpCallName) {
@@ -1706,11 +1720,18 @@ function buildERPSyncPayload(details, erpCallName) {
     let sections   = (details && details.sections) ? details.sections : [];
     let properties = [];
     let payload = {};
-    let partNumber = getERPFieldValue(sections, 'NUMBER');
-    let description = getERPFieldValue(sections, 'OPIS');
-    let defroName = getERPFieldValue(sections, 'NAZWA_DEFRO');
-    let partName = defroName || getERPFieldValue(sections, 'TITLE') || partNumber;
-    let makeOrBuy = getERPFieldValue(sections, 'MAKE_OR_BUY');
+    let getMappedValue = function(candidates) {
+        for(let fieldId of (candidates || [])) {
+            let value = getERPFieldValue(sections, fieldId);
+            if(!isBlank(value)) return value;
+        }
+        return '';
+    };
+    let partNumber = getMappedValue(erpProductFields.index);
+    let description = getMappedValue(erpProductFields.description);
+    let defroName = getERPFieldValue(sections, (erpProductFields.name || [])[0]);
+    let partName = getMappedValue(erpProductFields.name) || partNumber;
+    let makeOrBuy = getMappedValue(erpProductFields.makeOrBuy);
     let isBuy = String(makeOrBuy || '').trim().toLowerCase() === 'buy';
     let nameDescription = isBlank(description)
         ? ''
@@ -1722,25 +1743,27 @@ function buildERPSyncPayload(details, erpCallName) {
         }).join(' - ') || partName);
 
     for(let mapping of erpPropertyMappings) {
-        addERPProperty(properties, sections, mapping[0], mapping[1]);
+        let value = getMappedValue(Array.isArray(mapping[0]) ? mapping[0] : [mapping[0]]);
+        addERPPropertyValue(properties, mapping[1], value, mapping[2]);
     }
 
-    let multiSeries = normalizeERPBooleanValue(getSectionFieldValue(sections, 'WIELOSERYJNOSC', false, null));
+    let multiSeries = normalizeERPBooleanValue(getMappedValue(erpProductFields.multiSeries));
     addERPPropertyValue(properties, 'Wieloseryjność', multiSeries ? '2' : '1');
 
     payload = {
         indeks                        : partNumber,
         nazwa_czesci                  : erpPartName,
-        id_grupy                      : getERPFieldValue(sections, 'GRUPA_PRODUKTOWA'),
+        id_grupy                      : getMappedValue(erpProductFields.group),
         jednostka_miary               : getERPUnitOfMeasure(sections),
-        kontrola_serii                : 'T',
-        numery_seryjne                : 'WPD',
-        wersja_handlowa_edytowalna    : 'T',
+        kontrola_serii                : erpProductDefaults.serialControl || 'T',
+        numery_seryjne                : erpProductDefaults.serialNumbers || 'WPD',
+        edycja_wh                      : erpProductDefaults.commercialVersionEditable || 'T',
         wlasnosci                     : properties
     };
 
     if(erpCallName === 'modify-product') {
-        payload.indeks_czesci = getERPFieldValue(sections, erpFieldIDs.partIndex);
+        let modifyFields = erpModifyProductMapping.fields || erpProductFields;
+        payload.indeks_czesci = getMappedValue([erpFieldIDs.partIndex].concat(modifyFields.partIndex || []));
         if(isBlank(payload.indeks_czesci)) payload.indeks_czesci = payload.indeks;
     }
 
@@ -2035,7 +2058,7 @@ function genCompletionRequests(limit, responses) {
 
                     success = false;
 
-                    let urlBase = document.location.href.split('/data')[0];
+                    let urlBase = window.location.origin;
                     let link    = urlBase + '/storage/' + run.params.path + '/__failed/' + record;
 
                     addLogEntry('Error while processing file <a target="_blank" href="' + link + '">' + record + '</a>', 'error');
@@ -2091,7 +2114,8 @@ function genCompletionRequests(limit, responses) {
         if(success) {
             
             let erpDeferred = run.actionId === 'release-sync-to-erp' && erpResponse && erpResponse.erpDeferred;
-            if(!erpDeferred) run.success++;
+            let erpResendDeferred = run.actionId === 'resend-to-erp';
+            if(!erpDeferred && (!erpResendDeferred || options.testRun)) run.success++;
 
             if(['sync-to-erp', 'release-sync-to-erp'].includes(run.actionId)) {
                 if(erpDeferred) {
@@ -2110,6 +2134,13 @@ function genCompletionRequests(limit, responses) {
                         addLogEntry('Przewidywany wynik onEdit: ERP_SYNC_STATUS = UP_TO_DATE, ERP_SYNC_DATE = bieżąca data i czas.', 'indent');
                         addLogEntry('Tryb testowy nie zmienił żadnych pól w PLM.', 'indent');
                     }
+                }
+            } else if(run.actionId === 'resend-to-erp') {
+                let resendResponse = responses.find(function(response) {
+                    return response && response.params && response.params.link === record.link;
+                });
+                if(resendResponse && resendResponse.erpResendDeferred) {
+                    addLogEntry((options.testRun ? 'Można przesłać ponownie: ' : 'Przygotowano do ponownego przesłania: ') + '<a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a> przez Quick Release <a target="_blank" href="' + genItemURL({ link : resendResponse.releaseLink }) + '">' + resendResponse.releaseLink + '</a>.', 'notice');
                 }
             }
 
@@ -2468,6 +2499,57 @@ function performERPQuickReleaseTransition(releaseLink, transitionId, comment) {
     });
 
 }
+function findERPResendQuickRelease(changes) {
+
+    let matches = (changes || []).filter(function(process) {
+        let processLink = getERPQuickReleaseItemLink(process && process.item ? process.item.link : '');
+        let workspaceId = String(processLink).split('/')[4] || '';
+        let state = getERPQuickReleaseWorkflowState(process);
+        return workspaceId === String(erpQuickReleaseWorkspaceId) && state.id === '638';
+    });
+
+    if(matches.length === 0) {
+        throw new Error('Nie znaleziono powiązanego Quick Release z workspace 78 w stanie 638 (ERP Integration Issue).');
+    }
+    if(matches.length > 1) {
+        throw new Error('Znaleziono więcej niż jeden Quick Release z workspace 78 w stanie 638 (ERP Integration Issue).');
+    }
+
+    return getERPQuickReleaseItemLink(matches[0].item.link);
+
+}
+function getERPResendCandidateRequest(record, params, testRun) {
+
+    return $.get('/plm/changes', { link : record.link, useCache : false }).then(function(response) {
+        if(!response || response.error || !Array.isArray(response.data)) {
+            throw new Error('Nie udało się wczytać procesów zmian powiązanych z elementem. ' + getDataManagerErrorMessage(response));
+        }
+
+        let releaseLink = findERPResendQuickRelease(response.data);
+        if(!testRun) {
+            run.erpResendCandidates.push({
+                link        : record.link,
+                descriptor  : record.descriptor,
+                releaseLink : releaseLink
+            });
+        }
+
+        return {
+            url               : '',
+            params            : params,
+            releaseLink       : releaseLink,
+            erpResendDeferred : true
+        };
+    }).catch(function(error) {
+        return {
+            url     : '',
+            params  : params,
+            error   : true,
+            message : getDataManagerErrorMessage(error)
+        };
+    });
+
+}
 function getERPQuickReleaseWorkflowState(data) {
 
     let state = data && (data.currentState || data.workflowState || data['workflow-state']);
@@ -2671,6 +2753,88 @@ function finishERPQuickReleaseWorkflow() {
             error.failureTransitionError = transitionError;
             throw error;
         });
+    });
+
+}
+function finishERPResendWorkflowGroup(releaseLink, candidates) {
+
+    let resendStarted = false;
+    let results = [];
+
+    addLogEntry('Quick Release <a target="_blank" href="' + genItemURL({ link : releaseLink }) + '">' + releaseLink + '</a>: uruchamianie przejścia 1250 (Prześlij ponownie).', 'notice');
+    return performERPQuickReleaseTransition(
+        releaseLink,
+        '1250',
+        'Ponowne przesłanie ' + candidates.length + ' produktów do ERP z Item Manager.'
+    ).then(function() {
+        resendStarted = true;
+        return sendERPQuickReleaseProducts(candidates);
+    }).then(function(syncResults) {
+        results = syncResults;
+        let failures = results.filter(function(result) { return !result.success; });
+        if(failures.length > 0) {
+            let error = new Error('Nie udało się ponownie zsynchronizować ' + failures.length + ' z ' + results.length + ' produktów.');
+            error.erpResults = results;
+            throw error;
+        }
+        return performERPQuickReleaseTransition(
+            releaseLink,
+            '1252',
+            'Wszystkie produkty przesłano ponownie do ERP. Liczba elementów: ' + results.length + '.'
+        );
+    }).then(function() {
+        addLogEntry('Quick Release zakończono przejściem 1252 po ponownym przesłaniu.', 'success');
+        return { release : releaseLink, results : results };
+    }).catch(function(error) {
+        candidates.forEach(function(candidate) { addERPQuickReleaseError(candidate, error); });
+        if(!resendStarted) {
+            throw error;
+        }
+
+        let errorResults = error.erpResults || results;
+        return performERPQuickReleaseTransition(
+            releaseLink,
+            '1251',
+            getERPQuickReleaseErrorComment(error, errorResults)
+        ).then(function() {
+            addLogEntry('Quick Release zakończono błędem przejściem 1251.', 'error');
+            throw error;
+        }).catch(function(transitionError) {
+            if(transitionError === error) throw error;
+            error.failureTransitionError = transitionError;
+            throw error;
+        });
+    });
+
+}
+function finishERPResendWorkflows() {
+
+    let groups = {};
+    (run.erpResendCandidates || []).forEach(function(candidate) {
+        if(!groups[candidate.releaseLink]) groups[candidate.releaseLink] = [];
+        groups[candidate.releaseLink].push(candidate);
+    });
+
+    let releaseLinks = Object.keys(groups);
+    if(releaseLinks.length === 0) {
+        addLogEntry('Nie znaleziono elementów z Quick Release gotowym do ponownego przesłania.', 'notice');
+        return Promise.resolve({ skipped : true, results : [] });
+    }
+
+    let failures = [];
+    return releaseLinks.reduce(function(sequence, releaseLink) {
+        return sequence.then(function() {
+            return finishERPResendWorkflowGroup(releaseLink, groups[releaseLink]).catch(function(error) {
+                failures.push({ release : releaseLink, error : error });
+            });
+        });
+    }, Promise.resolve()).then(function() {
+        if(failures.length > 0) {
+            throw new Error('Ponowne przesyłanie zakończyło się błędem dla ' + failures.length + ' Quick Release. ' + failures.map(function(failure) {
+                return failure.release + ': ' + getDataManagerErrorMessage(failure.error);
+            }).join('; '));
+        }
+        return { releases : releaseLinks.length };
     });
 
 }

@@ -80,6 +80,10 @@ if ((process.argv.length > 2) && (!fs.existsSync(pathEnvironment))) {
     let custom   = require('./settings/' + environment.settings);
 
     mergeSettings(settings, custom);
+
+    if(!settings.common.erp) settings.common.erp = {};
+    settings.common.erp.mapping = require('./settings/erp-mapping');
+
     removeDisabledServicesFromMenu(settings.menu, settings.server);
 
     settings.chrome.workspaces = settings.common.workspaceIds;

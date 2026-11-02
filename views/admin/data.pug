@@ -15,7 +15,7 @@ block body
         #header.dark
             #header-logo
             #header-title=title
-            #header-subtitle Perform data cleansing operations with ease
+            #header-subtitle= title === 'Item Manager' ? 'Manage Items workspace records with ease' : 'Perform data cleansing operations with ease'
             #header-toolbar
                 .button.with-icon.icon-delete#clear-console Wyczyść log
                 .button.with-icon.icon-toggle-off#test-run(title="Tworzy plik JSON, oblicza ERP_HASH i symuluje wynik onEdit bez wysyłania danych do ERP oraz bez zmiany pól w PLM.") Tylko przebieg testowy
@@ -249,6 +249,11 @@ block body
                                     .label Dane wysyłane
                                     .description
                                         code { "indeks": "NUMBER", "nazwa_czesci": "NAZWA_DEFRO (fallback: TITLE)", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [{ "Nazwa": "NAZWA_DEFRO (fallback: TITLE)" }, { "Opis": "OPIS" }] }
+
+                        .action.item-manager-only.hidden#resend-to-erp
+                            .action-title Prześlij ponownie do ERP
+                            .action-details
+                                .description Dla każdego elementu znajduje powiązany Quick Release z workspace 78. Jeżeli Quick Release jest w stanie 638 (ERP Integration Issue), wykonuje przejście 1250 (Prześlij ponownie), ponownie wysyła element do ERP, a następnie kończy workflow przejściem 1252 lub zgłasza błąd przejściem 1251.
                         .action.ws-type-2#perform-transition  
                             .action-title Perform Workflow Transition
                             .action-details   
