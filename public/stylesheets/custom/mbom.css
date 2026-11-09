@@ -485,7 +485,9 @@ body.details-on.no-viewer #tabs {
 }
 
 /* Released root mBOMs are strictly read-only. */
-#mbom-viewing-mode-label {
+#mbom-viewing-mode-label,
+#mbom-loading-mode-label,
+#mbom-full-load-required-label {
     align-items: center;
     border: 1px solid var(--color-status-yellow);
     border-radius: 3px;
@@ -515,5 +517,55 @@ body.mbom-viewing-mode #mbom-tree {
 
 body.mbom-viewing-mode #mbom input,
 body.mbom-viewing-mode #mbom select {
+    pointer-events: none;
+}
+
+/* Initial and recursive full-BOM loading are temporarily read-only. */
+body.mbom-loading-mode #save,
+body.mbom-loading-mode #add-all,
+body.mbom-loading-mode #add-leaf-mboms-and-materials,
+body.mbom-loading-mode #deselect-all,
+body.mbom-loading-mode #add-raw-materials,
+body.mbom-loading-mode #sync-erp-technologies,
+body.mbom-loading-mode #mode-add,
+body.mbom-loading-mode #mode-operations,
+body.mbom-loading-mode #mbom-add-process,
+body.mbom-loading-mode #ebom .item-actions,
+body.mbom-loading-mode #mbom .item-head-actions {
+    display: none !important;
+}
+
+body.mbom-loading-mode #mbom input,
+body.mbom-loading-mode #mbom select,
+body.mbom-loading-mode #mbom-tree,
+body.mbom-loading-mode #ebom-tree {
+    pointer-events: none;
+}
+
+body.mbom-loading-mode #main,
+body.mbom-loading-mode #header-toolbar {
+    pointer-events: none;
+}
+
+/* A working mBOM with unloaded HAS_BOM branches is temporarily locked until
+   the explicit full-BOM action completes. This is separate from released view mode. */
+body.mbom-full-load-required #save,
+body.mbom-full-load-required #add-all,
+body.mbom-full-load-required #add-leaf-mboms-and-materials,
+body.mbom-full-load-required #deselect-all,
+body.mbom-full-load-required #add-raw-materials,
+body.mbom-full-load-required #sync-erp-technologies,
+body.mbom-full-load-required #mode-add,
+body.mbom-full-load-required #mode-operations,
+body.mbom-full-load-required #mbom-add-process,
+body.mbom-full-load-required #ebom .item-actions,
+body.mbom-full-load-required #mbom .item-head-actions {
+    display: none !important;
+}
+
+body.mbom-full-load-required #mbom input,
+body.mbom-full-load-required #mbom select,
+body.mbom-full-load-required #mbom-tree,
+body.mbom-full-load-required #ebom-tree {
     pointer-events: none;
 }

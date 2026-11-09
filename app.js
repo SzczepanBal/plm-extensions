@@ -60,9 +60,8 @@ if ((process.argv.length > 2) && (!fs.existsSync(pathEnvironment))) {
         integrationId : process.env.ERP_INTEGRATION_ID || ((environment.erp && environment.erp.integrationId) || ''),
         username      : process.env.ERP_USERNAME       || ((environment.erp && environment.erp.username)      || ''),
         password      : process.env.ERP_PASSWORD       || ((environment.erp && environment.erp.password)      || ''),
-        simulationMode: (typeof process.env.ERP_SIMULATION_MODE !== 'undefined')
-            ? String(process.env.ERP_SIMULATION_MODE).toLowerCase() === 'true'
-            : !!(environment.erp && environment.erp.simulationMode)
+        simulationMode: !!(environment.erp && environment.erp.simulationMode) ||
+            String(process.env.ERP_SIMULATION_MODE || '').toLowerCase() === 'true'
     };
     app.locals.tenantLink        = 'https://' + app.locals.tenant + '.autodeskplm360.net';
     app.locals.vaultGatewayLink  = (app.locals.vaultGateway === '') ? '' : 'https://' + app.locals.vaultGateway + '.vg.autodesk.com';
@@ -83,6 +82,7 @@ if ((process.argv.length > 2) && (!fs.existsSync(pathEnvironment))) {
 
     if(!settings.common.erp) settings.common.erp = {};
     settings.common.erp.mapping = require('./settings/erp-mapping');
+    settings.common.erp.simulationMode = app.locals.erp.simulationMode;
 
     removeDisabledServicesFromMenu(settings.menu, settings.server);
 

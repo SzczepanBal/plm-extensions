@@ -154,10 +154,14 @@
             window.addERPPropertyValue(properties, 'Wieloseryjność', multiSeries ? '2' : '1');
 
             let rawUnit = getFirstValue(sections, mapping.fields.unit.plmFields, mapping.fields.unit.defaultValue);
+            let productGroup = String(getFirstValue(sections, mapping.fields.group.plmFields, '')).trim();
+            let finishedGood = window.normalizeERPBooleanValue(window.getSectionFieldValue(sections, 'WYROB_GOTOWY', false, null));
+            let makeOrBuy = String(window.getSectionFieldValue(sections, 'MAKE_OR_BUY', '', null) || '').trim().toLowerCase();
+            if(finishedGood && makeOrBuy !== 'buy' && productGroup && !productGroup.endsWith('_WG')) productGroup += '_WG';
             let payload = {
                 indeks                        : partNumber,
                 nazwa_czesci                  : partName,
-                id_grupy                      : getFirstValue(sections, mapping.fields.group.plmFields, ''),
+                id_grupy                      : productGroup,
                 jednostka_miary               : window.normalizeERPUnitOfMeasureValue(rawUnit),
                 kontrola_serii                : 'T',
                 numery_seryjne                : 'WPD',

@@ -160,7 +160,8 @@ module.exports = function createErpRouter(dependencies) {
             baseUrl       : baseUrl,
             integrationId : integrationId,
             username      : username,
-            password      : password
+            password      : password,
+            simulationMode: erp.simulationMode === true
         };
     }
     
@@ -175,6 +176,8 @@ module.exports = function createErpRouter(dependencies) {
     
     function validateCustomErpConfig(req, res) {
         let erp = getCustomErpConfig(req);
+
+        if(erp.simulationMode) return erp;
     
         if(isBlank(erp.baseUrl) || isBlank(erp.integrationId) || isBlank(erp.username) || isBlank(erp.password)) {
             sendResponse(req, res, {
@@ -188,6 +191,51 @@ module.exports = function createErpRouter(dependencies) {
         }
     
         return erp;
+    }
+
+    function getCustomErpSimulationBody(callName, body) {
+        let requestBody = (body && typeof body === 'object' && !Array.isArray(body)) ? body : {};
+        let result = { simulationMode : true };
+
+        if(callName === 'add-product' || callName === 'modify-product') {
+            result.indeks_czesci = requestBody.indeks_czesci || requestBody.indeks || '';
+        }
+
+        if(callName === 'add-technology' || callName === 'modify-technology') {
+            let existingVersionId = Number(requestBody.id_wersji);
+            if(!Number.isNaN(existingVersionId) && existingVersionId > 0) {
+                result.id_wersji = Math.trunc(existingVersionId);
+            } else {
+                let seed = [callName, requestBody.indeks || '', requestBody.rewizja || ''].join('|');
+                let digest = crypto.createHash('sha256').update(seed, 'utf8').digest('hex');
+                result.id_wersji = 900000000 + (parseInt(digest.substring(0, 8), 16) % 99999999);
+            }
+        }
+
+        return result;
+    }
+
+    function invokeCustomErpSimulation(req, res, callName, call, body) {
+        let responseBody = getCustomErpSimulationBody(callName, body);
+        let requestDump = saveCustomErpRequestDump(callName, body);
+        let responseDump = saveCustomErpResponseDump(callName, responseBody, false);
+
+        sendResponse(req, res, {
+            data : {
+                source          : 'custom-erp-simulation',
+                call            : callName,
+                method          : call.method,
+                status          : 200,
+                statusText      : 'SIMULATED',
+                simulationMode  : true,
+                body            : responseBody,
+                requestDumpFile : requestDump.filePath,
+                requestDumpUrl  : requestDump.fileUrl,
+                dumpFile        : responseDump.filePath,
+                dumpUrl         : responseDump.fileUrl
+            },
+            status : 200
+        }, false);
     }
     
     function sanitizeCustomErpDumpFilePart(value) {
@@ -426,6 +474,11 @@ module.exports = function createErpRouter(dependencies) {
         let targetUrl = buildCustomErpUrl(req, callName);
         let body = (req.body && Object.keys(req.body).length > 0) ? req.body : call.defaultBody;
         body = applyRequiredProductControls(req, callName, body);
+
+        if(erpSettings.simulationMode) {
+            invokeCustomErpSimulation(req, res, callName, call, body);
+            return;
+        }
     
         if(callName === 'api-docs') {
             invokeCustomErpApiDocsCall(req, res, targetUrl);

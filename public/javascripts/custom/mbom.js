@@ -46,6 +46,40 @@
     let mbomOperationTypePromise = null;
     let erpTechnologyPLMActiveRequests = 0;
     let erpTechnologyPLMRequestQueue = [];
+    let mbomLoadingModeDepth = 0;
+    let mbomExistedBeforeEditorLoad = false;
+    let fullMBOMLoadRequired = false;
+    let fullMBOMActionAvailable = false;
+    let fullMBOMLoadCompleted = false;
+    let fullMBOMAvailabilityRun = 0;
+
+    function beginMBOMLoadingMode(message) {
+        mbomLoadingModeDepth++;
+        $('body').addClass('mbom-loading-mode');
+
+        let elemToolbar = $('#header-toolbar');
+        if(elemToolbar.length > 0) {
+            let elemLabel = $('#mbom-loading-mode-label');
+            if(elemLabel.length === 0) {
+                elemLabel = $('<div></div>')
+                    .attr('id', 'mbom-loading-mode-label')
+                    .insertBefore('#reset');
+            }
+            elemLabel.text(message || 'Ładowanie BOM — tryb podglądu').show();
+        }
+    }
+
+    function endMBOMLoadingMode() {
+        mbomLoadingModeDepth = Math.max(0, mbomLoadingModeDepth - 1);
+        if(mbomLoadingModeDepth > 0) return;
+        $('body').removeClass('mbom-loading-mode');
+        $('#mbom-loading-mode-label').hide();
+    }
+
+    function isExistingMBOMItemLink(link) {
+        if(isBlank(link) || typeof wsMBOM === 'undefined' || isBlank(wsMBOM.wsId)) return false;
+        return normalizePLMLink(link).indexOf('/workspaces/' + wsMBOM.wsId + '/items/') >= 0;
+    }
 
     function normalizeComparisonValue(value) {
         if(value === null || typeof value === 'undefined') return '';
@@ -892,8 +926,11 @@
         return existingLinks;
     }
 
-    function searchRawMaterialItems(material) {
+    function searchRawMaterialItems(material, mbomRawMaterialNumber) {
         let cacheKey = normalizeComparisonValue(material);
+        if(!isBlank(mbomRawMaterialNumber)) {
+            cacheKey += '|number:' + normalizeComparisonValue(mbomRawMaterialNumber);
+        }
         if(!isBlank(cacheKey) && rawMaterialSearchPromises[cacheKey]) {
             return rawMaterialSearchPromises[cacheKey];
         }
@@ -922,15 +959,20 @@
                         return;
                     }
                     let items = (response && response.data && response.data.items) ? response.data.items : [];
-                    let filteredItems = items.filter(function(item) {
-                        return itemLooksLikeMatchingRawMaterial(item, material);
-                    });
+                    // The PLM request already searches ITEM_DETAILS:TITLE.
+                    // Do not compare the generated search-result descriptor to TITLE again.
+                    // NUMBER becomes an additional filter only after NR_SUROWCA is supplied.
+                    let filteredItems = isBlank(mbomRawMaterialNumber)
+                        ? items
+                        : items.filter(function(item) {
+                            return rawMaterialNumberMatches(item, mbomRawMaterialNumber);
+                        });
                     let releasedItems = filteredItems.filter(isReleasedRawMaterialItem);
 
                     console.log('MBOM custom: raw material title search finished', {
                         material    : material,
                         totalResults: items.length,
-                        titleMatches   : filteredItems.length,
+                        matchingResults: filteredItems.length,
                         releasedMatches: releasedItems.length
                     });
 
@@ -946,6 +988,7 @@
 
                     resolve({
                         material       : material,
+                        mbomRawMaterialNumber : mbomRawMaterialNumber || '',
                         items          : filteredItems,
                         matchingItems  : filteredItems,
                         unreleasedOnly : false,
@@ -972,10 +1015,14 @@
         if(result.error) throw new Error('Wyszukiwanie surowca nie powiodło się: ' + result.material);
         if(result.items.length > 0) return Promise.resolve(result);
         let key = normalizeComparisonValue(result.material);
+        if(!isBlank(result.mbomRawMaterialNumber)) {
+            key += '|number:' + normalizeComparisonValue(result.mbomRawMaterialNumber);
+        }
         if(!rawMaterialCreationPromises[key]) {
             rawMaterialCreationPromises[key] = createRawMaterialItem(result.material, productGroup).then(function(item) {
                 let createdResult = {
                     material       : result.material,
+                    mbomRawMaterialNumber : result.mbomRawMaterialNumber || '',
                     items          : [item],
                     matchingItems  : [item],
                     unreleasedOnly : false,
@@ -1067,15 +1114,19 @@
         return 'Żądanie PLM nie powiodło się' + (response.status ? ' (HTTP ' + response.status + ')' : '') + '.';
     }
 
-    function resolveRawMaterialForBatch(material, allowCreate, productGroup) {
+    function resolveRawMaterialForBatch(material, allowCreate, productGroup, mbomRawMaterialNumber) {
         return Promise.resolve().then(function() {
-            return searchRawMaterialItems(material);
+            return searchRawMaterialItems(material, mbomRawMaterialNumber);
         }).then(function(result) {
             return allowCreate === false ? result : ensureRawMaterialSearchResult(result, productGroup);
         }).catch(function(error) {
             // A failed material must not prevent unrelated branches from being applied.
             // Re-query on the next attempt in case PLM created an item before a connection failed.
-            delete rawMaterialSearchPromises[normalizeComparisonValue(material)];
+            let cacheKey = normalizeComparisonValue(material);
+            if(!isBlank(mbomRawMaterialNumber)) {
+                cacheKey += '|number:' + normalizeComparisonValue(mbomRawMaterialNumber);
+            }
+            delete rawMaterialSearchPromises[cacheKey];
             let message = getRawMaterialErrorMessage(error);
             console.warn('MBOM custom: raw material could not be prepared', { material: material, error: error });
             return { material: material, items: [], error: true, message: message };
@@ -1126,6 +1177,52 @@
     function getSearchItemFieldValue(item, fieldId) {
         if(!item) return '';
 
+        function getFieldId(field) {
+            if(!field) return '';
+            let candidates = [field.id, field.fieldId, field.name, field.urn, field.link, field.__self__]
+                .filter(function(candidate) { return !isBlank(candidate); });
+            let expected = normalizeComparisonValue(fieldId);
+            for(let candidate of candidates) {
+                let tokens = String(candidate).split(/[\/.]/);
+                let terminal = tokens[tokens.length - 1];
+                if(normalizeComparisonValue(terminal) === expected) return terminal;
+            }
+            return '';
+        }
+
+        function getFieldValue(field) {
+            if(!field) return '';
+            let value = (field.fieldData && typeof field.fieldData.value !== 'undefined')
+                ? field.fieldData.value
+                : field.value;
+            if(typeof value === 'string' || typeof value === 'number') return value;
+            if(value && typeof value.title === 'string') return value.title;
+            if(value && typeof value.name === 'string') return value.name;
+            return '';
+        }
+
+        function getExplicitFieldValue(source) {
+            if(!source) return '';
+            let fields = Array.isArray(source.fields) ? source.fields.slice() : [];
+            if(Array.isArray(source.sections)) {
+                source.sections.forEach(function(section) {
+                    if(section && Array.isArray(section.fields)) fields = fields.concat(section.fields);
+                });
+            }
+
+            let match = fields.find(function(field) {
+                return normalizeComparisonValue(getFieldId(field)) === normalizeComparisonValue(fieldId);
+            });
+            return getFieldValue(match);
+        }
+
+        // Bulk-search item.title is the generated item descriptor in Fusion
+        // Manage. Prefer the actual item-details field so TITLE matching cannot
+        // reject an existing material and create a duplicate.
+        let explicitValue = getExplicitFieldValue(item);
+        if(isBlank(explicitValue) && item.item) explicitValue = getExplicitFieldValue(item.item);
+        if(!isBlank(explicitValue)) return explicitValue;
+
         if(fieldId === 'TITLE') {
             if(typeof item.title === 'string') return item.title;
             if(item.item && typeof item.item.title === 'string') return item.item.title;
@@ -1138,33 +1235,15 @@
 
         if(typeof item[fieldId] === 'string') return item[fieldId];
         if(item.item && typeof item.item[fieldId] === 'string') return item.item[fieldId];
-        if(!Array.isArray(item.fields)) return '';
-
-        let match = item.fields.find(function(field) {
-            return field && (field.id === fieldId || field.fieldId === fieldId || field.name === fieldId);
-        });
-
-        if(!match) return '';
-        if(typeof match.value === 'string') return match.value;
-        if(match.value && typeof match.value.title === 'string') return match.value.title;
-        if(match.fieldData && typeof match.fieldData.value === 'string') return match.fieldData.value;
-        return match.value || '';
+        return '';
     }
 
-    function itemLooksLikeMatchingRawMaterial(item, material) {
-        if(!item) return false;
-
-        let normalizedMaterial = normalizeComparisonValue(material);
-        let title = getSearchItemFieldValue(item, 'TITLE') || (item.item && item.item.title) || '';
-        let normalizedTitle = normalizeComparisonValue(title);
-
-        if(normalizedTitle === normalizedMaterial) return true;
-
-        let numberedTitlePrefix = normalizedMaterial + ' - ';
-        if(normalizedTitle.indexOf(numberedTitlePrefix) !== 0) return false;
-
-        let itemNumberSuffix = normalizedTitle.substring(numberedTitlePrefix.length).trim();
-        return /^s\d+$/.test(itemNumberSuffix);
+    function rawMaterialNumberMatches(item, mbomRawMaterialNumber) {
+        // NR_SUROWCA is not available on mBOMs yet. Until it is supplied,
+        // matching intentionally remains TITLE-only.
+        if(isBlank(mbomRawMaterialNumber)) return true;
+        let rawMaterialNumber = getSearchItemFieldValue(item, 'NUMBER');
+        return normalizeComparisonValue(rawMaterialNumber) === normalizeComparisonValue(mbomRawMaterialNumber);
     }
 
     function getRawMaterialSearchProperty(item, propertyNames) {
@@ -1209,12 +1288,14 @@
         return Number.isNaN(numericValue) ? String(value || '') : numericValue;
     }
 
-    function chooseRawMaterialItem(material, items) {
+    function chooseRawMaterialItem(material, items, mbomRawMaterialNumber) {
         if(!Array.isArray(items) || items.length === 0) return null;
 
-        let exactMatches = items.filter(function(item) {
-            return itemLooksLikeMatchingRawMaterial(item, material);
-        });
+        let exactMatches = isBlank(mbomRawMaterialNumber)
+            ? items.slice()
+            : items.filter(function(item) {
+                return rawMaterialNumberMatches(item, mbomRawMaterialNumber);
+            });
 
         let matchesByItem = {};
         exactMatches.forEach(function(item) {
@@ -2257,6 +2338,14 @@
         return $('body').hasClass('mbom-viewing-mode');
     }
 
+    function isFullMBOMLoadRequired() {
+        return fullMBOMLoadRequired === true;
+    }
+
+    function isMBOMInteractionLocked() {
+        return isMBOMViewingMode() || $('body').hasClass('mbom-loading-mode') || isFullMBOMLoadRequired();
+    }
+
     function ensureMBOMViewingModeControls() {
         let elemToolbar = $('#header-toolbar');
         if(elemToolbar.length === 0) return;
@@ -2277,6 +2366,39 @@
                 .on('click', openWorkingMBOMVersion)
                 .insertBefore('#reset');
         }
+    }
+
+    function ensureFullMBOMLoadRequiredLabel() {
+        let elemToolbar = $('#header-toolbar');
+        if(elemToolbar.length === 0) return $();
+
+        let elemLabel = $('#mbom-full-load-required-label');
+        if(elemLabel.length === 0) {
+            elemLabel = $('<div></div>')
+                .attr('id', 'mbom-full-load-required-label')
+                .text('Załaduj pełny mBOM, aby włączyć edycję')
+                .insertBefore('#reset');
+        }
+        return elemLabel;
+    }
+
+    function setFullMBOMLoadRequired(required, actionAvailable) {
+        fullMBOMLoadRequired = required === true;
+        fullMBOMActionAvailable = fullMBOMLoadRequired && actionAvailable === true;
+        $('body').toggleClass('mbom-full-load-required', fullMBOMLoadRequired);
+
+        let showTemporaryLock = fullMBOMLoadRequired && !isMBOMViewingMode();
+        ensureFullMBOMLoadRequiredLabel()
+            .text(fullMBOMActionAvailable
+                ? 'Załaduj pełny mBOM, aby włączyć edycję'
+                : 'Sprawdzanie struktury mBOM — edycja zablokowana')
+            .toggle(showTemporaryLock);
+        $('#save')
+            .toggleClass('disabled', isMBOMViewingMode() || fullMBOMLoadRequired)
+            .attr('title', isMBOMViewingMode()
+                ? 'Wydane wersje mBOM są dostępne tylko w trybie podglądu'
+                : (fullMBOMLoadRequired ? 'Najpierw załaduj pełny mBOM' : 'Zapisz zmiany'));
+        updateLoadFullMBOMButtonVisibility();
     }
 
     function getMBOMWorkingVersionNavigation(link) {
@@ -2343,7 +2465,7 @@
         elemBody.setAttribute('data-mbom-viewing-guard', 'true');
 
         elemBody.addEventListener('click', function(event) {
-            if(!isMBOMViewingMode()) return;
+            if(!isMBOMInteractionLocked()) return;
 
             let blockedSelector = [
                 '#save',
@@ -2372,8 +2494,11 @@
         $('body').toggleClass('mbom-viewing-mode', !working);
         ensureMBOMViewingModeControls();
         $('.mbom-viewing-mode-control').toggle(!working);
-        $('#save').toggleClass('disabled', !working)
-            .attr('title', working ? 'Zapisz zmiany' : 'Wydane wersje mBOM są dostępne tylko w trybie podglądu');
+        $('#save').toggleClass('disabled', !working || fullMBOMLoadRequired)
+            .attr('title', working
+                ? (fullMBOMLoadRequired ? 'Najpierw załaduj pełny mBOM' : 'Zapisz zmiany')
+                : 'Wydane wersje mBOM są dostępne tylko w trybie podglądu');
+        ensureFullMBOMLoadRequiredLabel().toggle(fullMBOMLoadRequired && working);
 
         attachMBOMViewingModeGuard();
         if(!working) disableMBOMEditingWidgets();
@@ -2864,6 +2989,9 @@
                 getDetails : true,
                 fields     : [{
                     fieldId : config.workspaceMBOM.fieldIDs.title,
+                    value   : assemblyIndexTitle
+                }, {
+                    fieldId : 'NAZWA_DEFRO',
                     value   : assemblyIndexTitle
                 }, {
                     fieldId : config.workspaceMBOM.fieldIDs.type,
@@ -3781,7 +3909,8 @@
             if(elemItem.hasClass('root')) return;
 
             let type = normalizeComparisonValue(elemItem.attr('data-item-type'));
-            if(type !== 'manufacturing' && !hasMBOMShortcut(elemItem)) return;
+            let isProcess = ['process', 'operation', 'proces', 'operacja'].includes(type) || elemItem.hasClass('process');
+            if(type !== 'manufacturing' && !isProcess && !hasMBOMShortcut(elemItem)) return;
 
             let link = getMBOMChildSaveLink(elemItem);
             if(isBlank(link)) return;
@@ -3879,7 +4008,7 @@
         elemSave.attr('data-custom-save-guard', 'true');
         elemSave.off('click').on('click', function() {
             let elemButton = $(this);
-            if(elemButton.hasClass('disabled') || isMBOMViewingMode()) return;
+            if(elemButton.hasClass('disabled') || isMBOMInteractionLocked()) return;
 
             elemButton.addClass('disabled');
             let headers = collectMBOMParentsForSaveSync();
@@ -4657,7 +4786,9 @@
 
         let elemBOM = ensureInlineSubMBOMContainer(elemItem);
         elemBOM.children('.inline-submbom-status').remove();
-        elemBOM.removeClass('hidden');
+        // Building dozens of interactive rows in a visible tree forces repeated
+        // style/layout work. Keep the branch detached from layout until complete.
+        elemBOM.addClass('hidden');
 
         children.forEach(function(childPart) {
             childPart.hasChildren = getBOMPartHasChildrenCustom(childPart, children);
@@ -4678,6 +4809,7 @@
         }
 
         mergeParentEdgeIds(elemItem.children('.item-head').first(), directChildEdgeIds);
+        elemBOM.removeClass('hidden');
 
         if(!inlineSubMBOMBulkExpansionActive) {
             updateMBOMNumbers();
@@ -5577,6 +5709,92 @@
         return false;
     }
 
+    function getDifferentAssignedRawMaterials(entry, elemHeader, existingState, desiredLink) {
+        if(!entry || !elemHeader || elemHeader.length === 0 || !existingState) return [];
+        let desiredItemLink = normalizePLMLink(desiredLink);
+        let assignedLinks = entry.assignedRawMaterialLinks instanceof Set
+            ? Array.from(entry.assignedRawMaterialLinks)
+            : [];
+        let different = [];
+
+        existingState.children.forEach(function(part, normalizedLink) {
+            let itemLink = normalizePLMLink(normalizedLink || (part && part.link));
+            if(isBlank(itemLink) || itemLink === desiredItemLink) return;
+
+            let isAssignedRawMaterial = assignedLinks.some(function(assignedLink) {
+                return normalizePLMLink(assignedLink) === itemLink;
+            });
+            let elemExisting = getDirectChildItemByLink(elemHeader, normalizedLink || (part && part.link));
+            let domType = elemExisting.attr('data-item-type');
+            let isRawMaterial = isAssignedRawMaterial || isRawMaterialPartForPinning(part) ||
+                normalizeComparisonValue(domType) === normalizeComparisonValue(rawMaterialTypeName);
+            if(!isRawMaterial || elemExisting.length === 0) return;
+
+            different.push({
+                part           : part,
+                normalizedLink : normalizedLink,
+                itemLink       : itemLink,
+                elemItem       : elemExisting
+            });
+        });
+
+        return different;
+    }
+
+    function confirmQuantityOnlyRawMaterialReplacement(entry, differentRawMaterials) {
+        let oldMaterials = differentRawMaterials.map(function(candidate) {
+            let elemItem = candidate.elemItem;
+            let descriptor = elemItem.find('.item-head-descriptor').first().text() ||
+                elemItem.find('.item-title').first().text();
+            return descriptor || (candidate.part && (candidate.part.descriptor || candidate.part.title || candidate.part.number)) || candidate.itemLink;
+        }).filter(function(value) { return !isBlank(value); });
+        let oldLabel = oldMaterials.length > 0 ? oldMaterials.join(', ') : 'inny surowiec';
+
+        return window.confirm(
+            'Tryb aktualizacji ilości wykrył inny przypisany surowiec.\n\n' +
+            'Obecny: ' + oldLabel + '\n' +
+            'Z Vault: ' + entry.material + '\n\n' +
+            'OK: usuń stary surowiec i dodaj nowy.\n' +
+            'Anuluj: pozostaw obecny surowiec bez zmian.'
+        );
+    }
+
+    function removeDifferentRawMaterialsForOverwrite(entry, elemHeader, existingState, desiredLink, differentRawMaterials) {
+        let candidates = Array.isArray(differentRawMaterials)
+            ? differentRawMaterials
+            : getDifferentAssignedRawMaterials(entry, elemHeader, existingState, desiredLink);
+        let removed = 0;
+
+        candidates.forEach(function(candidate) {
+            let part = candidate.part;
+            let normalizedLink = candidate.normalizedLink;
+            let itemLink = candidate.itemLink;
+            let elemExisting = candidate.elemItem;
+
+            elemExisting.remove();
+            existingState.links.delete(itemLink);
+            if(existingState.versionLinks instanceof Set) {
+                Array.from(existingState.versionLinks).forEach(function(versionLink) {
+                    if(normalizePLMLink(versionLink) === itemLink) existingState.versionLinks.delete(versionLink);
+                });
+            }
+            existingState.children.delete(normalizedLink);
+            removed++;
+        });
+
+        if(removed > 0) {
+            entry.replacedRawMaterials = (Number(entry.replacedRawMaterials) || 0) + removed;
+            console.log('MBOM custom: removed different raw material before Vault overwrite', {
+                mbomLink   : getPartItemLink(entry.part),
+                desiredLink: desiredLink,
+                removed    : removed
+            });
+            if(typeof restoreAssembly === 'function') restoreAssembly();
+        }
+
+        return removed;
+    }
+
     function addRawMaterialsToMBOM(mbomMaterials, applyMode) {
         let mode = normalizeRawMaterialApplyMode(applyMode);
         let addMissing = mode !== rawMaterialApplyModes.updateQuantity;
@@ -5730,8 +5948,8 @@
 
                     let item = chooseRawMaterialItem(material, result.items);
                     if(!item) {
-                        entry.rawMaterialMessage = 'Nie udało się wybrać dokładnego dopasowania pola TITLE.';
-                        console.warn('MBOM custom: TITLE match selection failed for MATERIAL', {
+                        entry.rawMaterialMessage = 'Nie udało się wybrać wyniku wyszukiwania surowca.';
+                        console.warn('MBOM custom: raw material result selection failed', {
                             material : material
                         });
                         applyDone++;
@@ -5802,7 +6020,34 @@
                                     quantity : quantity
                                 });
 
-                                if(hasExistingRawMaterialVersion(existingState, link)) {
+                                let desiredMaterialExists = hasExistingRawMaterialVersion(existingState, link);
+                                let differentRawMaterials = getDifferentAssignedRawMaterials(
+                                    entry, elemHeader, existingState, link
+                                );
+                                let quantityModeReplacementApproved = false;
+
+                                if(mode === rawMaterialApplyModes.updateQuantity && differentRawMaterials.length > 0) {
+                                    quantityModeReplacementApproved = confirmQuantityOnlyRawMaterialReplacement(
+                                        entry, differentRawMaterials
+                                    );
+                                    if(!quantityModeReplacementApproved) {
+                                        entry.rawMaterialOutcome = 'unchanged';
+                                        entry.rawMaterialMessage = 'Wykryto inny surowiec; pozostawiono go bez zmian.';
+                                        entry.rawMaterialWarnings.push(
+                                            'Materiał z Vault różni się od przypisanego surowca. Aktualizacja ilości została pominięta.'
+                                        );
+                                        applyDone++;
+                                        updateRawMaterialsApplyDialog(applyDone, mbomMaterials.length);
+                                        return null;
+                                    }
+                                }
+
+                                if(desiredMaterialExists) {
+                                    if(mode === rawMaterialApplyModes.overwrite || quantityModeReplacementApproved) {
+                                        removeDifferentRawMaterialsForOverwrite(
+                                            entry, elemHeader, existingState, link, differentRawMaterials
+                                        );
+                                    }
                                     console.log('MBOM custom: raw material precheck found existing target assignment', {
                                         material : material,
                                         link     : link,
@@ -5826,7 +6071,9 @@
                                     if(elemExisting.length > 0 && setRawMaterialQuantity(elemHeader, link, quantity)) {
                                         totalUpdated++;
                                         entry.rawMaterialOutcome = 'updated';
-                                        entry.rawMaterialMessage = 'Surowiec już istnieje; ilość została zaktualizowana.';
+                                        entry.rawMaterialMessage = entry.replacedRawMaterials > 0
+                                            ? 'Inny surowiec został usunięty; ilość właściwego surowca została zaktualizowana.'
+                                            : 'Surowiec już istnieje; ilość została zaktualizowana.';
                                         console.log('MBOM custom: raw material already exists, quantity set to resolved value', {
                                             material : material,
                                             link     : link,
@@ -5846,7 +6093,7 @@
                                     return null;
                                 }
 
-                                if(!addMissing) {
+                                if(!addMissing && !quantityModeReplacementApproved) {
                                     entry.rawMaterialOutcome = 'unchanged';
                                     entry.rawMaterialMessage = 'Brakującego surowca nie dodano w trybie aktualizacji ilości.';
                                     applyDone++;
@@ -5862,6 +6109,11 @@
                                 });
 
                                 return getRawMaterialItemDetails(link).then(function(detailsData) {
+                                    if(mode === rawMaterialApplyModes.overwrite || quantityModeReplacementApproved) {
+                                        removeDifferentRawMaterialsForOverwrite(
+                                            entry, elemHeader, existingState, link, differentRawMaterials
+                                        );
+                                    }
                                     return insertAdditionalItem(elemHeader, link, {
                                         knownLeaf  : true,
                                         detailsData: detailsData
@@ -5878,7 +6130,9 @@
                                     existingState.children.set(normalizedLink, { link : link, quantity : quantity });
                                     totalAdded++;
                                     entry.rawMaterialOutcome = 'added';
-                                    entry.rawMaterialMessage = 'Surowiec został dodany.';
+                                    entry.rawMaterialMessage = entry.replacedRawMaterials > 0
+                                        ? 'Poprzedni surowiec został usunięty, a nowy został dodany.'
+                                        : 'Surowiec został dodany.';
 
                                     return waitForDirectChildItem(elemHeader, link).then(function(elemInserted) {
                                         if(elemInserted.length === 0) {
@@ -6124,21 +6378,9 @@
         return $('<div></div>').text(value || '').html();
     }
 
-    const erpTechnologyProxyBaseUrl = '/plm/custom-erp/';
     const erpSyncBOMViewName = 'ERP Sync';
     const erpCentralMapping = common.erp.mapping || { operations : {} };
-
-    function getERPOperationMapping(operationName) {
-        let operation = erpCentralMapping.operations[operationName] || {};
-        if(isBlank(operation.extends)) return operation;
-
-        let base = erpCentralMapping.operations[operation.extends] || {};
-        return Object.assign({}, base, operation, {
-            fields           : Object.assign({}, base.fields || {}, operation.fields || {}),
-            defaults         : Object.assign({}, base.defaults || {}, operation.defaults || {}),
-            propertyProfiles : Object.assign({}, base.propertyProfiles || {}, operation.propertyProfiles || {})
-        });
-    }
+    const erpSimulationMode = common.erp.simulationMode === true;
 
     function toERPPropertyMappings(mappings, defaults) {
         return (mappings || []).map(function(mapping) {
@@ -6147,8 +6389,8 @@
         });
     }
 
-    const erpAddProductMapping = getERPOperationMapping('addProduct');
-    const erpAddTechnologyMapping = getERPOperationMapping('addTechnology');
+    const erpAddProductMapping = window.erpClient.getOperationMapping(erpCentralMapping, 'addProduct');
+    const erpAddTechnologyMapping = window.erpClient.getOperationMapping(erpCentralMapping, 'addTechnology');
     const erpProductFields = erpAddProductMapping.fields || {};
     const erpProductDefaults = erpAddProductMapping.defaults || {};
     const erpTechnologyFields = erpAddTechnologyMapping.fields || {};
@@ -6168,7 +6410,7 @@
     let erpSyncBOMViewPromise = null;
 
     function isERPTechnologyTestRunEnabled() {
-        return $('#toggle-erp-technology-test-run').hasClass('icon-toggle-on');
+        return !erpSimulationMode && $('#toggle-erp-technology-test-run').hasClass('icon-toggle-on');
     }
 
     function normalizeERPTechnologyIndex(value) {
@@ -6516,6 +6758,12 @@
         return truncated.trim();
     }
 
+    function truncateERPProductPropertyValue(propertyName, value) {
+        if(typeof value !== 'string') return value;
+        if(propertyName === 'Nazwa') return Array.from(value).slice(0, 200).join('').trim();
+        return truncateERPAssemblyIndexPropertyValue(value, 40);
+    }
+
     function buildERPAddProductName(sections, title, rawIndex) {
         let partName = getERPTechnologySectionValue(sections, erpProductFields.name || [], '');
         let combinedName = [partName].filter(function(value) {
@@ -6550,12 +6798,59 @@
         return getSectionFieldValue(sections, erpMultiSeriesFieldId, false, null);
     }
 
+    function getERPProductFinishedGoodValue(itemPart, sections) {
+        let fieldIds = erpProductFields.finishedGood || ['WYROB_GOTOWY'];
+        for(let fieldId of fieldIds) {
+            if(itemPart && itemPart.details && Object.prototype.hasOwnProperty.call(itemPart.details, fieldId)) {
+                return itemPart.details[fieldId];
+            }
+            let value = getSectionFieldValue(sections, fieldId, undefined, 'object');
+            if(typeof value !== 'undefined') return value;
+        }
+        return false;
+    }
+
+    function getERPProductMakeOrBuyValue(itemPart, sections) {
+        let fieldIds = erpProductFields.makeOrBuy || ['MAKE_OR_BUY'];
+        for(let fieldId of fieldIds) {
+            if(itemPart && itemPart.details && Object.prototype.hasOwnProperty.call(itemPart.details, fieldId)) {
+                return itemPart.details[fieldId];
+            }
+            let value = getSectionFieldValue(sections, fieldId, undefined, 'object');
+            if(typeof value !== 'undefined') return value;
+        }
+        if(itemPart && itemPart.details && !isBlank(itemPart.details.TYPE)) return itemPart.details.TYPE;
+        if(itemPart && !isBlank(itemPart.type)) return itemPart.type;
+        let type = getSectionFieldValue(sections, 'TYPE', '', 'object');
+        if(!isBlank(type)) return type;
+        return '';
+    }
+
+    function isERPBuyPart(makeOrBuy, type) {
+        let normalizedMakeOrBuy = normalizeComparisonValue(makeOrBuy);
+        let normalizedType = normalizeComparisonValue(type);
+        return normalizedMakeOrBuy === 'buy' || normalizedType === 'buy' || normalizedType === 'purchased';
+    }
+
+    function getERPProductGroupId(groupId, finishedGood, makeOrBuy) {
+        if(isBlank(groupId)) return groupId;
+
+        let value = String(groupId).trim();
+        let suffix = erpProductDefaults.finishedGoodGroupSuffix || '_WG';
+        if(getBOMBooleanValue(finishedGood) && !isERPBuyPart(makeOrBuy, '') && !value.endsWith(suffix)) value += suffix;
+        return value;
+    }
+
     function buildERPAssemblyIndexProductPayload(elemItem, itemPart, detailsData) {
         let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
         let rawIndex = getERPTechnologySectionValue(sections, erpProductFields.index || [], '');
         let title = getERPTechnologySectionValue(sections, erpProductFields.name || [], (detailsData && detailsData.title) ? detailsData.title : '');
         let description = getERPTechnologySectionValue(sections, erpProductFields.description || [], title);
-        let groupId = getERPTechnologySectionValue(sections, erpProductFields.group || [], erpAssemblyIndexProductGroupId);
+        let groupId = getERPProductGroupId(
+            getERPTechnologySectionValue(sections, erpProductFields.group || [], erpAssemblyIndexProductGroupId),
+            getERPProductFinishedGoodValue(itemPart, sections),
+            getERPProductMakeOrBuyValue(itemPart, sections)
+        );
         let multiSeries = getERPProductMultiSeriesValue(itemPart, sections);
         let properties = [];
 
@@ -6578,7 +6873,7 @@
             let property = {};
             property[mapping[0]] = isBlank(value)
                 ? ''
-                : truncateERPAssemblyIndexPropertyValue(String(value), 40);
+                : truncateERPProductPropertyValue(mapping[0], String(value));
             properties.push(property);
         });
 
@@ -6676,7 +6971,11 @@
         let rawIndex = getERPTechnologySectionValue(sections, erpProductFields.index || [], '');
         let title = getERPTechnologySectionValue(sections, erpProductFields.name || [], (detailsData && detailsData.title) ? detailsData.title : '');
         let description = getERPTechnologySectionValue(sections, erpProductFields.description || [], title);
-        let groupId = getERPTechnologySectionValue(sections, erpProductFields.group || [], '');
+        let groupId = getERPProductGroupId(
+            getERPTechnologySectionValue(sections, erpProductFields.group || [], ''),
+            getERPProductFinishedGoodValue(itemPart, sections),
+            getERPProductMakeOrBuyValue(itemPart, sections)
+        );
         let multiSeries = getERPProductMultiSeriesValue(itemPart, sections);
         let properties = [];
 
@@ -6686,7 +6985,7 @@
             if(isBlank(value)) return;
 
             let property = {};
-            property[mapping[0]] = truncateERPAssemblyIndexPropertyValue(String(value), 40);
+            property[mapping[0]] = truncateERPProductPropertyValue(mapping[0], String(value));
             properties.push(property);
         });
 
@@ -6820,28 +7119,6 @@
         if(typeof status === 'string' && status.trim() !== '') return status.trim();
         if(detailsData && detailsData.lifecycle && detailsData.lifecycle.state && detailsData.lifecycle.state.label) return String(detailsData.lifecycle.state.label).trim();
         return '';
-    }
-
-    function buildERPTechnologyDescription(detailsData, part) {
-        let sections = (detailsData && detailsData.sections) ? detailsData.sections : [];
-        let description = getERPTechnologySectionValue(sections, erpTechnologyFields.description || [], '');
-        if(isBlank(description)) {
-            description = getERPTechnologySectionValue(
-                sections,
-                erpTechnologyFields.name || [],
-                (detailsData && detailsData.title) ? detailsData.title : ''
-            );
-        }
-        let technologyId = getERPTechnologySectionValue(sections, erpTechnologyFields.technologyId || [], '');
-
-        if(isBlank(technologyId) && part && part.details) {
-            technologyId = getERPTechnologyPartDetailsValue(part, ['ID_TECHNOLOGI', 'id_technologi']);
-        }
-
-        if(isBlank(technologyId)) return description;
-        if(isBlank(description)) return technologyId;
-
-        return description + ' ' + technologyId;
     }
 
     function buildERPTechnologyProperties(detailsData) {
@@ -7120,7 +7397,7 @@
             let payload = {
                 indeks          : normalizeERPTechnologyIndex(getERPTechnologySectionValue(sections, erpTechnologyFields.index || [], '')),
                 nazwa_czesci    : getERPTechnologySectionValue(sections, erpTechnologyFields.name || [], detailsData.title || ''),
-                opis            : buildERPTechnologyDescription(detailsData, itemPart),
+                opis            : getERPTechnologyRevision(detailsData),
                 rewizja         : getERPTechnologyRevision(detailsData),
                 czy_zatwierdzona: erpTechnologyDefaults.approved || 'N',
                 id_wersji       : technologyVersionId,
@@ -7282,6 +7559,24 @@
         return fallbackValue || '';
     }
 
+    function validateERPFinishedGoodMakeParts(parts) {
+        let fieldIds = config.workspaceMBOM.fieldIDs || {};
+        let invalid = (parts || []).filter(function(part) {
+            let finishedGood = getERPSyncBOMValue(part, erpProductFields.finishedGood || ['WYROB_GOTOWY'], false);
+            let makeOrBuy = getERPSyncBOMValue(part, erpProductFields.makeOrBuy || ['MAKE_OR_BUY'], '');
+            let type = getERPSyncBOMValue(part, [fieldIds.type, 'TYPE'], '');
+            return getBOMBooleanValue(finishedGood) && isERPBuyPart(makeOrBuy, type);
+        });
+        if(invalid.length === 0) return true;
+
+        let labels = invalid.map(function(part) {
+            return part.partNumber || getERPSyncBOMValue(part, erpProductFields.index || ['NUMBER'], '') || part.title || part.link || 'element';
+        });
+        throw new Error(
+            'WYROB_GOTOWY jest dozwolone wyłącznie dla części Make. Wyłącz to pole dla części Buy: ' + labels.join(', ') + '.'
+        );
+    }
+
     function isERPSyncBOMOperation(part) {
         let fieldIds = config.workspaceMBOM.fieldIDs || {};
         let isProcess = getERPSyncBOMValue(part, [fieldIds.isProcess, 'IS_PROCESS'], false);
@@ -7425,6 +7720,7 @@
             { label : 'ERP_HASH', candidates : [customERPFieldIDs.hash] },
             { label : 'ERP_SYNC_STATUS', candidates : [customERPFieldIDs.syncStatus] },
             { label : 'GRUPA_PRODUKTOWA', candidates : ['GRUPA_PRODUKTOWA'] },
+            { label : 'WYROB_GOTOWY', candidates : erpProductFields.finishedGood || ['WYROB_GOTOWY'] },
             { label : 'TYPE', candidates : [fieldIds.type, 'TYPE'] },
             { label : 'PROCESS_CODE', candidates : [fieldIds.code, 'PROCESS_CODE'] },
             { label : 'KOD_OPERACJI', candidates : erpTechnologyOperationCodeCandidates }
@@ -7482,6 +7778,7 @@
                 : [];
             if(parts.length === 0) throw new Error('Widok BOM „' + erpSyncBOMViewName + '” nie zwrócił żadnych elementów.');
             validateERPSyncBOMColumns(parts);
+            validateERPFinishedGoodMakeParts(parts);
             return addERPSyncBOMHierarchy(parts);
         });
     }
@@ -7501,7 +7798,11 @@
         let title = getERPSyncBOMValue(part, erpProductFields.name || [], part.title || '');
         let description = getERPSyncBOMValue(part, erpProductFields.description || [], title);
         let partName = getERPSyncBOMValue(part, (erpProductFields.name || []).slice(0, 1), '');
-        let groupId = getERPSyncBOMValue(part, erpProductFields.group || [], assemblyIndex ? erpAssemblyIndexProductGroupId : '');
+        let groupId = getERPProductGroupId(
+            getERPSyncBOMValue(part, erpProductFields.group || [], assemblyIndex ? erpAssemblyIndexProductGroupId : ''),
+            getERPSyncBOMValue(part, erpProductFields.finishedGood || ['WYROB_GOTOWY'], false),
+            getERPSyncBOMValue(part, erpProductFields.makeOrBuy || ['MAKE_OR_BUY'], getERPSyncBOMValue(part, ['TYPE'], ''))
+        );
         let multiSeries = getERPSyncBOMValue(part, erpProductFields.multiSeries || [], false);
         let properties = [];
 
@@ -7520,7 +7821,7 @@
             if(mapping.length > 3 && mapping[3] === true && isBlank(value)) return;
 
             let property = {};
-            property[mapping[0]] = isBlank(value) ? '' : truncateERPAssemblyIndexPropertyValue(String(value), 40);
+            property[mapping[0]] = isBlank(value) ? '' : truncateERPProductPropertyValue(mapping[0], String(value));
             properties.push(property);
         });
 
@@ -7537,7 +7838,7 @@
     }
 
     function getERPSyncBOMRevision(part) {
-        let revision = getERPSyncBOMValue(part, ['REVISION'], part.revision || '');
+        let revision = getERPSyncBOMValue(part, erpTechnologyFields.revision || [], part.revision || '');
         return String(revision || '').trim();
     }
 
@@ -7586,34 +7887,8 @@
         };
     }
 
-    function getERPHashResponseValue(response) {
-        let containers = [
-            response,
-            response && response.data,
-            response && response.data && response.data.data,
-            response && response.body,
-            response && response.data && response.data.body
-        ];
-        for(let container of containers) {
-            if(container && typeof container === 'object' && !isBlank(container.hash)) return String(container.hash);
-            if(typeof container === 'string' && container.indexOf('v1:') === 0) return container;
-        }
-        return '';
-    }
-
     function calculateERPHash(job) {
-        return $.ajax({
-            url         : erpTechnologyProxyBaseUrl + 'hash',
-            method      : 'POST',
-            contentType : 'application/json',
-            data        : JSON.stringify(buildERPHashInput(job))
-        }).then(function(response) {
-            let hash = getERPHashResponseValue(response);
-            if(isBlank(hash)) {
-                let responseShape = response && typeof response === 'object' ? Object.keys(response).join(', ') : typeof response;
-                let dataShape = response && response.data && typeof response.data === 'object' ? Object.keys(response.data).join(', ') : typeof (response && response.data);
-                throw new Error('Serwer nie zwrócił skrótu danych ERP. Format odpowiedzi: [' + responseShape + '], data: [' + dataShape + '].');
-            }
+        return window.erpClient.calculateHash(buildERPHashInput(job)).then(function(hash) {
             job.erpHash = hash;
             job.erpOutOfDate = job.erpHash !== job.storedERPHash;
             return job;
@@ -7630,15 +7905,12 @@
         let assemblyIndex = isAssemblyIndexNode(part);
         let rawIndex = getERPSyncBOMValue(part, erpTechnologyFields.index || [], part.partNumber || '');
         let storedPartIndex = getERPSyncBOMValue(part, [customERPFieldIDs.partIndex], '');
-        let description = getERPSyncBOMValue(part, erpTechnologyFields.description || [], getERPSyncBOMValue(part, erpTechnologyFields.name || [], part.title || ''));
-        let technologyId = getERPSyncBOMValue(part, erpTechnologyFields.technologyId || [], '');
         let revision = getERPSyncBOMRevision(part);
-        let revisionDescription = isBlank(revision) ? '' : 'Rewizja: ' + revision;
         let requiredChildTechnologyIndexes = [];
         let payload = {
             indeks          : normalizeERPTechnologyIndex(rawIndex),
             nazwa_czesci    : getERPSyncBOMValue(part, erpTechnologyFields.name || [], part.title || ''),
-            opis            : [description, technologyId, revisionDescription].filter(function(value) { return !isBlank(value); }).join(' | '),
+            opis            : revision,
             rewizja         : revision,
             czy_zatwierdzona: erpTechnologyDefaults.approved || 'N',
             wlasnosci       : [],
@@ -7895,15 +8167,6 @@
             return String(value);
         }
 
-        function normalizeERPIntegerValue(value) {
-            if(value === null || typeof value === 'undefined' || value === '') return '';
-
-            let normalized = Number(value);
-            if(Number.isNaN(normalized)) return '';
-
-            return Math.trunc(normalized);
-        }
-
         function resolveFieldSectionId(sections, fieldId) {
             if(typeof getFieldSectionId === 'function') {
                 let resolvedId = getFieldSectionId(sections, fieldId);
@@ -7995,7 +8258,7 @@
             }
             if(erpResponseBody && typeof erpResponseBody === 'object') {
                 if(isTechnologyUpdate) {
-                    let versionId = normalizeERPIntegerValue(erpResponseBody.id_wersji);
+                    let versionId = window.erpClient.getVersionIdFromBody(erpResponseBody);
                     if(!isBlank(versionId)) addERPField(fieldIdERPVersion, versionId, 'integer');
                 }
                 let partIndex = normalizeERPTextValue(erpResponseBody.indeks_czesci);
@@ -8123,10 +8386,6 @@
             });
             return Promise.resolve(false);
         }
-        let requestUrl = testRun
-            ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
-            : erpTechnologyProxyBaseUrl + callName;
-
         console.log('MBOM custom: sending ERP product prerequisite', {
             testRun    : testRun,
             callName   : callName,
@@ -8136,12 +8395,12 @@
         });
 
         return ensureERPLinkedEBOMMultiSeries(currentJob, testRun).then(function() {
-            return $.post(requestUrl, payload, null, 'json');
+            return window.erpClient.request(callName, payload, { exportOnly : testRun });
         }).then(function(response) {
             let status = Number(response && response.status);
-            let success = !!response && !response.error && status === 200;
+            let success = window.erpClient.isSuccess(response);
 
-            let erpResponseBody = response && response.data ? response.data.body : null;
+            let erpResponseBody = window.erpClient.getResponseBody(response);
             let indexUpdatePromise = Promise.resolve(false);
             if(!testRun && success) {
                 let updateRequests = [];
@@ -8429,10 +8688,6 @@
                             }
 
                             let callName = 'add-technology';
-                            let requestUrl = testRun
-                                ? erpTechnologyProxyBaseUrl + 'export-request/' + callName
-                                : erpTechnologyProxyBaseUrl + callName;
-
                             console.log('MBOM custom: sending ERP technology job', {
                                 order      : results.length + 1,
                                 testRun    : testRun,
@@ -8441,11 +8696,11 @@
                                 descriptor : currentJob.descriptor
                             });
 
-                            return $.post(requestUrl, currentJob.payload, null, 'json').then(function(response) {
+                            return window.erpClient.request(callName, currentJob.payload, { exportOnly : testRun }).then(function(response) {
                                 let status = Number(response && response.status);
-                                let success = !!response && !response.error && status === 200;
-                                let erpResponseBody = response && response.data ? response.data.body : null;
-                                let newVersionId = getERPTechnologyResponseVersionId(erpResponseBody);
+                                let success = window.erpClient.isSuccess(response);
+                                let erpResponseBody = window.erpClient.getResponseBody(response);
+                                let newVersionId = window.erpClient.getVersionId(response);
                                 if(success && testRun && isBlank(newVersionId)) {
                                     newVersionId = getERPTechnologyTestVersionPlaceholder(currentJob);
                                 }
@@ -8532,12 +8787,11 @@
     }
 
 
-    function getERPTechnologyResponseVersionId(responseBody) {
-        if(!responseBody || typeof responseBody !== 'object') return '';
-        let value = responseBody.id_wersji;
-        if(isBlank(value)) value = responseBody.ID_WERSJI;
-        let number = Number(value);
-        return isBlank(value) || Number.isNaN(number) ? '' : Math.trunc(number);
+    function prepareERPNewTechnologyRevision(job) {
+        if(!job || job.jobType !== 'technology' || !job.payload) return job;
+        delete job.payload.id_wersji;
+        delete job.payload.zablokowana;
+        return job;
     }
 
     function rememberERPTechnologyVersion(versionByIndex, index, versionId) {
@@ -8628,6 +8882,7 @@
             let chain = Promise.resolve();
             jobs.forEach(function(job, index) {
                 chain = chain.then(function() {
+                    prepareERPNewTechnologyRevision(job);
                     applyERPChildTechnologyVersions(job, versionByIndex);
                     validateERPChildTechnologyVersions(job);
                     return calculateERPHash(job);
@@ -8642,13 +8897,18 @@
                     return ensureERPProductPrerequisite(currentJob, false, results).then(function(productReady) {
                         if(!productReady) throw new Error('Nie udało się przygotować produktu ERP dla „' + currentJob.descriptor + '”.');
 
-                        return $.post(erpTechnologyProxyBaseUrl + 'add-technology', currentJob.payload, null, 'json').then(function(response) {
+                        return window.erpClient.request('add-technology', currentJob.payload).then(function(response) {
                             let status = Number(response && response.status);
-                            let success = !!response && !response.error && status === 200;
-                            let responseBody = response && response.data ? response.data.body : null;
+                            let success = window.erpClient.isSuccess(response);
+                            let responseBody = window.erpClient.getResponseBody(response);
 
                             if(!success) {
                                 throw new Error((response && response.message) || 'Impuls nie zwrócił statusu 200 dla „' + currentJob.descriptor + '”.');
+                            }
+
+                            let newVersionId = window.erpClient.getVersionId(response);
+                            if(isBlank(newVersionId)) {
+                                throw new Error('Impuls nie zwrócił nowego ID_WERSJI dla rewizji „' + currentJob.descriptor + '”.');
                             }
 
                             return updateERPSyncFields(
@@ -8659,7 +8919,6 @@
                             ).then(function(updated) {
                                 if(!updated) throw new Error('Nie udało się zapisać wyniku synchronizacji ERP w PLM dla „' + currentJob.descriptor + '”.');
 
-                                let newVersionId = getERPTechnologyResponseVersionId(responseBody);
                                 rememberERPTechnologyJobVersion(versionByIndex, currentJob, newVersionId, false);
 
                                 results.push({
@@ -8960,10 +9219,11 @@
             .attr('id', 'toggle-erp-technology-test-run')
             .addClass('button')
             .addClass('with-icon')
-            .addClass('icon-toggle-on')
-            .addClass('filled')
-            .text('Tylko przebieg testowy')
+            .addClass(erpSimulationMode ? 'icon-toggle-off' : 'icon-toggle-on')
+            .toggleClass('filled', !erpSimulationMode)
+            .text(erpSimulationMode ? 'Środowisko testowe: zapis do PLM, bez ERP' : 'Tylko przebieg testowy')
             .click(function() {
+                if(erpSimulationMode) return;
                 $(this)
                     .toggleClass('filled')
                     .toggleClass('icon-toggle-on')
@@ -9360,6 +9620,53 @@
         }
     }
 
+    function getFullMBOMExpansionCandidates() {
+        let candidates = [];
+        $('#mbom-tree .item').each(function() {
+            let elemItem = $(this);
+            if(hasMBOMShortcut(elemItem)) candidates.push(elemItem);
+        });
+        return candidates;
+    }
+
+    async function hasFullMBOMExpansionCandidate(candidates) {
+        let checks = candidates.map(async function(elemItem) {
+            let context = await resolveInlineSubMBOMContext(elemItem);
+            if(isBlank(context.expansionLink)) return false;
+            let details = await loadMBOMPropertyRepairDetails(context.expansionLink, 'mBOM');
+            return isMBOMHasBOM(getSectionFieldValue(details.sections || [], 'HAS_BOM', false));
+        });
+        let results = await Promise.all(checks);
+        return results.some(function(result) { return result === true; });
+    }
+
+    function refreshFullMBOMLoadRequirement() {
+        let run = ++fullMBOMAvailabilityRun;
+        let candidates = getFullMBOMExpansionCandidates();
+
+        if(!mbomExistedBeforeEditorLoad || fullMBOMLoadCompleted || candidates.length === 0) {
+            setFullMBOMLoadRequired(false, false);
+            return Promise.resolve(false);
+        }
+
+        // Keep a pre-existing working mBOM non-editable while HAS_BOM is being
+        // checked, but do not expose the action until an eligible branch exists.
+        setFullMBOMLoadRequired(true, false);
+        return hasFullMBOMExpansionCandidate(candidates).then(function(hasCandidate) {
+            if(run !== fullMBOMAvailabilityRun) return false;
+            setFullMBOMLoadRequired(hasCandidate, hasCandidate);
+            return hasCandidate;
+        }).catch(function(error) {
+            if(run !== fullMBOMAvailabilityRun) return false;
+            console.warn('MBOM custom: could not verify whether linked mBOMs have children', error);
+            setFullMBOMLoadRequired(true, false);
+            ensureFullMBOMLoadRequiredLabel()
+                .text('Nie udało się sprawdzić struktury mBOM — odśwież stronę')
+                .toggle(!isMBOMViewingMode());
+            return false;
+        });
+    }
+
     async function expandFullMBOMWithBOM() {
         let processed = new Set();
         let detailsByLink = new Map();
@@ -9418,24 +9725,30 @@
         }
 
         elemButton.prop('disabled', true).addClass('disabled').text('Loading BOM...');
+        beginMBOMLoadingMode('Ładowanie pełnego mBOM — tryb podglądu');
         $('#overlay').show();
+        let loadedSuccessfully = false;
         try {
             await expandFullMBOMWithBOM();
+            loadedSuccessfully = true;
+            fullMBOMLoadCompleted = true;
+            setFullMBOMLoadRequired(false, false);
         } catch(error) {
             console.warn('MBOM custom: full BOM loading failed', error);
             showErrorMessage('Load full BOM', String(error && error.message ? error.message : error));
         } finally {
             elemButton.prop('disabled', false).removeClass('disabled').text('Load full BOM');
+            if(!loadedSuccessfully) setFullMBOMLoadRequired(true, true);
             updateLoadFullMBOMButtonVisibility();
             $('#overlay').hide();
+            endMBOMLoadingMode();
         }
     }
 
     function updateLoadFullMBOMButtonVisibility() {
         let button = $('#load-full-mbom');
-        let hasRedItems = Number($('#ebom-status').attr('data-red-item-count') || 0) > 0;
-        button.toggleClass('hidden', !hasRedItems);
-        button.toggle(hasRedItems);
+        button.toggleClass('hidden', !fullMBOMActionAvailable);
+        button.toggle(fullMBOMActionAvailable);
     }
 
     function insertLoadFullMBOMButton() {
@@ -10074,6 +10387,7 @@
     }
 
     $(document).ready(function() {
+        beginMBOMLoadingMode('Ładowanie mBOM — tryb podglądu');
         insertAddRawMaterialsButton();
         insertLoadFullMBOMButton();
         insertAddLeafMBOMsAndMaterialsButton();
@@ -10945,13 +11259,14 @@
             if(parseMBOMPinnedValue(elemItem.attr('data-pinned')) !== false) return;
 
             let type = normalizeComparisonValue(elemItem.attr('data-item-type'));
-            if(type !== 'manufacturing' && !hasMBOMShortcut(elemItem)) return;
+            let isProcess = ['process', 'operation', 'proces', 'operacja'].includes(type) || elemItem.hasClass('process');
+            if(type !== 'manufacturing' && !isProcess && !hasMBOMShortcut(elemItem)) return;
 
             let elemParent = elemItem.parent().closest('.item');
             let linkParent = getMBOMSaveLink(elemParent);
             let linkChild = getMBOMChildSaveLink(elemItem);
             if(isBlank(linkParent) || isBlank(linkChild)) {
-                throw new Error('Nie udało się przygotować łączy do przypięcia sub-mBOM przed zwolnieniem.');
+                throw new Error('Nie udało się przygotować łączy do przypięcia sub-mBOM lub procesu przed zwolnieniem.');
             }
 
             let fields = [];
@@ -10976,7 +11291,7 @@
         return mapPLMRequestsWithConcurrency(candidates, 5, function(candidate) {
             return $.post('/plm/bom-update', candidate.params).then(function(response) {
                 if(!response || response.error) {
-                    throw new Error('Nie udało się przypiąć sub-mBOM przed zwolnieniem. ' + getRawMaterialErrorMessage(response));
+                    throw new Error('Nie udało się przypiąć sub-mBOM lub procesu przed zwolnieniem. ' + getRawMaterialErrorMessage(response));
                 }
                 candidate.elemItem.attr('data-pinned', 'true').attr('data-pinned-db', 'true');
                 return response;
@@ -11016,8 +11331,12 @@
             seen[normalizePLMLink(rootLink)] = true;
 
             parts.forEach(function(part) {
-                if(!isManufacturingPartForRevisionPolicy(part) || Number(part.level) === 0) return;
-                if(parseMBOMPinnedValue(part.isPinned) !== false) return;
+                if(Number(part.level) === 0) return;
+
+                let isManufacturing = isManufacturingPartForRevisionPolicy(part);
+                let isProcess = isERPSyncBOMOperation(part);
+                if(!isManufacturing && !isProcess) return;
+                if(isManufacturing && parseMBOMPinnedValue(part.isPinned) !== false) return;
 
                 let link = getPLMItemLevelLink(getPartItemLink(part));
                 let key = normalizePLMLink(link);
@@ -11411,7 +11730,9 @@
 
         let created = false;
         let changeOrderLink = '';
-        return findExistingMBOMChangeOrder(rootItem.link, workspaceId, '').then(function(existingLink) {
+        return loadERPSyncBOMParts('working').then(function() {
+            return findExistingMBOMChangeOrder(rootItem.link, workspaceId, '');
+        }).then(function(existingLink) {
             if(!isBlank(existingLink)) return existingLink;
             created = true;
             return createMBOMChangeOrder(workspaceId, rootItem.itemNumber);
@@ -12136,10 +12457,23 @@
 
         let manufacturingKeys = Object.keys(manufacturingByItem);
         let unmatchedKeys = Object.keys(unmatchedByItem);
+        let workingVersionPromises = mergeEditingMBOMRevisionPolicy.workingVersionPromises;
+        if(!workingVersionPromises) {
+            workingVersionPromises = {};
+            mergeEditingMBOMRevisionPolicy.workingVersionPromises = workingVersionPromises;
+        }
+
         let manufacturingRequests = manufacturingKeys.map(function(key) {
             let parts = manufacturingByItem[key];
             let sample = parts[0];
-            return resolveLinkedMBOMWorkingVersion(getPartItemLink(sample)).then(function(result) {
+            if(!workingVersionPromises[key]) {
+                workingVersionPromises[key] = resolveLinkedMBOMWorkingVersion(getPartItemLink(sample)).catch(function(error) {
+                    delete workingVersionPromises[key];
+                    throw error;
+                });
+            }
+
+            return workingVersionPromises[key].then(function(result) {
                 let selectedIndex = result.version && typeof result.version.index === 'number'
                     ? result.version.index : 0;
 
@@ -12268,6 +12602,7 @@
             insertMBOMChangeOrderButtons();
             setupAddProcessPicker();
             applyMBOMRootAccessMode();
+            refreshFullMBOMLoadRequirement();
             $('#confirm-raw-materials').off('click').on('click', function() {
                 if($(this).hasClass('disabled')) return;
                 $('#overlay').hide();
@@ -12276,6 +12611,7 @@
             attachCustomSaveGuard();
             attachERPTabEvents();
             attachCustomModeResizeEvents();
+            endMBOMLoadingMode();
         };
     } else {
         console.warn('MBOM custom: initEditor is not defined yet; custom editor hooks were not attached.');
@@ -12284,11 +12620,13 @@
     if(typeof createMBOMRoot === 'function') {
         let originalCreateMBOMRoot = createMBOMRoot;
         createMBOMRoot = function(ebomItemDetails, callback) {
+            mbomExistedBeforeEditorLoad = isExistingMBOMItemLink(links.mbom);
             if(isBlank(links.mbom) && hasAssemblyIndexTitle(ebomItemDetails)) {
                 directAssemblyIndexEditor = true;
                 links.mbom = getPLMItemLevelLink(
                     (ebomItemDetails && ebomItemDetails.__self__) || links.start || links.ebom
                 );
+                mbomExistedBeforeEditorLoad = isExistingMBOMItemLink(links.mbom);
 
                 console.log('MBOM custom: using assembly index itself as the MBOM root', {
                     link  : links.mbom,
@@ -12561,7 +12899,7 @@
         endProcessing = function endProcessing() {
             $('#confirm-saving').removeClass('disabled').addClass('default');
             $('.in-work').removeClass('in-work');
-            if(!isMBOMViewingMode()) $('#save').removeClass('disabled');
+            if(!isMBOMInteractionLocked()) $('#save').removeClass('disabled');
 
             let timestamp = new Date();
             let lastSync = timestamp.getFullYear() + '-' + (timestamp.getMonth() + 1) + '-' + timestamp.getDate();

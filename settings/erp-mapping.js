@@ -14,13 +14,15 @@ module.exports = {
                 group       : ['GRUPA_PRODUKTOWA'],
                 unit        : ['UNIT_OF_MEASURE', 'UOM', 'UNIT', 'BOM_UOM', 'ITEM_UOM'],
                 makeOrBuy   : ['MAKE_OR_BUY'],
-                multiSeries : ['WIELOSERYJNOSC']
+                multiSeries : ['WIELOSERYJNOSC'],
+                finishedGood: ['WYROB_GOTOWY']
             },
             defaults : {
                 unit                         : 'szt',
                 serialControl                : 'T',
                 serialNumbers                : 'WPD',
-                commercialVersionEditable    : 'T'
+                commercialVersionEditable    : 'T',
+                finishedGoodGroupSuffix      : '_WG'
             },
             required : ['indeks', 'nazwa_czesci', 'id_grupy'],
             propertyProfiles : {
@@ -85,7 +87,7 @@ module.exports = {
             fields : {
                 index         : ['NUMBER'],
                 name          : ['NAZWA_DEFRO', 'TITLE'],
-                description   : ['OPIS'],
+                description   : ['REVISION'],
                 revision      : ['REVISION'],
                 versionId     : ['ID_WERSJI'],
                 technologyId  : ['ID_TECHNOLOGI'],

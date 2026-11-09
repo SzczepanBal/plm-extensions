@@ -326,7 +326,7 @@ exports.applications = {
         bomViewName      : 'Details',
         fieldIdPRImage   : 'IMAGE_1',
         fieldIdPRContext : 'AFFECTED_ITEM',
-        // rollUpFields     : [],
+        rollUpFields     : [],
         problemReports   : { workspaceId : null },   // uses common.workspaceIds per default
         supplierPackages : { workspaceId : null },   // uses common.workspaceIds per default
         kpis : [

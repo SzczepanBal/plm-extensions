@@ -18,7 +18,7 @@ block body
             #header-subtitle= title === 'Item Manager' ? 'Manage Items workspace records with ease' : 'Perform data cleansing operations with ease'
             #header-toolbar
                 .button.with-icon.icon-delete#clear-console Wyczyść log
-                .button.with-icon.icon-toggle-off#test-run(title="Tworzy plik JSON, oblicza ERP_HASH i symuluje wynik onEdit bez wysyłania danych do ERP oraz bez zmiany pól w PLM.") Tylko przebieg testowy
+                .button.with-icon.icon-toggle-on.filled#test-run(title="Dla operacji ERP: nie wysyła danych do ERP, ale zapisuje w PLM pola sukcesu tak jak po prawidłowej odpowiedzi ERP.") Tryb testowy ERP
                 .button.with-icon.icon-start.default#start Uruchom
                 .button.with-icon.icon-stop#stop Zatrzymaj
                 #header-avatar
