@@ -1,0 +1,571 @@
+body.mode-erp #viewer,
+body.mode-erp #ebom,
+body.mode-erp #add,
+body.mode-erp #operations {
+    display: none !important;
+}
+
+body.mode-erp #erp {
+    display: block !important;
+}
+
+#erp {
+    left: 0;
+    right: 0;
+    display: none;
+}
+
+.erp-panel {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    padding: 24px;
+    overflow: auto;
+}
+
+.erp-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.erp-description {
+    color: var(--color-gray-500);
+    margin-bottom: 16px;
+}
+
+#check-erp-status {
+    display: inline-flex;
+    margin-bottom: 16px;
+}
+
+#copy-erp-status {
+    display: inline-flex;
+    margin-bottom: 16px;
+    margin-left: 8px;
+}
+
+.erp-status-output {
+    background: var(--color-surface-level-3);
+    border: 1px solid var(--color-gray-300);
+    border-radius: 4px;
+    line-height: 1.5;
+    min-height: 220px;
+    overflow: auto;
+    padding: 16px;
+    user-select: text;
+    -webkit-user-select: text;
+    white-space: pre-wrap;
+}
+
+.erp-status-output.error {
+    border-color: var(--color-red-500);
+}
+
+.erp-status-output,
+.erp-status-output * {
+    cursor: text;
+}
+
+#dialog-erp-sync {
+    bottom: auto;
+    height: 250px;
+    left: calc(50% - 330px);
+    right: auto;
+    top: calc(50% - 125px);
+    width: 660px;
+}
+
+#confirm-erp-sync {
+    float: unset;
+    margin: 0;
+}
+
+/* Custom MBOM layout: MBOM / EBOM / viewer = 35 / 35 / 30. */
+:root {
+    --custom-details-mbom-share: 240px;
+}
+
+#mbom {
+    width: calc(35% - (2 * var(--border-h)));
+}
+
+#tabs {
+    left: 35%;
+}
+
+.viewer {
+    left: calc(53.846% + (var(--border-h) / 2));
+}
+
+#ebom {
+    width: calc(53.846% - (var(--border-h) / 2));
+}
+
+/* Custom layout without viewer: MBOM / EBOM = 50 / 50. */
+body.mode-ebom.no-viewer #mbom {
+    right: 50%;
+    width: unset;
+}
+
+body.mode-ebom.no-viewer #tabs {
+    left: 50%;
+    width: unset;
+}
+
+body.details-on.no-viewer #mbom {
+    right: unset;
+    width: calc(50% - (2 * var(--border-h)) - var(--custom-details-mbom-share));
+}
+
+body.details-on.no-viewer #tabs {
+    left: calc(50% - var(--custom-details-mbom-share));
+}
+
+/* Operations & Suppliers is not used in the custom MBOM UI. */
+#mode-operations {
+    display: none !important;
+}
+
+@media only screen and (max-device-width: 1920px) {
+    :root {
+        --custom-details-mbom-share: 216px;
+    }
+}
+
+/* Keep both sub-MBOM actions inside their row instead of stacking vertically. */
+.item-toggle.has-mbom-shortcuts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+}
+
+.item-toggle.has-mbom-shortcuts > .mbom-shortcut {
+    box-sizing: border-box;
+    display: block;
+    font-size: 16px;
+    max-width: none;
+    min-width: 0;
+    width: auto;
+}
+
+.item-toggle.has-mbom-shortcuts > .mbom-shortcut:first-child {
+    border-radius: 2px 0 0 2px;
+}
+
+.item-toggle.has-mbom-shortcuts > .mbom-shortcut:last-child {
+    border-left: 0;
+    border-radius: 0 2px 2px 0;
+}
+
+/* Linked mBOM state marker: keep it on the right side of the eBOM row,
+   immediately before the row action area. */
+#ebom .linked-mbom-marker {
+    align-self: center;
+    box-sizing: border-box;
+    color: var(--color-gray-600);
+    cursor: pointer;
+    flex: 0 0 var(--height-item);
+    font-size: 18px;
+    height: var(--height-item);
+    line-height: var(--height-item);
+    margin-left: 4px;
+    max-width: var(--height-item);
+    min-width: var(--height-item);
+    outline: none;
+    padding: 0;
+    position: relative;
+    text-align: center;
+    width: var(--height-item);
+}
+
+#ebom .linked-mbom-marker:hover,
+#ebom .linked-mbom-marker:focus-visible,
+#ebom .linked-mbom-marker.active {
+    color: var(--color-blue-500);
+}
+
+#ebom .linked-mbom-marker.active {
+    font-variation-settings: 'FILL' 1;
+}
+
+#ebom .linked-mbom-marker.loading::before {
+    animation: linked-mbom-marker-spin 0.8s linear infinite;
+    border: 2px solid var(--color-gray-600);
+    border-radius: 50%;
+    border-top-color: var(--color-blue-500);
+    box-sizing: border-box;
+    content: '';
+    display: inline-block;
+    height: 16px;
+    vertical-align: middle;
+    width: 16px;
+}
+
+#raw-material-results {
+    background: var(--color-surface-level-2);
+    border-left: 4px solid var(--color-status-green);
+    display: none;
+    line-height: 22px;
+    margin-top: 24px;
+    padding: 12px 16px;
+    white-space: pre-line;
+}
+
+#raw-material-results.with-warning {
+    border-left-color: var(--color-status-yellow);
+}
+
+#dialog-raw-materials .step {
+    gap: 12px;
+}
+
+#dialog-raw-materials .step-label {
+    flex: 0 0 210px;
+    width: auto;
+}
+
+#dialog-raw-materials .step-progress {
+    flex: 1 1 auto;
+    min-width: 120px;
+    width: auto;
+}
+
+#dialog-raw-materials .step-counter {
+    flex: 0 0 190px;
+    overflow: visible;
+    padding-left: 0;
+    text-overflow: clip;
+    width: auto;
+}
+
+#dialog-raw-materials .raw-material-creation-list {
+    margin: 10px 0 14px;
+    padding-left: 22px;
+    white-space: normal;
+}
+
+#dialog-raw-materials .raw-material-confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+    white-space: normal;
+}
+
+#dialog-raw-materials .raw-material-confirm-actions > .button {
+    box-sizing: border-box;
+    height: 34px;
+    line-height: 32px;
+    margin: 0;
+    min-width: 150px;
+    padding: 0 16px;
+    text-align: center;
+}
+
+@media only screen and (max-width: 720px) {
+    #dialog-raw-materials .step {
+        flex-wrap: wrap;
+        height: auto;
+    }
+
+    #dialog-raw-materials .step-label {
+        flex-basis: 100%;
+    }
+
+    #dialog-raw-materials .step-counter {
+        flex-basis: 150px;
+    }
+}
+
+#ebom .linked-mbom-marker.error {
+    color: var(--color-gray-600);
+}
+
+#ebom .linked-mbom-marker.error::after {
+    align-items: center;
+    background: var(--color-status-red);
+    border-radius: 50%;
+    color: white;
+    content: '!';
+    display: flex;
+    font-family: Arial, sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    height: 12px;
+    justify-content: center;
+    line-height: 12px;
+    position: absolute;
+    right: 1px;
+    top: 2px;
+    width: 12px;
+}
+
+/* A linked eBOM assembly cannot be evaluated until its mBOM branch is loaded. */
+#ebom .item.linked-mbom-check-pending > .item-head > .item-head-status {
+    background: var(--color-gray-400, #bbbbbb) !important;
+}
+
+/* Linked assemblies can insert their existing MBOM, without creating another one. */
+#ebom .item.linked-mbom-bom > .item-head > .item-actions > :not(.item-action-add-linked-mbom) {
+    display: none !important;
+}
+#ebom .item.linked-mbom-missing > .item-head > .item-actions,
+#ebom .item.linked-mbom-missing > .item-head > .item-actions > .item-action-add-linked-mbom {
+    display: block !important;
+}
+#ebom .item.linked-mbom-missing > .item-head > .item-head-status {
+    background: var(--color-status-red) !important;
+}
+
+@keyframes linked-mbom-marker-spin {
+    to { transform: rotate(360deg); }
+}
+
+#mbom .item.linked-mbom-focus > .item-head,
+#ebom .item.linked-ebom-focus > .item-head {
+    outline: 2px solid var(--color-blue-500);
+    outline-offset: -2px;
+}
+
+/* Read-only BOM navigation sits above the assembly-index action. */
+#mbom-overview-row {
+    display: flex;
+    flex: 0 0 100%;
+    gap: 8px;
+    margin-bottom: 6px;
+    width: 100%;
+}
+
+#mbom-overview-row > .button,
+#mbom-add-assembly-index-row > .button {
+    box-sizing: border-box;
+    height: 28px;
+    line-height: 26px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#mbom-overview-row > .button {
+    flex: 1 1 50%;
+}
+
+/* Reserve space for all three rows of the custom MBOM add panel. */
+#mbom-tree {
+    bottom: 130px;
+}
+
+/* Offer MBOM creation beside Add for unmatched EBOM Make items. */
+#ebom .additional.ebom-make-item > .item-head > .item-actions > .item-action-make-factory {
+    display: block;
+}
+
+/* MBOM-only objects are intentionally outside the EBOM alignment. */
+#mbom .item.mbom-only > .item-head > .item-head-status {
+    background: var(--color-blue-500);
+}
+
+/* Editable item.WIELOSERYJNOSC value loaded through the Transition BOM view. */
+#mbom .item-multi-series {
+    align-items: center;
+    background: var(--color-surface-level-3);
+    border-bottom: 1px solid transparent;
+    border-top: 1px solid transparent;
+    display: flex;
+    justify-content: center;
+    max-width: 24px;
+    min-width: 24px;
+    width: 24px;
+}
+
+#mbom .item-multi-series > input {
+    cursor: pointer;
+    height: 14px;
+    margin: 0;
+    width: 14px;
+}
+
+#mbom .item.multi-series-saving > .item-head > .item-multi-series {
+    opacity: 0.55;
+}
+
+#mbom .item.selected > .item-head > .item-multi-series,
+#mbom .item-head:hover > .item-multi-series {
+    background: var(--color-selected-background);
+    border-color: var(--color-selected-border);
+}
+
+#dialog-confirm-raw-materials,
+#dialog-raw-materials {
+    box-sizing: border-box;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(960px, calc(100vw - 48px));
+    height: min(780px, calc(100vh - 48px));
+}
+#dialog-confirm-raw-materials {
+    height: min(620px, calc(100vh - 48px));
+}
+#dialog-raw-materials .dialog-content,
+#dialog-confirm-raw-materials .dialog-content {
+    overflow-y: auto;
+}
+.raw-material-report { white-space: normal; padding-left: 20px; }
+.raw-material-report li { margin: 12px 0; }
+.raw-material-report a { text-decoration: underline; }
+.raw-material-warning { font-weight: 600; }
+#dialog-confirm-raw-materials .raw-material-mode-options {
+    display: grid;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+#dialog-confirm-raw-materials .raw-material-mode-options > .button {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    height: auto;
+    line-height: 1.35;
+    min-height: 58px;
+    padding: 10px 14px;
+    text-align: left;
+    white-space: normal;
+    width: 100%;
+}
+
+#dialog-confirm-raw-materials .raw-material-mode-options > .button strong,
+#dialog-confirm-raw-materials .raw-material-mode-options > .button span {
+    display: block;
+}
+
+#dialog-confirm-raw-materials .raw-material-mode-options > .button span {
+    font-size: 12px;
+    font-weight: normal;
+    opacity: 0.85;
+}
+
+#dialog-confirm-raw-materials .dialog-footer > .button {
+    box-sizing: border-box;
+    height: 36px;
+    line-height: 34px;
+    margin: 0;
+    min-width: 100px;
+    padding: 0 18px;
+}
+
+#dialog-confirm-raw-materials,
+#dialog-raw-materials { right: auto; bottom: auto; }
+#dialog-confirm-raw-materials .dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* Keep the full-BOM action next to the red/yellow/green comparison line. */
+#ebom-status { align-items: center; }
+#load-full-mbom {
+    flex: 0 0 auto;
+    margin: 0 5px;
+    padding: 0 8px;
+    height: 22px;
+    line-height: 20px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+#dialog-saving {
+    height : 384px;
+    top    : calc(50% - 192px);
+}
+
+/* Released root mBOMs are strictly read-only. */
+#mbom-viewing-mode-label,
+#mbom-loading-mode-label,
+#mbom-full-load-required-label {
+    align-items: center;
+    border: 1px solid var(--color-status-yellow);
+    border-radius: 3px;
+    color: var(--color-status-yellow);
+    display: flex;
+    font-weight: 700;
+    padding: 0 12px;
+}
+
+body.mbom-viewing-mode #save,
+body.mbom-viewing-mode #add-all,
+body.mbom-viewing-mode #add-leaf-mboms-and-materials,
+body.mbom-viewing-mode #deselect-all,
+body.mbom-viewing-mode #add-raw-materials,
+body.mbom-viewing-mode #sync-erp-technologies,
+body.mbom-viewing-mode #mode-add,
+body.mbom-viewing-mode #mode-operations,
+body.mbom-viewing-mode #mbom-add-process,
+body.mbom-viewing-mode #ebom .item-actions,
+body.mbom-viewing-mode #mbom .item-head-actions {
+    display: none !important;
+}
+
+body.mbom-viewing-mode #mbom-tree {
+    bottom: 0;
+}
+
+body.mbom-viewing-mode #mbom input,
+body.mbom-viewing-mode #mbom select {
+    pointer-events: none;
+}
+
+/* Initial and recursive full-BOM loading are temporarily read-only. */
+body.mbom-loading-mode #save,
+body.mbom-loading-mode #add-all,
+body.mbom-loading-mode #add-leaf-mboms-and-materials,
+body.mbom-loading-mode #deselect-all,
+body.mbom-loading-mode #add-raw-materials,
+body.mbom-loading-mode #sync-erp-technologies,
+body.mbom-loading-mode #mode-add,
+body.mbom-loading-mode #mode-operations,
+body.mbom-loading-mode #mbom-add-process,
+body.mbom-loading-mode #ebom .item-actions,
+body.mbom-loading-mode #mbom .item-head-actions {
+    display: none !important;
+}
+
+body.mbom-loading-mode #mbom input,
+body.mbom-loading-mode #mbom select,
+body.mbom-loading-mode #mbom-tree,
+body.mbom-loading-mode #ebom-tree {
+    pointer-events: none;
+}
+
+body.mbom-loading-mode #main,
+body.mbom-loading-mode #header-toolbar {
+    pointer-events: none;
+}
+
+/* A working mBOM with unloaded HAS_BOM branches is temporarily locked until
+   the explicit full-BOM action completes. This is separate from released view mode. */
+body.mbom-full-load-required #save,
+body.mbom-full-load-required #add-all,
+body.mbom-full-load-required #add-leaf-mboms-and-materials,
+body.mbom-full-load-required #deselect-all,
+body.mbom-full-load-required #add-raw-materials,
+body.mbom-full-load-required #sync-erp-technologies,
+body.mbom-full-load-required #mode-add,
+body.mbom-full-load-required #mode-operations,
+body.mbom-full-load-required #mbom-add-process,
+body.mbom-full-load-required #ebom .item-actions,
+body.mbom-full-load-required #mbom .item-head-actions {
+    display: none !important;
+}
+
+body.mbom-full-load-required #mbom input,
+body.mbom-full-load-required #mbom select,
+body.mbom-full-load-required #mbom-tree,
+body.mbom-full-load-required #ebom-tree {
+    pointer-events: none;
+}

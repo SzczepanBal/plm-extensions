@@ -6,7 +6,8 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "start": "node --max-http-header-size=16384 ./bin/www"
+    "start": "node --max-http-header-size=16384 ./bin/www",
+    "test": "node tests/mbom-holistic.test.js && node tests/item-manager.test.js"
   },
   "dependencies": {
     "agentkeepalive": "*",
@@ -18,6 +19,7 @@
     "express-session": "*",
     "form-data": "*",
     "jsonwebtoken": "^9.0.3",
+    "markdown-it": "^14.1.0",
     "morgan": "*",
     "pug": "*",
     "serve-favicon": "*",

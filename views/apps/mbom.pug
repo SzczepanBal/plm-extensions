@@ -189,7 +189,7 @@ block body
                 #insert-cancel.button Cancel
 
         #dialog-convert.dialog
-            .dialog-header Create and insert MBOM
+            .dialog-header Utwórz i wstaw mBOM
             .dialog-content
                 span This will create a matching MBOM for 
                     span#convert-item-name 
@@ -225,3 +225,39 @@ block body
                     #step-counter4.step-counter 
             .dialog-footer
                 #confirm-saving.button.disabled Close            
+                #confirm-saving.button.disabled Zamknij
+
+        #dialog-confirm-raw-materials.dialog(role='dialog' aria-modal='true' aria-labelledby='raw-material-confirm-title')
+            #raw-material-confirm-title.dialog-header Surowce
+            .dialog-content
+                p Wybierz sposób aktualizacji surowców w bieżącym mBOM i wszystkich zagnieżdżonych sub-mBOM.
+                p.raw-material-warning Dane materiału i ilości pochodzą z pól MATERIAL oraz ILOSC_ROZLICZENIOWA.
+                .raw-material-mode-options
+                    button#start-add-missing-raw-materials.button.default(type='button')
+                        strong Dodaj tylko brakujące surowce
+                        span Istniejące surowce i ich ilości pozostaną bez zmian.
+                    button#start-update-raw-material-quantities.button(type='button')
+                        strong Aktualizuj tylko ilości
+                        span Zmień ilości istniejących surowców zgodnie z ILOSC_ROZLICZENIOWA. Nie dodawaj brakujących.
+                    button#start-overwrite-raw-materials.button(type='button')
+                        strong Nadpisz bieżące danymi z Vault
+                        span Dodaj brakujące surowce i zaktualizuj ilości istniejących.
+            .dialog-footer
+                button#cancel-add-raw-materials.button(type='button') Anuluj
+
+        #dialog-raw-materials.dialog
+            .dialog-header Przetwarzanie surowców
+            .dialog-content
+                #raw-step1.step
+                    .step-label Wyszukiwanie surowców
+                    .step-progress
+                        #raw-step-bar1.step-bar
+                    #raw-step-counter1.step-counter
+                #raw-step2.step
+                    .step-label Aktualizacja mBOM
+                    .step-progress
+                        #raw-step-bar2.step-bar
+                    #raw-step-counter2.step-counter
+                #raw-material-results
+            .dialog-footer
+                #confirm-raw-materials.button.disabled Zamknij

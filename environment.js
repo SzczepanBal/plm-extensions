@@ -165,6 +165,16 @@ exports.bomCache = {
     maxRoots       : 0
 };
 
+//  Use these settings for custom ERP proxy endpoints in routes/plm.js.
+//  The values can also be provided through environment variables and will then override this file.
+exports.erp = {
+    baseUrl       : '',
+    integrationId : '',
+    username      : '',
+    password      : '',
+    simulationMode: true
+};
+
 
 // ---------------------------------------------------------------------------------------------------------------------------
 //  ENVIRONMENT VARIABLES
@@ -189,4 +199,23 @@ exports.bomCache = {
 //   - SSA_ACCOUNT_ID      ( overrides exports.ssaAccountId      )
 //   - SSA_KEY_ID          ( overrides exports.ssaKeyId          )
 //   - SSA_PRIVATE_KEY     ( overrides exports.ssaPrivateKey     )
+// ---------------------------------------------------------------------------------------------------------------------------
+//  This is why you can also provide all these settings by using the environment variables listed below. 
+//  Environment variables have higher priority, mattching environment variable values overwrite the value defined in this file
+//   - TENANT
+//   - CLIENT_ID
+//   - REDIRECT_URI
+//   - DEFAULT_THEME
+//   - ENABLE_CACHE
+//   - SETTINGS
+//   - DEBUG_MODE
+//   - ADMIN_CLIENT_ID
+//   - ADMIN_CLIENT_SECRET
+//   - VAULT_GATEWAY
+//   - VAULT_NAME
+//   - ERP_BASE_URL
+//   - ERP_INTEGRATION_ID
+//   - ERP_USERNAME
+//   - ERP_PASSWORD
+//   - ERP_SIMULATION_MODE
 // ---------------------------------------------------------------------------------------------------------------------------

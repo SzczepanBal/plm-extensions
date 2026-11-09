@@ -15,12 +15,12 @@ block body
         #header.dark
             #header-logo
             #header-title=title
-            #header-subtitle Perform data cleansing operations with ease
+            #header-subtitle= title === 'Item Manager' ? 'Manage Items workspace records with ease' : 'Perform data cleansing operations with ease'
             #header-toolbar
-                .button.with-icon.icon-delete#clear-console Clear Console
-                .button.with-icon.icon-toggle-off#test-run(title="When enabled, the utility will not modify any data, but list the records that would be impacted. This helps validating the data filters.") Test Run Only
-                .button.with-icon.icon-start.default#start Start
-                .button.with-icon.icon-stop#stop Stop
+                .button.with-icon.icon-delete#clear-console Wyczyść log
+                .button.with-icon.icon-toggle-on.filled#test-run(title="Dla operacji ERP: nie wysyła danych do ERP, ale zapisuje w PLM pola sukcesu tak jak po prawidłowej odpowiedzi ERP.") Tryb testowy ERP
+                .button.with-icon.icon-start.default#start Uruchom
+                .button.with-icon.icon-stop#stop Zatrzymaj
                 #header-avatar
         .screen.surface-level-1
 
@@ -232,6 +232,28 @@ block body
                             .action-details   
                                 .description Removes all additional owners (users and groups)
 
+                        .action#sync-to-erp
+                            .action-title Synchronizuj z ERP
+                            .action-details
+                                .description Wysyła elementy bezpośrednio do ERP bez tworzenia Quick Release i bez zwalniania ich w PLM. ERP_SYNC_STATUS określa, czy element wymaga wysłania. WYSLANE_DO_ERP = true wraz z niepustym INDEKS_CZESCI wybiera modify-product; w pozostałych przypadkach używany jest add-product. Po poprawnej odpowiedzi zapisuje ERP_HASH oraz INDEKS_CZESCI w PLM.
+                                .definition
+                                    .label Dane wysyłane
+                                    .description
+                                        code { "indeks": "NUMBER", "nazwa_czesci": "NAZWA_DEFRO (fallback: TITLE)", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [{ "Nazwa": "NAZWA_DEFRO (fallback: TITLE)" }, { "Opis": "OPIS" }] }
+
+                        .action#release-sync-to-erp
+                            .action-title Zwolnij w PLM i synchronizuj z ERP
+                            .action-details
+                                .description Tworzy jeden Quick Release, zwalnia elementy wymagające synchronizacji, a następnie wysyła je do ERP. ERP_SYNC_STATUS = UP_TO_DATE pomija element, natomiast NOT_SYNCED i OUT_OF_DATE wymagają wysłania. WYSLANE_DO_ERP = true wraz z niepustym INDEKS_CZESCI wybiera modify-product; w pozostałych przypadkach używany jest add-product.
+                                .definition
+                                    .label Dane wysyłane
+                                    .description
+                                        code { "indeks": "NUMBER", "nazwa_czesci": "NAZWA_DEFRO (fallback: TITLE)", "id_grupy": "GRUPA_PRODUKTOWA", "jednostka_miary": "szt", "wlasnosci": [{ "Nazwa": "NAZWA_DEFRO (fallback: TITLE)" }, { "Opis": "OPIS" }] }
+
+                        .action.item-manager-only.hidden#resend-to-erp
+                            .action-title Prześlij ponownie do ERP
+                            .action-details
+                                .description Dla każdego elementu znajduje powiązany Quick Release z workspace 78. Jeżeli Quick Release jest w stanie 638 (ERP Integration Issue), wykonuje przejście 1250 (Prześlij ponownie), ponownie wysyła element do ERP, a następnie kończy workflow przejściem 1252 lub zgłasza błąd przejściem 1251.
                         .action.ws-type-2#perform-transition  
                             .action-title Perform Workflow Transition
                             .action-details   

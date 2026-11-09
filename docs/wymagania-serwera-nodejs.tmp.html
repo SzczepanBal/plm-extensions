@@ -1,0 +1,210 @@
+﻿<!DOCTYPE html><html><head><meta charset=utf-8><title>Wymagania dla serwera Node.js</title><style>@page{size:A4;margin:2cm} body{font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.35;color:#222} h1{font-size:22pt;color:#1f4e79;margin-bottom:18pt} h2{font-size:15pt;color:#1f4e79;margin-top:18pt;border-bottom:1px solid #b4c6e7;padding-bottom:3pt} h3{font-size:12pt;color:#2f5597} p{margin:0 0 8pt} li{margin-bottom:3pt} blockquote{margin:10pt 0;padding:8pt 12pt;background:#eef3f8;border-left:4px solid #5b9bd5;color:#444} pre{font-family:Consolas,monospace;font-size:9pt;background:#f3f3f3;border:1px solid #ddd;padding:8pt;white-space:pre-wrap} code{font-family:Consolas,monospace;font-size:9pt} a{color:#0563c1;text-decoration:underline} table{border-collapse:collapse;width:100%;margin:8pt 0} th,td{border:1px solid #b7b7b7;padding:5pt} th{background:#d9eaf7}</style></head><body><h1>Wymagania i zalecenia dla serwera Node.js</h1>
+<blockquote>
+<p>Zakres analizy: kod aplikacji PLM Extensions dostępny w repozytorium, gałąź <code>Defro</code>, stan z 28 lipca 2026 r.<br>
+Szczegółowy opis komponentów znajduje się w dokumencie <a href="nodejs-solution-architecture.md">„Architektura aplikacji Node.js”</a>.</p>
+</blockquote>
+<h2>1. Cel aplikacji</h2>
+<p>PLM Extensions jest aplikacją internetową zbudowaną w Node.js i Express. Serwer stanowi warstwę aplikacyjną pomiędzy przeglądarką użytkownika, w której działają UX Extensions, a usługami Autodesk, przede wszystkim Autodesk Fusion Manage.</p>
+<p>Serwer nie zastępuje Fusion Manage i nie jest głównym systemem przechowywania danych biznesowych. Jego zadania obejmują:</p>
+<ul>
+<li>uwierzytelnienie użytkownika w Autodesk Platform Services (APS),</li>
+<li>utrzymywanie sesji użytkownika i tokenów OAuth,</li>
+<li>renderowanie stron Pug oraz udostępnianie plików JavaScript, CSS i obrazów,</li>
+<li>przyjmowanie żądań AJAX z przeglądarki,</li>
+<li>wywoływanie Fusion Manage REST API za pomocą Axios,</li>
+<li>przekazywanie, a w części endpointów także łączenie i przekształcanie odpowiedzi,</li>
+<li>obsługę integracji z Autodesk Vault i opcjonalnym systemem ERP,</li>
+<li>obsługę załączników, pamięci podręcznej, importów, eksportów i plików Excel.</li>
+</ul>
+<p>Typowy przepływ żądania wygląda następująco:</p>
+<pre><code class="language-mermaid">flowchart LR
+    U[Przeglądarka użytkownika]
+    N[Node.js / Express]
+    S[Sesja i token OAuth]
+    F[Autodesk Fusion Manage API]
+    V[APS Viewer / Vault]
+    D[Lokalny cache i pliki]
+
+    U --&gt;|AJAX /plm| N
+    N &lt;--&gt; S
+    N --&gt;|HTTPS + token użytkownika| F
+    F --&gt;|JSON / pliki| N
+    N &lt;--&gt; D
+    N --&gt;|Vault API / dane Viewera| V
+    U --&gt;|renderowanie modelu| V
+    N --&gt;|odpowiedź| U
+    U --&gt;|renderowanie interfejsu| U
+</code></pre>
+<p>W kodzie odpowiadają za to przede wszystkim:</p>
+<ul>
+<li><code>app.js</code> – konfiguracja Express, sesji, middleware i routingu,</li>
+<li><code>bin/www</code> – uruchomienie pojedynczego serwera HTTP lub HTTPS,</li>
+<li><code>routes/landing.js</code> – strony aplikacji oraz logowanie APS OAuth 2.0 z PKCE,</li>
+<li><code>routes/plm.js</code> – rozbudowana warstwa integracyjna Fusion Manage,</li>
+<li><code>routes/pdm.js</code> – integracja Vault,</li>
+<li><code>routes/services.js</code> – pliki i usługi pomocnicze,</li>
+<li><code>views/</code> – szablony Pug,</li>
+<li><code>public/javascripts/</code> – logika interfejsu i przetwarzanie po stronie przeglądarki.</li>
+</ul>
+<p>Repozytorium zawiera również moduł <code>routes/aps.js</code>, ale w analizowanej wersji nie jest on zarejestrowany w głównym routingu <code>app.js</code>.</p>
+<h2>2. Sposób działania Service Portal</h2>
+<p>Service Portal nie pobiera wszystkich danych jednym żądaniem. Podczas inicjalizacji przeglądarka uruchamia kilka zapytań, między innymi o użytkownika, sekcje workspace oraz konfigurację widoku BOM. Po otwarciu elementu uruchamiane są kolejne operacje dotyczące deskryptora, Item Details, załączników, BOM, danych Viewera oraz – zależnie od konfiguracji – Service BOM i powiązanych paneli.</p>
+<p>Część żądań jest wykonywana równolegle. Skraca to ścieżkę krytyczną ładowania ekranu, ale oznacza również, że jeden aktywny użytkownik może w tym samym czasie wygenerować kilka połączeń do Node.js i kilka dalszych wywołań Fusion Manage API. Dlatego liczba zalogowanych użytkowników nie jest równa liczbie jednoczesnych żądań.</p>
+<p>Duża część renderowania tabel, paneli, BOM i Viewera odbywa się w przeglądarce. Serwer nadal wykonuje jednak więcej pracy niż prosty, przezroczysty proxy: zarządza uwierzytelnieniem i sesją, buduje nagłówki dla Fusion Manage, agreguje wyniki niektórych endpointów oraz wykonuje operacje na plikach.</p>
+<h2>3. Co wpływa na czas odpowiedzi</h2>
+<p>W standardowym scenariuszu odczytu danych głównym składnikiem czasu jest zwykle Fusion Manage API. Na czas otwarcia ekranu wpływają przede wszystkim:</p>
+<ul>
+<li>liczba i czas odpowiedzi wywołań Fusion Manage API,</li>
+<li>wielkość oraz liczba poziomów struktury BOM,</li>
+<li>liczba pól i sekcji w Item Details,</li>
+<li>liczba, wielkość i typ załączników,</li>
+<li>dostępność danych dla APS Viewer,</li>
+<li>opóźnienie sieci pomiędzy serwerem Node.js a usługami Autodesk,</li>
+<li>liczba wywołań uruchomionych równolegle przez wszystkich użytkowników,</li>
+<li>czas przetwarzania i renderowania danych w przeglądarce.</li>
+</ul>
+<p>Całkowity czas odczuwany przez użytkownika można w uproszczeniu zapisać jako:</p>
+<pre><code class="language-text">czas w przeglądarce
++ opóźnienie sieci przeglądarka ↔ Node.js
++ oczekiwanie i przetwarzanie w Node.js
++ ścieżka krytyczna wywołań Fusion Manage / APS / Vault
++ renderowanie interfejsu
+</code></pre>
+<p>Stwierdzenie, że wydajność zależy wyłącznie od PLM API, byłoby zbyt daleko idące. Dla typowych żądań JSON narzut Node.js powinien być mały, ponieważ komunikacja sieciowa przez Axios jest asynchroniczna. Node.js dobrze obsługuje wiele równoczesnych operacji I/O, jeżeli pojedyncze callbacki wykonują niewielką ilość pracy. Tak opisuje ten model również oficjalna dokumentacja <a href="https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop">Node.js dotycząca Event Loop</a>.</p>
+<p>W analizowanym kodzie znajdują się jednak także synchroniczne operacje plikowe, np. <code>readFileSync</code>, <code>appendFileSync</code>, <code>readdirSync</code>, <code>writeFileSync</code> i <code>rmSync</code>. Występują one głównie w obsłudze cache, eksportów, importów i załączników. Podczas dużych operacji plikowych mogą blokować Event Loop i chwilowo opóźniać także innych użytkowników. Z tego powodu wydajność operacji plikowych należy testować oddzielnie od zwykłego otwierania Service Portal.</p>
+<h2>4. Obciążenie i współbieżność</h2>
+<p>Projekt zakłada około 200 użytkowników, z czego około 20–50 może pracować jednocześnie. Taka liczba użytkowników jest realna dla Node.js, ale sama w sobie nie pozwala zagwarantować wymaganej wydajności.</p>
+<p>Rzeczywiste obciążenie zależy od zachowania użytkowników:</p>
+<ul>
+<li>50 użytkowników przeglądających proste rekordy generuje inne obciążenie niż 20 użytkowników otwierających duże BOM,</li>
+<li>pobieranie załączników i generowanie Excela zużywa więcej pamięci oraz operacji dyskowych niż małe odpowiedzi JSON,</li>
+<li>funkcje masowe, takie jak Data Manager, mogą generować stały strumień zapytań przez ponad godzinę,</li>
+<li>równoległe żądania skracają czas pojedynczego ekranu tylko do momentu, w którym nie zostaną przekroczone możliwości API, sieci lub procesu Node.js.</li>
+</ul>
+<p>APS stosuje limity liczby wywołań. Po przekroczeniu limitu usługa może zwrócić <code>429 Too Many Requests</code> wraz z nagłówkiem <code>Retry-After</code>. Autodesk zaleca buforowanie danych, ograniczenie niepotrzebnych zapytań oraz kontrolowane ponowienie po czasie wskazanym przez usługę: <a href="https://aps.autodesk.com/blog/rate-limiting">APS – Rate Limiting</a> i <a href="https://aps.autodesk.com/blog/autodesk-platform-services-aps-api-rate-limits-best-practices-developers">APS – dobre praktyki dla limitów API</a>.</p>
+<p>Nie należy więc zwiększać współbieżności bez pomiarów. Limit powinien być dostrojony tak, aby poprawiał przepustowość, ale nie powodował wzrostu błędów <code>429</code>, czasu oczekiwania ani zużycia pamięci.</p>
+<h2>5. Zalecana konfiguracja początkowa</h2>
+<p>Dla około 200 kont i 20–50 aktywnych użytkowników rozsądnym punktem startowym jest:</p>
+<ul>
+<li>4 vCPU,</li>
+<li>8 GB RAM dla profilu bez dużych operacji plikowych,</li>
+<li>16 GB RAM, jeżeli regularnie przetwarzane są duże załączniki, eksporty Excel lub duże odpowiedzi BOM,</li>
+<li>dysk SSD,</li>
+<li>odpowiednia pojemność dysku dla <code>storage/</code>, <code>uploads/</code>, cache, importów i eksportów,</li>
+<li>stabilne łącze z niskim opóźnieniem do usług Autodesk i otwarty ruch wychodzący HTTPS,</li>
+<li>64-bitowy system operacyjny,</li>
+<li>Node.js w obsługiwanej linii LTS,</li>
+<li>reverse proxy lub load balancer zapewniający TLS, limity połączeń i kompresję,</li>
+<li>automatyczny restart procesu po awarii oraz po restarcie systemu.</li>
+</ul>
+<p>Na dzień 28 lipca 2026 r. najnowszą linią LTS jest Node.js 24, natomiast Node.js 26 pozostaje wydaniem Current do wejścia w LTS. Do produkcji należy wybierać linię Active LTS lub Maintenance LTS i wcześniej potwierdzić zgodność aplikacji. Aktualny status wersji publikuje projekt Node.js na stronie <a href="https://nodejs.org/en/about/previous-releases">Node.js Releases</a>.</p>
+<p>Konfiguracja 4 vCPU / 8–16 GB RAM jest rekomendacją początkową, a nie gwarancją. Ostateczny rozmiar serwera należy określić na podstawie testów z reprezentatywnymi danymi klienta.</p>
+<h2>6. Ważne ograniczenie: jeden proces Node.js</h2>
+<p><code>bin/www</code> uruchamia obecnie jeden proces aplikacji i jedno wywołanie <code>server.listen()</code>. Jeden proces Node.js wykorzystuje jeden główny Event Loop do wykonywania kodu JavaScript. Cztery przydzielone rdzenie pomagają systemowi operacyjnemu, operacjom sieciowym i pracy bibliotek, ale aplikacja nie zacznie automatycznie wykonywać callbacków JavaScript na czterech rdzeniach.</p>
+<p>Przy wysokim obciążeniu można uruchomić kilka instancji za pomocą menedżera procesów, kontenerów lub klastra i rozdzielać ruch load balancerem. Jest to zgodne z <a href="https://expressjs.com/en/advanced/best-practice-performance/">zaleceniami produkcyjnymi Express</a>. Nie należy jednak robić tego przed rozwiązaniem kwestii sesji i lokalnych plików.</p>
+<h2>7. Sesje i skalowanie poziome</h2>
+<p>Kod używa <code>express-session</code> bez skonfigurowanego zewnętrznego <code>store</code>, czyli korzysta z domyślnego <code>MemoryStore</code>. Oficjalna dokumentacja ostrzega, że <code>MemoryStore</code> nie jest przeznaczony do produkcji, nie skaluje się poza jeden proces i może powodować problemy z pamięcią: <a href="https://expressjs.com/en/resources/middleware/session/">Express Session</a>.</p>
+<p>Ma to bezpośrednie znaczenie dla tej aplikacji, ponieważ sesja zawiera tokeny Autodesk i dane użytkownika. Przy wielu procesach żądanie może trafić do instancji, która nie zna danej sesji.</p>
+<p>Przed uruchomieniem klastra lub więcej niż jednej repliki należy:</p>
+<ol>
+<li>przenieść sesje do współdzielonego magazynu, np. Redis albo odpowiedniej bazy danych,</li>
+<li>użyć jednego bezpiecznego sekretu sesji pobieranego z menedżera sekretów lub zmiennej środowiskowej,</li>
+<li>ustawić bezpieczne parametry cookie (<code>secure</code>, <code>httpOnly</code>, właściwe <code>sameSite</code> i czas życia),</li>
+<li>zdecydować, czy <code>storage/</code>, cache i eksporty mają być na współdzielonym dysku, czy przypisane do konkretnej instancji,</li>
+<li>dopiero potem włączyć wiele procesów i load balancing.</li>
+</ol>
+<p>Sticky sessions mogą być rozwiązaniem przejściowym, ale współdzielony magazyn sesji jest bezpieczniejszą podstawą dla wysokiej dostępności.</p>
+<h2>8. Uwierzytelnienie i czas życia tokenu</h2>
+<p>Aplikacja realizuje trójstronny OAuth 2.0 z PKCE. Przeglądarka jest przekierowywana do APS, a serwer wymienia kod autoryzacyjny i <code>code_verifier</code> na token dostępu oraz refresh token. Autodesk opisuje ten przepływ w dokumentacji <a href="https://aps.autodesk.com/developer/overview/authentication-api">APS Authentication API</a>.</p>
+<p>W analizowanej wersji kodu:</p>
+<ul>
+<li>access token, refresh token i czas wygaśnięcia są zapisywane w sesji,</li>
+<li>czas wygaśnięcia jest pomniejszany o 90 sekund jako margines bezpieczeństwa,</li>
+<li>przy otwarciu strony wygasła sesja prowadzi do ponownego logowania,</li>
+<li>nie ma centralnego, automatycznego odświeżenia tokenu przed każdym wywołaniem <code>/plm</code>.</li>
+</ul>
+<p>Ostatni punkt jest istotny dla operacji trwających dłużej niż czas życia access tokenu, na przykład dla masowego przetwarzania w Data Manager. Sama obecność refresh tokenu w sesji nie przedłuża automatycznie access tokenu. Serwer powinien odświeżać token przed wygaśnięciem, zapewnić tylko jedno odświeżenie dla wielu równoległych żądań tej samej sesji, zapisać nowy refresh token i bezpiecznie obsłużyć nieudane odświeżenie.</p>
+<h2>9. Odporność komunikacji z Fusion Manage</h2>
+<p>Większość wywołań Axios do Fusion Manage w analizowanym kodzie nie ma wspólnej polityki timeoutów i ponowień. W produkcji zaleca się centralnego klienta HTTP lub interceptory zapewniające:</p>
+<ul>
+<li>rozsądny timeout połączenia i odpowiedzi,</li>
+<li>anulowanie zapytania, gdy klient przerwał żądanie,</li>
+<li>kontrolowane ponowienia dla przejściowych błędów sieciowych oraz wybranych odpowiedzi <code>5xx</code>,</li>
+<li>obsługę <code>429</code> zgodnie z <code>Retry-After</code>,</li>
+<li>automatyczne odświeżenie tokenu przed wygaśnięciem,</li>
+<li>ograniczenie współbieżności dla operacji masowych,</li>
+<li>identyfikator korelacyjny pozwalający połączyć log przeglądarki, Node.js i odpowiedź Autodesk.</li>
+</ul>
+<p>Ponawianie operacji zapisujących wymaga ostrożności. Po błędzie timeout nie zawsze wiadomo, czy Fusion Manage wykonał operację. Automatyczny retry żądania <code>POST</code>, <code>PATCH</code> lub <code>PUT</code> może więc utworzyć duplikat albo powtórzyć zmianę. Autodesk omawia to zagadnienie w materiale <a href="https://aps.autodesk.com/blog/improving-app-resilience">Improving app resilience</a>.</p>
+<h2>10. Monitorowanie</h2>
+<p>Obecny logger <code>morgan('dev')</code> pomaga podczas developmentu, lecz nie wystarcza do oceny wydajności produkcyjnej. Dla każdego żądania warto mierzyć osobno:</p>
+<ul>
+<li>całkowity czas obsługi przez endpoint Node.js,</li>
+<li>łączny czas oraz liczbę wywołań Fusion Manage wykonanych w ramach żądania,</li>
+<li>nazwę lokalnego endpointu i metodę HTTP,</li>
+<li>status odpowiedzi Node.js oraz status odpowiedzi API Autodesk,</li>
+<li>liczbę aktywnych i oczekujących żądań,</li>
+<li>błędy <code>401</code>, <code>403</code>, <code>429</code>, <code>5xx</code>, timeouty i ponowienia,</li>
+<li>wielkość odpowiedzi i transfer załączników,</li>
+<li>wykorzystanie CPU, RSS, heap oraz częstotliwość pracy Garbage Collectora,</li>
+<li>opóźnienie Event Loop,</li>
+<li>wykorzystanie i wolne miejsce na dysku,</li>
+<li>liczbę aktywnych sesji.</li>
+</ul>
+<p>Node.js udostępnia <code>process.cpuUsage()</code>, <code>process.memoryUsage()</code> i <code>process.memoryUsage.rss()</code> do pomiarów procesu oraz <code>perf_hooks.monitorEventLoopDelay()</code> do pomiaru opóźnienia Event Loop: <a href="https://nodejs.org/api/process.html">Process</a> i <a href="https://nodejs.org/api/perf_hooks.html">Performance measurement APIs</a>.</p>
+<p>W logach nie wolno zapisywać access tokenów, refresh tokenów, sekretów klienta ani pełnych danych osobowych. Dla czasu odpowiedzi należy raportować co najmniej percentyle p50, p95 i p99, ponieważ sama średnia ukrywa pojedyncze bardzo wolne żądania.</p>
+<h2>11. Plan testów wydajnościowych</h2>
+<p>Test powinien odwzorowywać rzeczywiste zachowanie użytkowników, a nie tylko wielokrotnie wywoływać jeden prosty endpoint.</p>
+<p>Zalecane scenariusze:</p>
+<ol>
+<li>logowanie i otwarcie Service Portal,</li>
+<li>otwarcie elementu z małym, średnim i dużym BOM,</li>
+<li>wczytanie Item Details i załączników,</li>
+<li>uruchomienie Viewera,</li>
+<li>przechodzenie pomiędzy elementami,</li>
+<li>równoległa praca 20, 35 i 50 użytkowników,</li>
+<li>krótkotrwały skok ruchu,</li>
+<li>eksport lub import plików w czasie normalnej pracy użytkowników,</li>
+<li>długotrwały proces Data Manager przekraczający godzinę,</li>
+<li>zachowanie po <code>401</code>, <code>429</code>, timeout i przejściowym <code>5xx</code>.</li>
+</ol>
+<p>Test należy przeprowadzić w dwóch wariantach:</p>
+<ul>
+<li>z kontrolowanym mockiem API, aby zmierzyć narzut samego Node.js,</li>
+<li>z rzeczywistym środowiskiem testowym Fusion Manage, aby zmierzyć pełny czas i ograniczenia API.</li>
+</ul>
+<p>Podczas testu trzeba porównać całkowity czas endpointu z czasem wywołań zewnętrznych. Dopiero taka różnica pokaże, czy wąskim gardłem jest Fusion Manage, sieć, Node.js czy przeglądarka.</p>
+<p>Kryteria akceptacji – docelowe p95/p99, maksymalny odsetek błędów i dopuszczalny czas ładowania dużego BOM – powinny zostać uzgodnione z użytkownikami biznesowymi przed testem.</p>
+<h2>12. Zalecenia produkcyjne wynikające z przeglądu kodu</h2>
+<p>Przed uruchomieniem produkcyjnym dla 200 użytkowników zaleca się, według priorytetu:</p>
+<ol>
+<li>wdrożyć centralne odświeżanie tokenów OAuth dla wszystkich endpointów korzystających z sesji,</li>
+<li>zastąpić <code>MemoryStore</code> współdzielonym magazynem sesji,</li>
+<li>przenieść sekret sesji i pozostałe sekrety do bezpiecznej konfiguracji środowiskowej,</li>
+<li>wymusić HTTPS; produkcja nie powinna niezauważenie przechodzić na HTTP po braku certyfikatu,</li>
+<li>dodać wspólne timeouty, obsługę <code>429</code> i kontrolowane retry,</li>
+<li>ograniczyć lub zastąpić synchroniczne operacje plikowe wykonywane podczas obsługi żądań,</li>
+<li>dodać monitoring czasów Fusion Manage API, Event Loop, CPU, pamięci i dysku,</li>
+<li>skonfigurować reverse proxy oraz automatyczny restart procesu,</li>
+<li>po przeniesieniu sesji i plików współdzielonych rozważyć co najmniej dwie instancje dla wysokiej dostępności,</li>
+<li>przypiąć wersje zależności zamiast używać <code>*</code>, korzystać z <code>package-lock.json</code> i instalować przez <code>npm ci</code>,</li>
+<li>określić maksymalny potrzebny rozmiar żądania; obecny limit parsera wynosi 50 MB i przy wielu równoczesnych żądaniach może zwiększać zużycie pamięci,</li>
+<li>zabezpieczyć dostęp do katalogu <code>/storage</code> i wyłączyć publiczne listowanie plików, jeżeli nie jest wymagane biznesowo.</li>
+</ol>
+<p>Node.js rekomenduje wersje LTS, nieblokowanie Event Loop oraz kontrolę zależności. Express rekomenduje dla produkcji między innymi <code>NODE_ENV=production</code>, reverse proxy, automatyczny restart, bezpieczne cookies i skalowalny magazyn sesji. Źródła:</p>
+<ul>
+<li><a href="https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop">Node.js – Don’t Block the Event Loop</a></li>
+<li><a href="https://nodejs.org/en/about/previous-releases">Node.js – Release schedule</a></li>
+<li><a href="https://nodejs.org/en/learn/getting-started/security-best-practices">Node.js – Security Best Practices</a></li>
+<li><a href="https://expressjs.com/en/advanced/best-practice-performance/">Express – Performance and reliability</a></li>
+<li><a href="https://expressjs.com/en/advanced/best-practice-security/">Express – Security best practices</a></li>
+<li><a href="https://expressjs.com/en/resources/middleware/session/">Express Session – wymagania magazynu sesji</a></li>
+<li><a href="https://aps.autodesk.com/developer/overview/authentication-api">APS – Authentication API</a></li>
+<li><a href="https://aps.autodesk.com/blog/rate-limiting">APS – Rate Limiting</a></li>
+<li><a href="https://aps.autodesk.com/blog/improving-app-resilience">APS – Improving app resilience</a></li>
+</ul>
+<h2>13. Podsumowanie</h2>
+<p>Dla typowego korzystania z Service Portal główny udział w czasie odpowiedzi będzie miał Fusion Manage API oraz rozmiar pobieranych danych. Architektura asynchroniczna Node.js dobrze pasuje do roli warstwy integracyjnej i powinna obsłużyć zakładane 20–50 aktywnych użytkowników na konfiguracji początkowej 4 vCPU i 8–16 GB RAM.</p>
+<p>Nie można jednak potwierdzić docelowej pojemności wyłącznie na podstawie liczby użytkowników. Aktualna implementacja jest pojedynczym procesem, używa sesji w pamięci i zawiera synchroniczne operacje plikowe. Przed skalowaniem oraz wdrożeniem o wymaganej wysokiej dostępności należy najpierw uporządkować sesje, tokeny, timeouty, obsługę limitów API i monitoring.</p>
+<p>Ostateczna konfiguracja serwera powinna wynikać z testu z rzeczywistymi BOM, polami, załącznikami i profilem ruchu klienta. Najważniejszym wynikiem takiego testu nie jest samo użycie CPU, lecz rozdzielenie czasu pomiędzy przeglądarkę, Node.js i poszczególne wywołania Fusion Manage API.</p>
+</body></html>

@@ -626,6 +626,12 @@ exports.applications = {
         },
         sharedCache : 'Employees',
         kpiDrillDown : true,        
+        bomViewName      : 'Details',
+        fieldIdPRImage   : 'IMAGE_1',
+        fieldIdPRContext : 'AFFECTED_ITEM',
+        rollUpFields     : [],
+        problemReports   : { workspaceId : null },   // uses common.workspaceIds per default
+        supplierPackages : { workspaceId : null },   // uses common.workspaceIds per default
         kpis : [
             // ------------------------------------------------------------------------------------------------------------------
             // Use the following parameters to define the KPIs:
@@ -1146,6 +1152,8 @@ exports.applications = {
         labelInsertNode       : 'Add Process',
         pinEBOMItemsInMBOM    : true,
         suffixMBOMNumber      : '-M',
+        suffixMBOMName        : ' - Technologia',
+
         predefinedSearchesInAddItems : [
             { title : 'Purchased Parts', fieldId : 'MAKE_OR_BUY', value : 'Buy'       },
             { title : 'Packaging Parts', fieldId : 'TYPE'       , value : 'Packaging' },
@@ -2526,6 +2534,11 @@ exports.menu = [
             subtitle : 'Automate data processing tasks',
             url      : '/data'
         },{
+            icon     : 'icon-edit',
+            title    : 'Item Manager',
+            subtitle : 'Manage and update Items workspace records',
+            url      : '/itemmgr'
+        },{
             icon     : 'icon-rules',
             title    : 'Tenant Comparison',
             subtitle : 'Deploy changes securely with automated comparison',
@@ -2601,6 +2614,7 @@ exports.server = {
         // Administration Utitliies
         comparison         : true,  // Tenant Comparison
         data               : true,  // Data Manager
+        itemmgr            : true,  // Item Manager
         insights           : true,  // Tenant Insights
         'outstanding-work' : true,  // Outstanding Works Report
         shortcuts          : true,  // Administration Shortcuts
@@ -2618,6 +2632,7 @@ exports.server = {
 
         // Framework Services
         docs               : true,
+        architecture       : true,
         landing            : true,
         troubleshooting    : true,
         start              : true,
@@ -2656,12 +2671,18 @@ exports.chrome = {
         label : 'Tenant Comparison',
         icon  : 'zmdi-blur-linear',
         order : 103
+    },{
+        id    : 'itemmgr',
+        url   : '/itemmgr',
+        label : 'Item Manager',
+        icon  : 'zmdi-edit',
+        order : 104
     },{   
         id    : 'insights',
         url   : '/insights',
         label : 'Tenant Insights',
         icon  : 'zmdi-graphic-eq',
-        order : 104
+        order : 105
     },{
         id    : 'outstanding-work',
         url   : '/outstanding-work',

@@ -1,0 +1,22 @@
+extends layout
+
+block head
+
+    link(rel='stylesheet', href='/stylesheets/framework/architecture.css')
+    script(src='https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js')
+    script.
+        document.addEventListener('DOMContentLoaded', function() {
+            if(theme.toLowerCase() === 'dark') document.body.classList.add('dark-theme');
+            else if(theme.toLowerCase() === 'black') document.body.classList.add('black-theme');
+            else document.body.classList.add('light-theme');
+
+            mermaid.initialize({
+                startOnLoad : true,
+                theme       : theme.toLowerCase() === 'light' ? 'default' : 'dark'
+            });
+        });
+
+block body
+
+    body.surface-level-1
+        main#architecture-content!= content

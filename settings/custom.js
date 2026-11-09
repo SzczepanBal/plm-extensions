@@ -21,6 +21,18 @@
 // ---------------------------------------------------------------------------------------------------------------------------
 exports.common = {
 
+    erp : {
+        fieldIDs : {
+            versionId : 'ID_WERSJI',
+            partIndex : 'INDEKS_CZESCI',
+            syncDate  : 'ERP_SYNC_DATE',
+            syncStatus: 'ERP_SYNC_STATUS',
+            hash      : 'ERP_HASH',
+            relevant  : 'ERP_RELEVANT',
+            sentToERP : 'WYSLANE_DO_ERP'
+        }
+    },
+
     workspaceIds : {
 
         // Product Development Workspaces
@@ -66,7 +78,7 @@ exports.common = {
     },
 
     viewer : {
-        numberProperties   : ['Part Number', 'Name', 'label', 'Artikelnummer', 'Bauteilnummer'],
+        numberProperties   : ['Part Number', 'Numer cz\u0119\u015bci', 'Name', 'label', 'Artikelnummer', 'Bauteilnummer'],
         suffixPrimaryFile  : ['.iam.dwf', '.iam.dwfx', '.ipt.dwf', '.ipt.dwfx'],
         extensionsIncluded : ['dwf', 'dwfx', 'nwd', 'ipt', 'stp', 'step', 'sldprt', 'pdf'],
         standardFeatures   : {}
@@ -105,12 +117,31 @@ exports.applications = {
     },
     matrix         : {},
     mbom           : {
+        switchEBOMRevision : 'latest',
         // workspaceEBOM : {
         //     workspaceId : null, // uses common.workspaceIds.items per default
         // }, 
         // workspaceMBOM : {
         //     workspaceId : null, // uses common.workspaceIds.items per default
-        // }
+        // },
+        mbomRoot : {
+            fieldsToCopy : [
+                { ebom : 'TITLE'      , mbom : 'TITLE'       },
+                { ebom : 'NAZWA_DEFRO', mbom : 'NAZWA_DEFRO' },
+                { ebom : 'DESCRIPTION', mbom : 'DESCRIPTION' },
+                { ebom : 'OPIS'       , mbom : 'OPIS'        },
+                { ebom : 'MATERIAL'   , mbom : 'MATERIAL'    },
+                { ebom : 'INDEKS_CZESCI', mbom : 'INDEKS_CZESCI' },
+                { ebom : 'JEDNOSTKA_ROZLICZENIOWA', mbom : 'JEDNOSTKA_ROZLICZENIOWA' },
+                { ebom : 'ILOSC_ROZLICZENIOWA', mbom : 'ILOSC_ROZLICZENIOWA' },
+                { ebom : 'ITEM_WEIGHT', mbom : 'ITEM_WEIGHT' },
+                { ebom : 'LENGTH'     , mbom : 'LENGTH'      },
+                { ebom : 'WIDTH'      , mbom : 'WIDTH'       },
+                { ebom : 'HEIGHT'     , mbom : 'HEIGHT'      },
+                { ebom : 'GRUPA_PRODUKTOWA_SUROWCOW'     , mbom : 'GRUPA_PRODUKTOWA_SUROWCOW'      },
+                { ebom : 'SREDNICA'   , mbom : 'SREDNICA'    }
+            ]
+        }
     },
     portal         : {
         // panels : {

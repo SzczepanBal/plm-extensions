@@ -67,6 +67,18 @@ if ((process.argv.length > 2) && (!fs.existsSync(pathEnvironment))) {
     app.locals.vaultName         = process.env.VAULT_NAME          || environment.vaultName         || '';
     app.locals.vaultViewer       = process.env.VAULT_VIEWER        || environment.vaultViewer       || false;
     app.locals.monitoringSecret  = process.env.MONITORING_SECRET   || environment.monitoringSecret  || '';
+    app.locals.adminClientId     = process.env.ADMIN_CLIENT_ID     || environment.adminClientId;
+    app.locals.adminClientSecret = process.env.ADMIN_CLIENT_SECRET || environment.adminClientSecret;
+    app.locals.vaultGateway      = process.env.VAULT_GATEWAY       || environment.vaultGateway;
+    app.locals.vaultName         = process.env.VAULT_NAME          || environment.vaultName;
+    app.locals.erp               = {
+        baseUrl       : process.env.ERP_BASE_URL       || ((environment.erp && environment.erp.baseUrl)       || ''),
+        integrationId : process.env.ERP_INTEGRATION_ID || ((environment.erp && environment.erp.integrationId) || ''),
+        username      : process.env.ERP_USERNAME       || ((environment.erp && environment.erp.username)      || ''),
+        password      : process.env.ERP_PASSWORD       || ((environment.erp && environment.erp.password)      || ''),
+        simulationMode: !!(environment.erp && environment.erp.simulationMode) ||
+            String(process.env.ERP_SIMULATION_MODE || '').toLowerCase() === 'true'
+    };
     app.locals.tenantLink        = 'https://' + app.locals.tenant + '.autodeskplm360.net';
     app.locals.protocol          = process.env.PROTOCOL || app.locals.redirectUri.split('://')[0];
     app.locals.port              = process.env.PORT;
@@ -94,6 +106,11 @@ if ((process.argv.length > 2) && (!fs.existsSync(pathEnvironment))) {
     let custom   = require('./settings/' + environment.settings);
 
     mergeSettings(settings, custom);
+
+    if(!settings.common.erp) settings.common.erp = {};
+    settings.common.erp.mapping = require('./settings/erp-mapping');
+    settings.common.erp.simulationMode = app.locals.erp.simulationMode;
+
     removeDisabledServicesFromMenu(settings.menu, settings.server);
 
     settings.chrome.workspaces = settings.common.workspaceIds;

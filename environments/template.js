@@ -190,3 +190,22 @@ exports.bomCache = {
 //   - SSA_KEY_ID          ( overrides exports.ssaKeyId          )
 //   - SSA_PRIVATE_KEY     ( overrides exports.ssaPrivateKey     )
 // ---------------------------------------------------------------------------------------------------------------------------
+//  This is why you can also provide all these settings by using the environment variables listed below. 
+//  Environment variables have higher priority, mattching environment variable values overwrite the value defined in this file
+//   - TENANT
+//   - CLIENT_ID
+//   - REDIRECT_URI
+//   - DEFAULT_THEME
+//   - ENABLE_CACHE
+//   - SETTINGS
+//   - DEBUG_MODE
+//   - ADMIN_CLIENT_ID
+//   - ADMIN_CLIENT_SECRET
+//   - VAULT_GATEWAY
+//   - VAULT_NAME
+//   - ERP_BASE_URL
+//   - ERP_INTEGRATION_ID
+//   - ERP_USERNAME
+//   - ERP_PASSWORD
+//   - ERP_SIMULATION_MODE
+// ---------------------------------------------------------------------------------------------------------------------------

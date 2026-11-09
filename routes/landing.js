@@ -2,6 +2,9 @@ const express = require('express');
 const axios   = require('axios');
 const crypto  = require('node:crypto');
 const jwt     = require('jsonwebtoken');
+const fs      = require('fs');
+const path    = require('path');
+const MarkdownIt = require('markdown-it');
 const router  = express.Router();
 
 
@@ -39,6 +42,26 @@ router.get('/docs', function(req, res, next) {
     res.render('framework/docs', {
         title : 'PLM UX Developer Guide',
         theme : (typeof req.query.theme === 'undefined') ? req.app.locals.defaultTheme : req.query.theme
+    });
+});
+router.get('/architecture', function(req, res, next) {
+    if(isServiceDisabled('architecture', req, res)) return;
+
+    const markdown = fs.readFileSync(path.join(__dirname, '../docs/nodejs-solution-architecture.md'), 'utf8');
+    const renderer = new MarkdownIt({ html: false, linkify: true, typographer: true });
+    const defaultFence = renderer.renderer.rules.fence;
+
+    renderer.renderer.rules.fence = function(tokens, index, options, env, self) {
+        if(tokens[index].info.trim() === 'mermaid') {
+            return '<div class="mermaid">' + renderer.utils.escapeHtml(tokens[index].content) + '</div>';
+        }
+        return defaultFence(tokens, index, options, env, self);
+    };
+
+    res.render('framework/architecture', {
+        title   : 'PLM Extensions Node.js Solution Architecture',
+        theme   : (typeof req.query.theme === 'undefined') ? req.app.locals.defaultTheme : req.query.theme,
+        content : renderer.render(markdown)
     });
 });
 router.get('/landing', function(req, res, next) {
@@ -114,6 +137,13 @@ router.get('/outstanding-work', async function(req, res, next) { launch('admin/o
 router.get('/shortcuts'       , async function(req, res, next) { launch('admin/shortcuts'       , ''        , 'Admin Shortcuts Panel'    , req, res, next); });
 router.get('/users'           , async function(req, res, next) { launch('admin/users'           , ''        , 'User Settings Manager'    , req, res, next); });
 router.get('/comparison'      , async function(req, res, next) { launch('admin/comparison'      , ''        , 'Tenant Comparison'        , req, res, next); });
+router.get('/data'            , function(req, res, next) { launch('admin/data'            , ''        , 'Data Manager'             , req, res, next); });
+router.get('/itemmgr'         , function(req, res, next) { launch('admin/data'            , ''        , 'Item Manager'             , req, res, next, 'itemmgr'); });
+router.get('/insights'        , function(req, res, next) { launch('admin/insights'        , 'insights', 'Tenant Insights Dashboard', req, res, next); });
+router.get('/outstanding-work', function(req, res, next) { launch('admin/outstanding-work', ''        , 'Outstanding Work Report'  , req, res, next); });
+router.get('/shortcuts'       , function(req, res, next) { launch('admin/shortcuts'       , ''        , 'Admin Shortcuts Panel'    , req, res, next); });
+router.get('/users'           , function(req, res, next) { launch('admin/users'           , ''        , 'User Settings Manager'    , req, res, next); });
+router.get('/comparison'      , function(req, res, next) { launch('admin/comparison'      , ''        , 'Tenant Comparison'        , req, res, next); });
 
 
 

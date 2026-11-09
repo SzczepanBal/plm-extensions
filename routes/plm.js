@@ -1080,6 +1080,8 @@ function genPayloadSectionsFields(req, prefix, mode) {
                 const linkSection = fieldSection.__self__ || fieldSection.link;
 
                 sectionId = linkSection.split('/').pop();
+                let sectionReference = fieldSection.__self__ || fieldSection.link || fieldSection.urn || '';
+                sectionId = fieldSection.id || String(sectionReference).split(/[\/:.]/).pop();
             }
 
         }
@@ -1146,40 +1148,47 @@ function addPayloadSectionField(sections, prefix, insertion, sectionId, fieldDat
 
 }
 function getFieldSection(sections, field) {
+    let fieldReference = field ? (field.link || field.__self__ || field.urn || '') : '';
+    let fieldId = field && field.fieldId
+        ? String(field.fieldId)
+        : String(fieldReference).split(/[\/:.]/).pop();
 
-    for(let section of sections) {
+    for(let section of sections || []) {
 
-        if(typeof section.fields !== 'undefined') {
+        if(!Array.isArray(section.fields)) continue;
 
-            for(let sectionField of section.fields) {
+        for(let sectionField of section.fields) {
 
-                const linkSectionField = sectionField.__self__ || sectionField.link || '';
+            if(sectionField === null || typeof sectionField === 'undefined') continue;
 
-                if(linkSectionField !== '') {
-                    if(field.fieldId === linkSectionField.split('/').pop()) return section;
-                    if(field.link    === linkSectionField) return section;
-                }
+            let sectionFieldReference = (typeof sectionField === 'string')
+                ? sectionField
+                : (sectionField.link || sectionField.__self__ || sectionField.urn || '');
+            let sectionFieldId = (typeof sectionField === 'object' && sectionField.id)
+                ? String(sectionField.id)
+                : String(sectionFieldReference).split(/[\/:.]/).pop();
 
-                if(sectionField.type === 'MATRIX') {
-                    for(let matrix of section.matrices) {
-                        for(let matrixFields of matrix.fields) {
-                            for(let matrixField  of matrixFields) {
-                                if(matrixField !== null) {
-                                    if(typeof matrixField !== 'string') {
-                                        let temp = matrixField.link.split('/');
-                                        let id   = temp[temp.length - 1];
-                                        if(id === field.fieldId) {
-                                            return section;
-                                        }
-                                    }
-                                }
-                            }
+            if(!isBlank(fieldId) && fieldId === sectionFieldId) return section;
+            if(!isBlank(fieldReference) && fieldReference === sectionFieldReference) return section;
+
+            if(typeof sectionField === 'object' && sectionField.type === 'MATRIX') {
+                for(let matrix of section.matrices || []) {
+                    for(let matrixFields of matrix.fields || []) {
+                        for(let matrixField of matrixFields || []) {
+                            if(matrixField === null || typeof matrixField === 'undefined') continue;
+                            let matrixReference = (typeof matrixField === 'string')
+                                ? matrixField
+                                : (matrixField.link || matrixField.__self__ || matrixField.urn || '');
+                            let matrixFieldId = (typeof matrixField === 'object' && matrixField.id)
+                                ? String(matrixField.id)
+                                : String(matrixReference).split(/[\/:.]/).pop();
+                            if(!isBlank(fieldId) && matrixFieldId === fieldId) return section;
+                            if(!isBlank(fieldReference) && matrixReference === fieldReference) return section;
                         }
                     }
                 }
-
-            }   
-        }   
+            }
+        }
     }
 
     return null;
@@ -4963,7 +4972,7 @@ router.post('/bom-update', function(req, res, next) {
     let params = {
         quantity  : parseFloat(quantity),
         isPinned  : isPinned,
-        item      : { 
+        item      : {
             link  : linkChild
         }
     };
@@ -8546,6 +8555,14 @@ function getWorkspaceTypeLabel(workspace) {
     return result;
 
 }
+
+
+// ERP integration routes share the existing /plm base path.
+router.use(require('./erp')({
+    sendResponse           : sendResponse,
+    isBlank                : isBlank,
+    createServerFolderPath : createServerFolderPath
+}));
 
 
 module.exports = router;

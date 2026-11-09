@@ -9,11 +9,13 @@
 /storage/exports/*
 /storage/imports/*
 /storage/uploads/*
+/storage/temp/*
 /views/custom/*
 /views/.DS_Store
 package-lock.json
 !/environments/template.js
 !/settings/custom.js
+!/settings/erp-mapping.js
 !.gitkeep
 .DS_Store*
 run.sh

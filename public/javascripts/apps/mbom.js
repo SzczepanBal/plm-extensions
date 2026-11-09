@@ -545,7 +545,7 @@ function processItemData(itemDetails) {
             link            : links.mbom,
             viewId          : wsMBOM.viewId,
             depth           : config.workspaceEBOM.depth,
-            revisionBias    : 'working',
+            revisionBias    : 'release',
             getBOMPartsList : true
         }
 
@@ -2128,7 +2128,10 @@ function convertEBOMtoMBOM() {
                 }
             }
 
+            let mainMBOMLink = links.mbom;
             createMBOMForEBOM(responses[0].data, partNumber, function(linkMBOM) {
+
+                links.mbom = mainMBOMLink;
 
                 let elemItem        = $('.item.to-convert');
                 let elemItemHead    = elemItem.children('.item-head');
@@ -2136,6 +2139,9 @@ function convertEBOMtoMBOM() {
                 let elemItemActions = elemItemHead.children('.item-actions');
 
                 elemItem.attr('data-link-mbom', linkMBOM);
+
+                    // storeMBOMLink(link, linkNew);
+
                 elemItem.addClass('leaf');
                 elemItem.children('.item-bom').remove();
                 elemItem.removeClass('item-has-bom');
@@ -4124,7 +4130,7 @@ function createNewItems() {
 
         });
 
-        Promise.all(requests).then(function(responses) {
+        return Promise.all(requests).then(function(responses) {
 
             let index = 0;
 
@@ -4147,8 +4153,12 @@ function createNewItems() {
 
             }
 
-            createNewItems(); 
+            return createNewItems();
 
+        }).catch(function(error) {
+            console.error('MBOM: failed to create new items', error);
+            $('#save, #confirm-saving').removeClass('disabled');
+            $('#dialog-saving .in-work').removeClass('in-work');
         });
      
     } else { 
@@ -4255,12 +4265,15 @@ function addBOMItems() {
                     number     : elemItem.attr('data-number'),
                     pinned     : (isEBOMItem && config.pinEBOMItemsInMBOM),
                     quantity   : edQty,
-                    fields     : [
-                        { link : bomViewLinksMBOM.isEBOMItem, value : isEBOMItem }
-                    ]
+                    fields     : []
                 };
 
-                if(!isBlank(makeBuy)) params.fields.push({ link : bomViewLinksMBOM.makeBuy , value : { link : makeBuy} });
+                if(!isBlank(bomViewLinksMBOM.isEBOMItem)) {
+                    params.fields.push({ link : bomViewLinksMBOM.isEBOMItem, value : isEBOMItem });
+                }
+                if(!isBlank(makeBuy) && !isBlank(bomViewLinksMBOM.makeBuy)) {
+                    params.fields.push({ link : bomViewLinksMBOM.makeBuy, value : { link : makeBuy } });
+                }
 
                 requests.push($.post('/plm/bom-add', params));
                 elemItem.attr('data-make-buy', makeBuy);
