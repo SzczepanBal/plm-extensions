@@ -109,6 +109,12 @@ $(document).ready(function() {
 
         links.ebom    = getSectionFieldValue(responses[0].data.sections, fieldIdEBOM, '', 'link');
         links.mbom    = getSectionFieldValue(responses[0].data.sections, fieldIdMBOM + siteSuffix, '', 'link');
+        links.connectedEBOM = links.ebom;
+        links.openedMBOMWorkingRevision = !isBlank(links.connectedEBOM) &&
+            responses[0].data && responses[0].data.workingVersion === true;
+        links.preserveConnectedEBOMRevision = !isBlank(links.connectedEBOM) &&
+            /\/versions\/\d+/i.test(links.connectedEBOM) &&
+            responses[0].data && responses[0].data.workingVersion === false;
 
         if(urlParameters.wsId == wsEBOM.wsId) {
             if(isBlank(links.ebom)) {
@@ -489,7 +495,17 @@ function getInitialData() {
 
         let itemVersions = responses[0].data.versions;
 
-        switch(config.switchEBOMRevision.toLowerCase()) {
+        if(links.preserveConnectedEBOMRevision) {
+            links.latest = links.connectedEBOM;
+            revisionBias = 'release';
+
+            for(let itemVersion of itemVersions) {
+                if(itemVersion.item.link === links.connectedEBOM) {
+                    effectiveDate = itemVersion.effectivity.startDate;
+                    break;
+                }
+            }
+        } else switch(config.switchEBOMRevision.toLowerCase()) {
 
             case 'working':
                 links.latest = itemVersions[0].item.link;
@@ -499,11 +515,12 @@ function getInitialData() {
             case 'latest':
                 if(itemVersions.length === 1) {
                     links.latest = itemVersions[0].item.link;
+                    revisionBias = 'working';
                 } else {
                     links.latest  = itemVersions[1].item.link;
                     effectiveDate = itemVersions[1].effectivity.startDate;
+                    revisionBias = 'release';
                 }
-                revisionBias = 'release';
                 break;
 
             default:
@@ -569,7 +586,7 @@ function processItemData(itemDetails) {
             link            : links.mbom,
             viewId          : wsMBOM.viewId,
             depth           : config.workspaceEBOM.depth,
-            revisionBias    : 'release',
+            revisionBias    : links.openedMBOMWorkingRevision ? 'working' : 'release',
             getBOMPartsList : true
         }
 

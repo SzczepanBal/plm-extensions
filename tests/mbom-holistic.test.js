@@ -11,10 +11,24 @@ const source = fs.readFileSync(sourcePath, 'utf8');
     const paramsMatch = /let paramsMBOM\s*=\s*\{[\s\S]*?\n\s*\}/.exec(standardSource);
 
     assert.ok(paramsMatch, 'Root MBOM request parameters must exist');
-    assert.match(paramsMatch[0], /revisionBias\s*:\s*'release'/,
-        'Root MBOM must default to the released version');
+    assert.match(paramsMatch[0], /revisionBias\s*:\s*links\.openedMBOMWorkingRevision\s*\?\s*'working'\s*:\s*'release'/,
+        'The root mBOM request must load Working only when the opened mBOM is Working');
     assert.doesNotMatch(standardSource, /getMBOMRootRevisionBias|loadMBOMRootRevisionBias/,
         'ERP-specific revision selection must stay in the custom extension');
+    assert.match(standardSource, /links\.connectedEBOM\s*=\s*links\.ebom[\s\S]*workingVersion\s*===\s*false/,
+        'Opening a released mBOM must remember its version-specific connected eBOM');
+    assert.match(standardSource, /links\.openedMBOMWorkingRevision[\s\S]*workingVersion\s*===\s*true/,
+        'Opening a working mBOM must be recorded for mBOM revision selection');
+    assert.match(standardSource, /test\(links\.connectedEBOM\)/,
+        'Historical viewing must require a version-specific connected eBOM link');
+    assert.match(standardSource, /if\(links\.preserveConnectedEBOMRevision\)[\s\S]*links\.latest\s*=\s*links\.connectedEBOM[\s\S]*revisionBias\s*=\s*'release'/,
+        'A released mBOM must display its connected eBOM snapshot instead of the latest eBOM');
+    assert.doesNotMatch(standardSource, /if\(links\.openedMBOMWorkingRevision\)[\s\S]{0,300}revisionBias\s*=\s*'working'/,
+        'A working mBOM must not switch the read-only eBOM to its working revision');
+    assert.match(standardSource, /case 'latest':[\s\S]*itemVersions\.length === 1[\s\S]*revisionBias\s*=\s*'working'[\s\S]*else[\s\S]*revisionBias\s*=\s*'release'/,
+        'The read-only eBOM may use Working only when no released eBOM exists');
+    assert.match(standardSource, /itemVersion\.item\.link\s*===\s*links\.connectedEBOM[\s\S]*effectiveDate\s*=\s*itemVersion\.effectivity\.startDate/,
+        'The connected eBOM snapshot must use its historical effectivity date');
     console.log('Standard root MBOM loading remains unchanged');
 })();
 
@@ -93,12 +107,8 @@ function extractFunction(name) {
         'The general Save pipeline must not repeat the Update Rev property synchronization');
     assert.match(extractFunction('attachCustomSaveGuard'), /updateRootWorkingMBOMFromReleasedEBOM\(\)/,
         'Save must update the working root mBOM when its released eBOM revision changed');
-    assert.match(extractFunction('attachCustomSaveGuard'), /prepareWorkingSubMBOMsForSave\(\)/,
-        'Save must unpin sub-mBOMs and switch their relationship to W before standard save actions are calculated');
-    const prepareIndex = extractFunction('attachCustomSaveGuard').indexOf('prepareWorkingSubMBOMsForSave()');
-    const actionsIndex = extractFunction('attachCustomSaveGuard').indexOf('setSaveActions()');
-    assert.ok(prepareIndex >= 0 && prepareIndex < actionsIndex,
-        'Working sub-mBOM links must be prepared before setSaveActions');
+    assert.doesNotMatch(extractFunction('attachCustomSaveGuard'), /prepareWorkingSubMBOMsForSave|pinned\s*:\s*false/,
+        'Normal Save must not rewrite relationship pinning before the release workflow');
     console.log('Update Rev immediate working mBOM synchronization tests passed');
 })();
 
@@ -117,30 +127,14 @@ function extractFunction(name) {
     console.log('Repair mBOM button restoration tests passed');
 })();
 
-(function testWorkingSubMBOMRelationshipsAreUnpinnedBeforeSave() {
-    const prepareSource = extractFunction('prepareWorkingSubMBOMsForSave');
-    const stateSource = extractFunction('setWorkingSubMBOMSaveState');
-    const paramsSource = extractFunction('getWorkingSubMBOMSaveParams');
-
-    assert.match(prepareSource, /resolveLinkedMBOMWorkingVersion\(currentLink\)/,
-        'Sub-mBOMs without a known W link must resolve their explicit working version');
-    assert.match(prepareSource, /\/versions\\\/\\d\+[\s\S]*isMBOMWorkingRevision\(currentRevision\)/,
-        'A version-specific row already displaying W must avoid a redundant versions request');
-    assert.match(prepareSource, /await \$\.post\('\/plm\/bom-update', params\)/,
-        'Existing sub-mBOM relationships must be updated before normal save');
-    assert.match(prepareSource, /relationshipAlreadyWorking[\s\S]*!relationshipAlreadyWorking/,
-        'An already-unpinned relationship to the same W version must not be written again');
-    assert.match(prepareSource, /mapPLMRequestsWithConcurrency\(levelCandidates, concurrency, prepareCandidate\)/,
-        'Independent sub-mBOM relationships at the same depth must be prepared concurrently');
-    assert.match(paramsSource, /pinned\s*:\s*false/,
-        'The pre-save relationship update must remove revision pinning');
-    assert.match(stateSource, /\.attr\('data-link-mbom', workingLink\)/,
-        'The rendered save target must point to W');
-    assert.match(stateSource, /\.attr\('data-mbom', workingLink\)/,
-        'The rendered navigation shortcut must point to W');
-    assert.match(stateSource, /\.attr\('data-pinned-db', 'false'\)/,
-        'The post-update baseline must remain unpinned until release');
-    console.log('Working sub-mBOM pre-save unpinning tests passed');
+(function testAutomaticRelationshipPinningIsRemoved() {
+    assert.doesNotMatch(source, /function prepareWorkingSubMBOMsForSave\s*\(/,
+        'The obsolete pre-save unpin operation must be removed');
+    assert.doesNotMatch(source, /function pinMBOMManufacturingRelationshipsForRelease\s*\(/,
+        'The obsolete pre-release pin operation must be removed');
+    assert.doesNotMatch(source, /Nie udało się odpiąć rewizji sub-mBOM przed zapisem/,
+        'Save must no longer fail on an automatic unpin request');
+    console.log('Automatic sub-mBOM pin/unpin removal tests passed');
 })();
 
 (async function testCustomRootMBOMRevisionFollowsERPSyncStatus() {
@@ -201,10 +195,10 @@ function extractFunction(name) {
         }
     };
     vm.createContext(revisionContext);
-    ['getMBOMVersionText', 'isWorkingMBOMVersion', 'getMBOMRootRevisionBias',
+    ['getMBOMVersionText', 'isWorkingMBOMVersion', 'isMBOMWorkingRevision', 'getMBOMRootRevisionBias',
         'hasMBOMReleasedEBOMRevisionChanged', 'loadMBOMRootRevisionBias',
         'parseMBOMPinnedValue', 'getMBOMPartTypeForPinning', 'isRawMaterialPartForPinning', 'annotateMBOMPartPinning',
-        'isManufacturingPartForRevisionPolicy', 'applyStandardRevisionToMBOMPart', 'findStandardPLMVersion',
+        'isManufacturingPartForRevisionPolicy', 'isProcessPartForRevisionPolicy', 'applyStandardRevisionToMBOMPart', 'findStandardPLMVersion',
         'applyStandardVersionRecordToMBOMPart', 'mergeEditingMBOMRevisionPolicy'].forEach(name => {
         vm.runInContext(extractFunction(name), revisionContext);
     });
@@ -223,13 +217,23 @@ function extractFunction(name) {
     ), 'working');
     assert.strictEqual(requestedDetailsLink, '/api/v3/workspaces/57/items/44/versions/99',
         'ERP status must be read from the working mBOM version, not the released/item-level record');
+    requestedDetailsLink = '';
+    revisionContext.links = { openedMBOMWorkingRevision: true };
+    assert.strictEqual(await revisionContext.loadMBOMRootRevisionBias(
+        '/api/v3/workspaces/57/items/44/versions/99',
+        { __self__: '/api/v3/workspaces/10/items/20/versions/4' }
+    ), 'working', 'An explicitly opened working mBOM must load its working mBOM BOM');
+    assert.strictEqual(requestedDetailsLink, '',
+        'An explicitly opened working mBOM must not be downgraded through released-status discovery');
+    revisionContext.links = {};
     const workingResponse = { data: { edges: [
         { edgeId: 20, isPinned: false },
         { edgeId: 30, isPinned: true },
         { edgeId: 40, isPinned: false },
         { edgeId: 50, isPinned: false },
         { edgeId: 60, isPinned: true },
-        { edgeId: 70, isPinned: true }
+        { edgeId: 70, isPinned: true },
+        { edgeId: 80, isPinned: true }
     ], bomPartsList: [
         { level: 0, link: '/items/10/versions/9', revision: 'W', details: { TYPE: 'Manufacturing' } },
         { level: 1, edgeId: 20, link: '/items/20/versions/5', revision: 'B', details: {}, fields: [
@@ -239,13 +243,15 @@ function extractFunction(name) {
         { level: 1, edgeId: 40, link: '/items/40/versions/1', revision: 'W', details: { TYPE: 'Purchased' } },
         { level: 1, edgeId: 50, link: '/items/50/versions/9', revision: 'W', details: { TYPE: 'Surowiec' } },
         { level: 1, edgeId: 60, link: '/items/60/versions/3', revision: 'A', details: { TYPE: 'Manufacturing' } },
-        { level: 1, edgeId: 70, link: '/items/70/versions/2', revision: 'A', details: { TYPE: 'Purchased' } }
+        { level: 1, edgeId: 70, link: '/items/70/versions/2', revision: 'A', details: { TYPE: 'Purchased' } },
+        { level: 1, edgeId: 80, link: '/items/80/versions/2', revision: 'A', details: { TYPE: 'Process' } }
     ] } };
     const standardResponse = { data: { bomPartsList: [
         { link: '/items/10/versions/6', revision: 'A', details: { TYPE: 'Manufacturing' } },
         { link: '/items/20/versions/5', revision: 'B', details: { TYPE: 'Manufacturing' } },
         { link: '/items/30/versions/4', revision: 'C', details: { TYPE: 'Surowiec' } },
-        { link: '/items/70/versions/4', revision: 'B', details: { TYPE: 'Purchased' } }
+        { link: '/items/70/versions/4', revision: 'B', details: { TYPE: 'Purchased' } },
+        { link: '/items/80/versions/2', revision: 'A', details: { TYPE: 'Process' } }
     ] } };
     await revisionContext.mergeEditingMBOMRevisionPolicy(workingResponse, standardResponse);
     assert.strictEqual(workingResponse.data.bomPartsList[0].revision, 'W', 'The editing root remains working');
@@ -256,10 +262,14 @@ function extractFunction(name) {
     assert.strictEqual(workingResponse.data.bomPartsList[3].revision, 'W', 'An item without a release remains unreleased');
     assert.strictEqual(workingResponse.data.bomPartsList[4].revision, 'B',
         'A newly added ordinary item absent from the released root still resolves its latest released revision');
-    assert.strictEqual(workingResponse.data.bomPartsList[5].revision, 'A',
-        'A pinned sub-mBOM stays on its selected revision until Update Rev is clicked');
+    assert.strictEqual(workingResponse.data.bomPartsList[5].revision, 'W',
+        'A sub-mBOM with a Working version loads Working even when its old relationship was pinned');
+    assert.strictEqual(workingResponse.data.bomPartsList[5].link, '/items/60/versions/99');
     assert.strictEqual(workingResponse.data.bomPartsList[6].revision, 'A',
         'A pinned purchased part stays on its selected revision until Update Rev is clicked');
+    assert.strictEqual(workingResponse.data.bomPartsList[7].revision, 'W',
+        'A Working root mBOM always loads its Process relationships in Working');
+    assert.strictEqual(workingResponse.data.bomPartsList[7].link, '/items/80/versions/99');
     assert.match(source, /workingArgs\[1\][\s\S]*revisionBias : 'working'/,
         'Editing must load the working mBOM configuration');
     assert.match(source, /standardArgs\[1\][\s\S]*revisionBias : 'release'/,
@@ -272,6 +282,8 @@ function extractFunction(name) {
     const revisionMergeSource = extractFunction('mergeEditingMBOMRevisionPolicy');
     assert.match(revisionMergeSource, /workingVersionPromises[\s\S]*resolveLinkedMBOMWorkingVersion/,
         'Repeated inline expansions must reuse working-version resolution requests');
+    assert.match(revisionMergeSource, /isManufacturingPartForRevisionPolicy\(part\) \|\| isProcessPartForRevisionPolicy\(part\)/,
+        'Working views must resolve both sub-mBOM and Process rows to Working');
     const inlineAppendSource = extractFunction('appendInlineSubMBOMChildren');
     assert.ok(inlineAppendSource.indexOf("addClass('hidden')") < inlineAppendSource.indexOf("removeClass('hidden')"),
         'Large inline branches must stay outside browser layout until rendering is complete');
@@ -405,14 +417,24 @@ vm.createContext(context);
     assert.match(cssSource, /body\.mbom-viewing-mode #ebom \.item-actions/);
     assert.match(cssSource, /body\.mbom-loading-mode #main/,
         'Temporary BOM loading mode must block the editor surface');
-    assert.match(cssSource, /body\.mbom-full-load-required #save/,
-        'An incomplete existing mBOM must use a dedicated temporary edit lock');
+    assert.match(cssSource, /body\.mbom-full-load-required\.mode-ebom #ebom-tree/,
+        'An incomplete existing mBOM must keep EBOM Alignment read-only');
+    assert.match(cssSource, /body\.mbom-full-load-required\.mode-add #add/,
+        'An incomplete existing mBOM must keep Add Items read-only');
+    assert.doesNotMatch(cssSource, /body\.mbom-full-load-required[^\n]*#add-raw-materials/,
+        'Raw Materials must remain available for an incomplete mBOM');
+    assert.doesNotMatch(cssSource, /body\.mbom-full-load-required[^\n]*#mode-erp/,
+        'The Impuls tab must remain available for an incomplete mBOM');
+    assert.match(cssSource, /#mbom-structure-check-overlay[\s\S]*position:\s*absolute[\s\S]*z-index:\s*20/,
+        'The initial structure check must use a centered blocking overlay');
     assert.match(guardSource, /'#add-all'/);
     assert.match(guardSource, /'#deselect-all'/);
     assert.doesNotMatch(viewingModeSource, /mbom-loading-mode/,
         'Temporary loading mode must not change revision-selection semantics');
-    assert.match(interactionLockSource, /isMBOMViewingMode\(\)[\s\S]*mbom-loading-mode[\s\S]*isFullMBOMLoadRequired\(\)/,
-        'The interaction guard must distinguish permanent viewing, active loading, and the full-BOM prerequisite');
+    assert.match(interactionLockSource, /isMBOMViewingMode\(\)[\s\S]*mbom-loading-mode/,
+        'The interaction guard must still cover permanent viewing and active loading');
+    assert.doesNotMatch(interactionLockSource, /FullMBOMLoadRequired|fullMBOMLoadRequired/,
+        'An incompletely loaded BOM must not lock user interaction');
     assert.ok(fullBOMSource.indexOf('beginMBOMLoadingMode') < fullBOMSource.indexOf('expandFullMBOMWithBOM'),
         'Full-BOM expansion must enter read-only mode before loading branches');
     assert.match(fullBOMSource, /finally[\s\S]*endMBOMLoadingMode\(\)/,
@@ -429,10 +451,57 @@ vm.createContext(context);
         'A newly created mBOM or an mBOM without linked subcomponents must not require full loading');
     assert.match(fullBOMRequirementSource, /hasFullMBOMExpansionCandidate/,
         'The full-BOM prerequisite must verify HAS_BOM on linked subcomponents');
+    assert.match(fullBOMRequirementSource, /beginMBOMStructureCheck\(\)[\s\S]*hasFullMBOMExpansionCandidate[\s\S]*endMBOMStructureCheck\(\)/,
+        'The HAS_BOM discovery phase must use the centered structure-check loading state');
+    assert.match(extractFunction('getFullMBOMExpansionCandidates'), /isFullMBOMExpansionItem/,
+        'Full-BOM discovery must include every rendered sub-mBOM, not only rows with shortcut icons');
+    const fullBOMMarkerSource = extractFunction('resolveFullMBOMHasBOM');
+    assert.ok(fullBOMMarkerSource.indexOf('getLoadedMBOMHasBOM') < fullBOMMarkerSource.indexOf('loadMBOMPropertyRepairDetails'),
+        'HAS_BOM must come from the loaded MBOM Transition row before any item-details fallback');
+    assert.match(extractFunction('getLoadedMBOMHasBOM'), /getMBOMAccountingFieldValue\(part, 'HAS_BOM'\)/,
+        'The initial structure check must read HAS_BOM from the loaded BOM view');
+    assert.doesNotMatch(extractFunction('hasFullMBOMExpansionCandidate'), /loadMBOMPropertyRepairDetails|\/plm\/details/,
+        'Initial full-mBOM availability detection must not request details for every candidate');
+    const fullBOMExpansionSource = extractFunction('expandFullMBOMWithBOM');
+    assert.match(fullBOMExpansionSource, /resolveFullMBOMHasBOM[\s\S]*ensureInlineSubMBOMExpanded\([\s\S]*elemItem, undefined, true, true, childrenRequestsByLink/,
+        'Full-BOM loading must check each sub-mBOM HAS_BOM value before selectively expanding it');
+    assert.match(fullBOMExpansionSource, /mapPLMRequestsWithConcurrency\(candidates, 5/,
+        'Independent full-BOM branches must load with bounded concurrency');
+    assert.match(fullBOMExpansionSource, /childrenRequestsByLink\s*=\s*new Map\(\)/,
+        'Repeated sub-mBOM occurrences must share one BOM request');
+    assert.match(fullBOMExpansionSource, /inlineSubMBOMBulkExpansionActive\s*=\s*true[\s\S]*finally[\s\S]*updateMBOMNumbers/,
+        'Bulk full-BOM loading must defer expensive tree refreshes until all branches finish');
+    assert.match(extractFunction('ensureInlineSubMBOMExpanded'), /keepOverlayVisible\s*!==\s*true[\s\S]*\$\('#overlay'\)\.hide\(\)/,
+        'Full-BOM loading must be able to keep the grey loading overlay visible between recursive requests');
     assert.match(createRootHookSource, /mbomExistedBeforeEditorLoad = isExistingMBOMItemLink\(links\.mbom\)/,
         'The editor must remember whether the mBOM existed before automatic root creation');
     console.log('MBOM viewing mode and Working navigation tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+(function testFullMBOMExpansionStopsAtNestedMBOMBoundaries() {
+    const selectiveExpansionContext = {
+        Number,
+        isManufacturingPartForRevisionPolicy: part => part && part.type === 'Manufacturing',
+        isAssemblyIndexNode: part => !!(part && part.assemblyIndex)
+    };
+    vm.createContext(selectiveExpansionContext);
+    vm.runInContext(extractFunction('limitFullMBOMChildrenToCurrentTechnology'), selectiveExpansionContext);
+
+    const parts = [
+        { id: 'operation', level: 1, type: 'Operation' },
+        { id: 'eligible-sub', level: 2, type: 'Manufacturing' },
+        { id: 'must-wait-for-own-has-bom', level: 3, type: 'Operation' },
+        { id: 'ordinary-component', level: 2, type: 'Purchased' },
+        { id: 'assembly-index', level: 2, type: 'Mechanical', assemblyIndex: true },
+        { id: 'assembly-child-must-wait', level: 3, type: 'Operation' },
+        { id: 'next-operation', level: 1, type: 'Operation' }
+    ];
+    assert.deepStrictEqual(
+        JSON.parse(JSON.stringify(selectiveExpansionContext.limitFullMBOMChildrenToCurrentTechnology(parts).map(part => part.id))),
+        ['operation', 'eligible-sub', 'ordinary-component', 'assembly-index', 'next-operation']
+    );
+    console.log('Selective full mBOM HAS_BOM boundary tests passed');
+})();
 
 async function run() {
     context.accountingPart = {
@@ -1320,13 +1389,15 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     const linkedJobsSource = extractFunction('buildERPMultiSeriesLinkedProductJobs');
     assert.match(linkedJobsSource, /isERPSyncBOMOperation\(part\)/,
         'ERP linked-product discovery must exclude operations');
-    assert.match(linkedJobsSource, /getERPTechnologyItemDetails\(part\.link\)[\s\S]*getSectionFieldValue\([\s\S]*erpMultiSeriesFieldId/,
-        'ERP linked-product discovery must read WIELOSERYJNOSC from mBOM item details when the ERP Sync BOM view omits it');
+    assert.match(linkedJobsSource, /getERPSyncBOMValue\(part, \[erpMultiSeriesFieldId\]/,
+        'ERP linked-product discovery must use WIELOSERYJNOSC from the ERP Sync BOM view');
+    assert.doesNotMatch(linkedJobsSource, /return isERPSyncBOMManufacturing\(part\)/,
+        'ERP linked-product discovery must not load details for every Manufacturing item');
     assert.match(linkedJobsSource, /erpMultiSeriesFieldId[\s\S]*productCallName[\s\S]*buildERPLinkedProductPayload/,
         'Checked mBOM items must create add-product or modify-product jobs for their linked eBOM items');
 
     const collectionSource = extractFunction('collectERPTechnologyJobs');
-    assert.match(collectionSource, /linkedProductJobs\.concat\(orderERPTechnologyJobsBottomUp\(requiredTechnologies\)\)/,
+    assert.match(collectionSource, /hashedLinkedProductJobs\.concat\(orderERPTechnologyJobsBottomUp\(requiredTechnologies\)\)/,
         'Linked eBOM product requests must be queued before add-technology requests');
 
     const technologyPayloadSource = extractFunction('buildERPTechnologyPayload');
@@ -1401,9 +1472,9 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     vm.runInContext(extractFunction('buildERPMultiSeriesLinkedProductJobs'), linkedProductContext);
 
     const jobs = await linkedProductContext.buildERPMultiSeriesLinkedProductJobs([
-        { link: '/mbom/1', ebom: '/ebom/1', title: 'MBOM-1', level: 1, details: { TYPE: 'Manufacturing' } },
-        { link: '/mbom/2', ebom: '/ebom/2', title: 'MBOM-2', level: 1, details: { TYPE: 'Manufacturing' } },
-        { link: '/mbom/3', ebom: '/ebom/3', title: 'MBOM-3', level: 1, details: { TYPE: 'Manufacturing' } }
+        { link: '/mbom/1', ebom: '/ebom/1', title: 'MBOM-1', level: 1, details: { TYPE: 'Manufacturing', WIELOSERYJNOSC: true } },
+        { link: '/mbom/2', ebom: '/ebom/2', title: 'MBOM-2', level: 1, details: { TYPE: 'Manufacturing', WIELOSERYJNOSC: { value: true } } },
+        { link: '/mbom/3', ebom: '/ebom/3', title: 'MBOM-3', level: 1, details: { TYPE: 'Manufacturing', WIELOSERYJNOSC: false } }
     ]);
 
     assert.deepStrictEqual(JSON.parse(JSON.stringify(jobs.map(job => ({
@@ -1480,6 +1551,34 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     console.log('ERP bottom-up technology ordering tests passed');
 })();
 
+(function testNormalERPSyncSkipsUpToDateSubMBOMs() {
+    const syncRequirementContext = {};
+    vm.createContext(syncRequirementContext);
+    vm.runInContext(extractFunction('isERPTechnologySyncRequired'), syncRequirementContext);
+
+    assert.strictEqual(syncRequirementContext.isERPTechnologySyncRequired({
+        isMainRoot: false, erpSyncStatus: 'UP_TO_DATE', synced: true,
+        productRequired: false, erpOutOfDate: true
+    }), false, 'Normal sync must not resend an established UP_TO_DATE sub-mBOM only because its working payload hash differs');
+    assert.strictEqual(syncRequirementContext.isERPTechnologySyncRequired({
+        isMainRoot: true, erpSyncStatus: 'UP_TO_DATE', synced: true,
+        productRequired: false, erpOutOfDate: true
+    }), true, 'The top mBOM must still be sent when its payload hash changed');
+    assert.strictEqual(syncRequirementContext.isERPTechnologySyncRequired({
+        isMainRoot: false, erpSyncStatus: 'OUT_OF_DATE', synced: true,
+        productRequired: false, erpOutOfDate: false
+    }), true, 'An OUT_OF_DATE sub-mBOM must still be sent');
+    assert.strictEqual(syncRequirementContext.isERPTechnologySyncRequired({
+        isMainRoot: false, erpSyncStatus: 'UP_TO_DATE', synced: false,
+        productRequired: false, erpOutOfDate: false
+    }), true, 'A sub-mBOM without an ERP technology version must still be sent');
+    assert.strictEqual(syncRequirementContext.isERPTechnologySyncRequired({
+        isMainRoot: false, erpSyncStatus: 'UP_TO_DATE', synced: true,
+        productRequired: true, erpOutOfDate: false
+    }), true, 'A sub-mBOM without its ERP product prerequisite must still be sent');
+    console.log('Normal ERP sync sub-mBOM eligibility tests passed');
+})();
+
 (function testSubMBOMVersionIdsArePropagatedToParents() {
     const versionContext = {
         Number,
@@ -1554,8 +1653,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         'Released technology opis must contain only the revision');
     assert.doesNotMatch(technologyBuilderSource, /revisionDescription|Rewizja:/,
         'Released technology opis must not add a revision label or description');
-    assert.match(technologyBuilderSource, /payload\.id_wersji\s*=\s*technologyVersionId/,
-        'Every existing sub-mBOM technology payload must include its stored id_wersji');
+    assert.doesNotMatch(technologyBuilderSource, /payload\.(id_wersji|zablokowana)\s*=/,
+        'add-technology payloads must not include their own ERP version or lock fields');
     assert.match(technologyBuilderSource, /technologyVersionId\s*:\s*technologyVersionId/,
         'Technology jobs must retain their stored ERP version for parent propagation');
     assert.match(technologyBuilderSource, /requiredChildTechnologyIndexes[\s\S]*type\s*===\s*'manufacturing'/,
@@ -1634,7 +1733,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         WYROB_GOTOWY: false,
         TYPE: 'Manufacturing',
         PROCESS_CODE: null,
-        KOD_OPERACJI: null
+        KOD_OPERACJI: null,
+        WIELOSERYJNOSC: false
     };
     function jquery() {
         return { children() { return { first() { return {}; } }; } };
@@ -1672,6 +1772,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
             hash: 'ERP_HASH'
         },
         erpSyncBOMViewName: 'ERP Sync',
+        erpMultiSeriesFieldId: 'WIELOSERYJNOSC',
         erpSyncBOMViewPromise: null,
         erpProductFields: { finishedGood: ['WYROB_GOTOWY'], makeOrBuy: ['MAKE_OR_BUY'], index: ['NUMBER'] },
         erpTechnologyOperationCodeCandidates: ['KOD_OPERACJI'],
@@ -1736,6 +1837,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     const manufacturingPart = {
         level: 0,
         link: '/mbom/manufacturing',
+        revision: 'W',
         details: {
             NUMBER: 'M-100',
             TYPE: 'Manufacturing',
@@ -1759,6 +1861,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     const nestedManufacturingPart = {
         level: 2,
         link: '/mbom/nested',
+        revision: 'W',
         details: {
             NUMBER: 'M-200', TYPE: 'Manufacturing', HAS_BOM: false, MATERIAL: 'S235',
             JEDNOSTKA_ROZLICZENIOWA: 'kg', ILOSC_ROZLICZENIOWA: 1,
@@ -1815,6 +1918,7 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         rawMaterialTypeName: 'Surowiec',
         isBlank: context.isBlank,
         normalizeComparisonValue: value => String(value || '').trim().toLowerCase(),
+        isMBOMWorkingRevision: revision => ['w', 'wip', 'working'].includes(String(revision || '').trim().toLowerCase()),
         getMBOMSaveLink: () => '',
         getCustomMBOMDepth: () => 10,
         getMBOMAccountingFieldValue: (part, fieldId) => part.details[fieldId],
@@ -1829,7 +1933,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     };
     vm.createContext(rawViewContext);
     ['normalizePLMVersionLink', 'hasRawMaterialsBOMColumn', 'validateRawMaterialsBOMColumns', 'getRawMaterialsBOMView',
-        'loadRawMaterialsBOMParts', 'isRawMaterialsBOMSourcePart', 'getRawMaterialAssignmentsByMBOM',
+        'loadRawMaterialsBOMParts', 'isRawMaterialsBOMSourcePart', 'getRawMaterialSourceRevision',
+        'isWorkingRawMaterialSourcePart', 'getRawMaterialAssignmentsByMBOM',
         'resolveRawMaterialsBOMViewParts']
         .forEach(name => vm.runInContext(extractFunction(name), rawViewContext));
 
@@ -1849,6 +1954,22 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         'A nested mBOM raw material must not be mistaken for a parent assignment');
     assert.strictEqual(materials[0].hasAssignedRawMaterial, true,
         'A leaf mBOM records that its first operation already contains a raw material');
+
+    const releasedPart = {
+        level: 1,
+        link: '/mbom/released',
+        revision: 'A',
+        details: {
+            TYPE: 'Manufacturing', MATERIAL: 'RELEASED-MATERIAL', HAS_BOM: false,
+            JEDNOSTKA_ROZLICZENIOWA: 'kg', ILOSC_ROZLICZENIOWA: 1
+        }
+    };
+    assert.strictEqual(rawViewContext.isWorkingRawMaterialSourcePart(releasedPart), false);
+    assert.strictEqual(
+        rawViewContext.resolveRawMaterialsBOMViewParts([releasedPart]).length,
+        0,
+        'Released sub-mBOMs must be excluded before raw-material changes are prepared'
+    );
 
     const secondOperationOnlyAssignments = rawViewContext.getRawMaterialAssignmentsByMBOM([{
         level: 0, link: '/mbom/second-operation-only', details: { TYPE: 'Manufacturing' }
@@ -1877,13 +1998,27 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     ), false, 'Overwrite mode may update an existing raw-material assignment');
 
     const differentMaterialSource = extractFunction('getDifferentAssignedRawMaterials');
+    const knownRawMaterialSource = extractFunction('getKnownRawMaterialLinks');
+    const quantitySetSource = extractFunction('setRawMaterialQuantity');
+    const quantityComparisonSource = extractFunction('isRawMaterialQuantityUnchanged');
+    const workingProcessSource = extractFunction('ensureRawMaterialTargetWorkingRevision');
     const quantityReplacementSource = extractFunction('confirmQuantityOnlyRawMaterialReplacement');
     const overwriteRemovalSource = extractFunction('removeDifferentRawMaterialsForOverwrite');
     const rawMaterialApplySource = extractFunction('addRawMaterialsToMBOM');
     assert.match(differentMaterialSource, /itemLink === desiredItemLink/,
         'Vault overwrite must preserve the raw material selected by the current MATERIAL value');
-    assert.match(differentMaterialSource, /isAssignedRawMaterial[\s\S]*isRawMaterialPartForPinning[\s\S]*rawMaterialTypeName/,
+    assert.match(differentMaterialSource, /children\('\.item'\)/,
+        'Vault overwrite must reconcile the raw-material rows currently rendered below the target operation');
+    assert.match(differentMaterialSource, /isAssignedRawMaterial[\s\S]*isRawMaterialPartForPinning/,
         'Vault overwrite removal must be restricted to raw-material relationships');
+    assert.match(knownRawMaterialSource, /isRawMaterialPartForPinning[\s\S]*normalizePLMLink/,
+        'The full BOM response must provide stable raw-material item identities for live expanded rows');
+    assert.match(differentMaterialSource, /knownRawMaterialLinks[\s\S]*isKnownRawMaterial/,
+        'Overwrite must recognize an old raw material even when the live source entry has no assignment metadata');
+    assert.match(source, /pendingMaterials\.forEach[\s\S]*knownRawMaterialLinks/,
+        'Live expanded mBOM entries must inherit raw-material identities from the full BOM response');
+    assert.match(differentMaterialSource, /rawMaterialTypeName[\s\S]*raw material[\s\S]*rawmaterial/,
+        'Vault overwrite must recognize localized and English raw-material type names');
     assert.match(overwriteRemovalSource, /elemExisting\.remove\(\)[\s\S]*existingState\.children\.delete/,
         'A different old raw material must be removed from both the editor and duplicate-check state');
     assert.ok((rawMaterialApplySource.match(/removeDifferentRawMaterialsForOverwrite/g) || []).length >= 2,
@@ -1897,6 +2032,20 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         'Quantity-only mode must warn whenever a different raw material is assigned');
     assert.match(rawMaterialApplySource, /!quantityModeReplacementApproved[\s\S]*Aktualizacja ilości została pominięta/,
         'Declining replacement must preserve the old material and skip quantity changes');
+    assert.doesNotMatch(quantitySetSource, /attr\('data-qty'/,
+        'Changing a raw-material quantity must preserve the database baseline so Save detects the update');
+    assert.match(quantityComparisonSource, /Math\.abs\(current - desired\)/,
+        'Raw-material reconciliation must detect an unchanged quantity without rewriting it');
+    assert.match(rawMaterialApplySource, /quantityUnchanged[\s\S]*Surowiec i ilość są już aktualne; nie wykonano zmian/,
+        'Overwrite must keep an unchanged material relationship and quantity as a no-op');
+    assert.match(workingProcessSource, /resolveLinkedMBOMWorkingVersion\(currentLink\)/,
+        'A Process receiving a raw-material change must resolve its Working revision');
+    assert.match(workingProcessSource, /data-link-db[\s\S]*data-link', workingLink[\s\S]*item-revision[\s\S]*text\('W'\)/,
+        'The released Process link must remain the save baseline while the editor switches to Working');
+    assert.doesNotMatch(workingProcessSource, /\/plm\/bom-update/,
+        'The targeted Process revision switch must be persisted by the normal save pipeline, not an immediate pin/unpin request');
+    assert.ok((rawMaterialApplySource.match(/ensureRawMaterialTargetWorkingRevision/g) || []).length >= 2,
+        'Both replacement/insertion and quantity/removal changes must switch the target Process to Working');
     assert.match(rawMaterialApplySource, /mode === rawMaterialApplyModes\.overwrite \|\| quantityModeReplacementApproved/,
         'Accepting the warning must use the same safe remove-and-replace path as Vault overwrite');
 
@@ -2045,6 +2194,44 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.deepStrictEqual(Array.from(links), ['/root', '/operation', '/sub-mbom'],
         'Manufacturing and Process items are included; purchased parts and raw materials stay outside the change order');
     console.log('Change-order affected-item filtering tests passed');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+
+(async function testChangeOrderSubMBOMTransferBatching() {
+    const addCalls = [];
+    const cancelled = [];
+    const transferContext = {
+        Promise,
+        isBlank: context.isBlank,
+        normalizePLMLink: value => String(value || '').toLowerCase(),
+        getPLMItemLevelLink: value => String(value || '').replace(/\/versions\/\d+$/i, ''),
+        mapPLMRequestsWithConcurrency: async (items, limit, mapper) => {
+            assert.strictEqual(limit, 10);
+            return Promise.all(items.map(mapper));
+        },
+        findActiveMBOMChangeOrders: async link => link === '/sub-1' || link === '/sub-2' ? ['/co/old'] : [],
+        getMBOMReleaseAffectedItemLinks: async () => ['/items/from-old'],
+        cancelMBOMRelease: async link => { cancelled.push(link); return { changeOrderLink: link, cancelled: true }; },
+        addMissingMBOMAffectedItems: async (release, links) => {
+            addCalls.push({ release, links: Array.from(links) });
+            return { added: links.length };
+        }
+    };
+    vm.createContext(transferContext);
+    vm.runInContext(extractFunction('moveMBOMsToReleaseInOrder'), transferContext);
+
+    await transferContext.moveMBOMsToReleaseInOrder([
+        { link: '/sub-1', versionLink: '/sub-1/versions/1' },
+        { link: '/sub-2', versionLink: '/sub-2/versions/2' },
+        { link: '/sub-3', versionLink: '/sub-3/versions/3' }
+    ], '/co/target', 77);
+
+    assert.deepStrictEqual(cancelled, ['/co/old'], 'A shared source change order is cancelled only once');
+    assert.strictEqual(addCalls.length, 1, 'All transferred components are added to the target change order in one bulk operation');
+    assert.deepStrictEqual(addCalls[0], {
+        release: '/co/target',
+        links: ['/sub-1/versions/1', '/items/from-old', '/sub-2/versions/2', '/sub-3/versions/3']
+    });
+    console.log('Change-order sub-mBOM transfer batching tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
 (async function testSaveDoesNotCreateChangeOrder() {
@@ -2211,7 +2398,6 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
         loadMBOMChangeOrderAffectedItemLinks: async () => ['/root', '/sub', '/raw'],
         addMissingMBOMAffectedItems: async (release, links) => ({ release, added: links.length }),
         setMBOMAffectedItemLifecycleTransitions: async release => { lifecycleCalls.push(release); return []; },
-        pinMBOMManufacturingRelationshipsForRelease: async () => [],
         loadERPSyncBOMParts: async () => [],
         $(selector) {
             if(selector.indexOf('.pending') >= 0) return { length: 0 };
@@ -2257,13 +2443,8 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.ok(releaseSource.indexOf("loadERPSyncBOMParts('working')") <
         releaseSource.indexOf('findExistingMBOMChangeOrder'),
     'Finished-good validation must run before a change order is created or reused');
-    assert.ok(releaseSource.indexOf('pinMBOMManufacturingRelationshipsForRelease') <
-        releaseSource.indexOf('performMBOMChangeOrderTransition'),
-    'Manufacturing relationships must be pinned before the release transition');
-    const pinningSource = extractFunction('pinMBOMManufacturingRelationshipsForRelease');
-    assert.match(pinningSource, /pinned\s*:\s*true/);
-    assert.match(pinningSource, /isProcess[\s\S]*type\s*!==\s*'manufacturing'[\s\S]*!isProcess/,
-        'Process relationships must be revision-pinned together with Manufacturing relationships');
+    assert.doesNotMatch(releaseSource, /pinMBOMManufacturingRelationshipsForRelease|pinned\s*:\s*true/,
+        'Release must transition the prepared change order without rewriting relationship pinning');
     assert.match(extractFunction('getMBOMElementPinnedState'), /rawMaterialTypeName[\s\S]*return false/,
         'Raw-material relationships must always save as unpinned');
     const createSource = extractFunction('createMBOMChangeOrder');
@@ -2311,6 +2492,18 @@ testRawMaterialUnitWarning().catch(error => { console.error(error); process.exit
     assert.deepStrictEqual(requests.map(request => request.url), ['/plm/details', '/plm/transitions'],
         'The CO status and currently permitted workflow transitions must both be loaded');
     assert.strictEqual(workflowContext.getMBOMChangeOrderTransitionName(workflow.actions[0]), 'Zatwierdź');
+
+    workflowContext.getMBOMChangeOrderState = () => ({ id: '672', title: 'Do Kontroli' });
+    workflowContext.$.get = async url => {
+        if(url === '/plm/details') return { data: { stateId: '672', stateTitle: 'Do Kontroli' } };
+        if(url === '/plm/transitions') return { error: true, data: [], message: 'No permitted transitions' };
+        throw new Error('Unexpected request ' + url);
+    };
+    const awaitingProcessEngineer = await workflowContext.loadMBOMChangeOrderWorkflow();
+    assert.strictEqual(awaitingProcessEngineer.state.id, '672');
+    assert.strictEqual(awaitingProcessEngineer.state.title, 'Do Kontroli');
+    assert.deepStrictEqual(Array.from(awaitingProcessEngineer.actions), [],
+        'Do Kontroli remains readable when only a process engineer may perform the next transition');
 
     let openedWorkflowURL = '';
     workflowContext.genItemURL = params => {
@@ -2457,6 +2650,7 @@ async function testRecursiveRawMaterialDiscovery() {
         getPartItemLink: part => part.link,
         getMBOMItemForPart: part => part,
         isMBOMTechnologyItem: part => part.mbom,
+        isWorkingRawMaterialSourcePart: () => true,
         getERPTechnologyExpandableItems: () => visible,
         getERPTechnologyElementLink: item => item.link,
         $: () => ({ show() {} }),
@@ -2949,8 +3143,16 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
         'The mBOM client must recognize the server-side ERP simulation environment');
     assert.match(extractFunction('isERPTechnologyTestRunEnabled'), /!erpSimulationMode/,
         'Server-side simulation must run the PLM-writing path rather than export-only test run');
+    assert.match(dataSource, /const erpSimulationMode\s*=\s*common\.erp\.simulationMode\s*===\s*true/,
+        'Data Manager must recognize the server-side ERP simulation environment');
+    assert.match(extractDataFunction('startProcessing'), /options\.testRun\s*=\s*!erpSimulationMode\s*&&/,
+        'Data Manager environment simulation must execute the full PLM-writing workflow instead of the export-only preview path');
+    assert.match(dataSource, /Symulacja ERP aktywna[\s\S]*Pełny proces jest wykonywany w PLM/,
+        'Data Manager must clearly show that ERP calls are simulated while PLM writes remain active');
     assert.match(erpRouteSource, /router\.get\('\/custom-erp\/mapping'/,
         'The ERP router must expose the active shared mapping for administration');
+    assert.match(erpRouteSource, /router\.post\('\/custom-erp\/hashes'[\s\S]*values\.map\(createERPHash\)/,
+        'The ERP router must calculate all discovery hashes in one request');
     assert.strictEqual(erpMapping.operations.modifyProduct.extends, 'addProduct',
         'modify-product must inherit the common product mapping');
     assert.strictEqual(erpMapping.operations.addTechnology.endpoint, 'add-technology',
@@ -2992,6 +3194,11 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
     const sharedERPPath = path.join(__dirname, '..', 'public', 'javascripts', 'framework', 'erp.js');
     delete require.cache[require.resolve(sharedERPPath)];
     require(sharedERPPath);
+    assert.strictEqual(typeof global.erpClient.calculateHashes, 'function',
+        'The shared ERP client must expose batch hash calculation');
+    const sharedERPSource = fs.readFileSync(sharedERPPath, 'utf8');
+    assert.match(sharedERPSource, /callName === 'add-technology'[\s\S]*delete requestPayload\.id_wersji[\s\S]*delete requestPayload\.zablokowana/,
+        'The shared ERP request boundary must strip own-version fields from add-technology');
     assert.strictEqual(global.erpClient.getHash({ data: { hash: 'v1:direct' } }), 'v1:direct');
     assert.strictEqual(global.erpClient.getHash({ data: { data: { hash: 'v1:nested' } } }), 'v1:nested');
     assert.strictEqual(global.erpClient.getHash({ data: { body: { hash: 'v1:body' } } }), 'v1:body');
@@ -3169,6 +3376,7 @@ testERPTechnologyDiscoveryUsesShallowDepth().catch(error => { console.error(erro
                 erpSyncCandidates: [{ link: '/items/1', descriptor: 'Part 1' }],
                 errors: []
             },
+            erpSimulationMode: false,
             isBlank: context.isBlank,
             addLogEntry: () => {},
             createERPQuickRelease: async () => { events.push('create'); return '/quick-releases/1'; },

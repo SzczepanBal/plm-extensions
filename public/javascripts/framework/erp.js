@@ -35,10 +35,47 @@
         });
     }
 
+    function calculateHashes(hashInputs) {
+        let values = Array.isArray(hashInputs) ? hashInputs : [];
+        if(values.length === 0) return Promise.resolve([]);
+
+        return $.ajax({
+            url         : proxyBaseUrl + 'hashes',
+            method      : 'POST',
+            contentType : 'application/json',
+            data        : JSON.stringify({ values : values })
+        }).then(function(response) {
+            let containers = [
+                response,
+                response && response.data,
+                response && response.data && response.data.data
+            ];
+            let hashes = null;
+            for(let container of containers) {
+                if(container && Array.isArray(container.hashes)) {
+                    hashes = container.hashes;
+                    break;
+                }
+            }
+            if(!hashes || hashes.length !== values.length || hashes.some(isBlankValue)) {
+                throw new Error('Serwer nie zwrócił wszystkich skrótów danych ERP.');
+            }
+            return hashes.map(String);
+        });
+    }
+
     function request(callName, payload, options) {
         options = options || {};
         let url = proxyBaseUrl + (options.exportOnly ? 'export-request/' : '') + callName;
-        return $.post(url, payload, null, 'json');
+        let requestPayload = payload;
+
+        if(callName === 'add-technology' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+            requestPayload = Object.assign({}, payload);
+            delete requestPayload.id_wersji;
+            delete requestPayload.zablokowana;
+        }
+
+        return $.post(url, requestPayload, null, 'json');
     }
 
     function getOperationMapping(mapping, operationName) {
@@ -104,6 +141,7 @@
     global.erpClient = {
         proxyBaseUrl           : proxyBaseUrl,
         calculateHash          : calculateHash,
+        calculateHashes        : calculateHashes,
         execute                : execute,
         request                : request,
         getOperationMapping    : getOperationMapping,

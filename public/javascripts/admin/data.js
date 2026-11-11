@@ -5,6 +5,7 @@ let run              = {};
 let records          = null;
 const erpQuickReleaseWorkspaceId = 78;
 const erpFieldIDs = common.erp.fieldIDs;
+const erpSimulationMode = common.erp.simulationMode === true;
 const itemManagerMode = /^\/itemmgr\/?$/i.test(window.location.pathname);
 const erpCentralMapping = common.erp.mapping || { operations : {} };
 const erpAddProductMapping = window.erpClient.getOperationMapping(erpCentralMapping, 'addProduct');
@@ -19,6 +20,14 @@ const erpProductDefaults = erpAddProductMapping.defaults || {};
 
 
 $(document).ready(function() {
+
+    if(erpSimulationMode) {
+        $('#test-run')
+            .removeClass('icon-toggle-on filled')
+            .addClass('icon-toggle-off disabled')
+            .text('Symulacja ERP aktywna')
+            .attr('title', 'Pełny proces jest wykonywany w PLM. Połączenia do ERP są zastępowane symulowanymi odpowiedziami, a pola ERP i hash są zapisywane w PLM.');
+    }
 
     setUIEvents();
     insertMenu();
@@ -1114,7 +1123,9 @@ function startProcessing() {
     options.saveText      = $('#save-text'   ).val() || '--';
     options.saveClear     = $('#save-clear'  ).val() || '--';
 
-    options.testRun       = $('#test-run').hasClass('icon-toggle-on');
+    // Environment simulation must follow the normal, PLM-writing workflow.
+    // The server intercepts ERP calls and returns deterministic success data.
+    options.testRun       = !erpSimulationMode && $('#test-run').hasClass('icon-toggle-on');
     options.requestsCount = Number($('#requestsCount').val()) || 5;
     options.autoTune      = $('#auto-tune').hasClass('icon-toggle-on');
     options.maxErrors     = $('#maxErrors').val() || 10;
@@ -2115,6 +2126,8 @@ function genCompletionRequests(limit, responses) {
                     let erpActionLabel = (erpResponse && erpResponse.erpCallName) ? erpResponse.erpCallName : 'ERP';
                     let message = options.testRun
                         ? 'ERP simulated successfully for ' + erpActionLabel + ' on <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>; PLM success fields will be written'
+                        : erpSimulationMode
+                            ? 'ERP simulation succeeded for ' + erpActionLabel + ' on <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>; success fields were written in PLM'
                         : 'ERP ' + erpActionLabel + ' succeeded for <a target="_blank" href="' + genItemURL({ link : record.link }) + '">' + record.descriptor + '</a>';
                     addLogEntry(message, 'success');
                     if(erpResponse) addERPDumpLinks(erpResponse);
@@ -2649,7 +2662,7 @@ function sendERPQuickReleaseProduct(candidate) {
                     if(!updateResponse || updateResponse.error) {
                         throw new Error('ERP przyjął dane, ale zapis ERP_HASH w PLM nie powiódł się. ' + getDataManagerErrorMessage(updateResponse));
                     }
-                    addLogEntry('ERP ' + erpCallName + ' zakończono dla <a target="_blank" href="' + genItemURL({ link : candidate.link }) + '">' + candidate.descriptor + '</a>.', 'success');
+                    addLogEntry((erpSimulationMode ? 'Symulacja ERP ' : 'ERP ') + erpCallName + ' zakończona dla <a target="_blank" href="' + genItemURL({ link : candidate.link }) + '">' + candidate.descriptor + '</a>.', 'success');
                     addERPDumpLinks(erpResponse);
                     run.success++;
                     return { link : candidate.link, descriptor : candidate.descriptor, success : true, erpCallName : erpCallName };
@@ -2667,7 +2680,7 @@ function sendERPQuickReleaseProducts(candidates) {
     let results = [];
     return candidates.reduce(function(sequence, candidate, index) {
         return sequence.then(function() {
-            addLogEntry('Wysyłanie do ERP: ' + (index + 1) + ' z ' + candidates.length + ' — ' + candidate.descriptor + '.', 'notice');
+            addLogEntry((erpSimulationMode ? 'Symulowanie odpowiedzi ERP: ' : 'Wysyłanie do ERP: ') + (index + 1) + ' z ' + candidates.length + ' — ' + candidate.descriptor + '.', 'notice');
             return sendERPQuickReleaseProduct(candidate).then(function(result) { results.push(result); });
         });
     }, Promise.resolve()).then(function() { return results; });
@@ -2715,11 +2728,15 @@ function finishERPQuickReleaseWorkflow() {
         addLogEntry('Oczekiwanie na stan zwolniony (286).', 'notice');
         return waitForERPQuickReleaseState(releaseLink, '286');
     }).then(function() {
-        addLogEntry('Uruchamianie Push to ERP przejściem 1255.', 'notice');
-        return performERPQuickReleaseTransition(releaseLink, '1255', 'Rozpoczęto wysyłanie produktów do ERP z Data Manager.');
+        addLogEntry(erpSimulationMode ? 'Uruchamianie symulacji Push to ERP przejściem 1255.' : 'Uruchamianie Push to ERP przejściem 1255.', 'notice');
+        return performERPQuickReleaseTransition(releaseLink, '1255', erpSimulationMode
+            ? 'Rozpoczęto test pełnego procesu ERP w PLM; zewnętrzne połączenie ERP jest symulowane.'
+            : 'Rozpoczęto wysyłanie produktów do ERP z Data Manager.');
     }).then(function() {
         pushStarted = true;
-        addLogEntry('Ponowne odczytywanie zwolnionych danych i wysyłanie produktów do ERP.', 'notice');
+        addLogEntry(erpSimulationMode
+            ? 'Ponowne odczytywanie zwolnionych danych i symulowanie odpowiedzi ERP.'
+            : 'Ponowne odczytywanie zwolnionych danych i wysyłanie produktów do ERP.', 'notice');
         return sendERPQuickReleaseProducts(candidates);
     }).then(function(syncResults) {
         results = syncResults;
@@ -2732,7 +2749,7 @@ function finishERPQuickReleaseWorkflow() {
         return performERPQuickReleaseTransition(
             releaseLink,
             '1252',
-            'Wszystkie produkty wysłano do ERP. Liczba elementów: ' + results.length + '.'
+            (erpSimulationMode ? 'Symulacja ERP zakończona dla wszystkich produktów. ' : 'Wszystkie produkty wysłano do ERP. ') + 'Liczba elementów: ' + results.length + '.'
         );
     }).then(function() {
         addLogEntry('Quick Release zakończono przejściem 1252.', 'success');
@@ -2998,7 +3015,7 @@ function endProcessing() {
     run.active = false;
 
     $('#stop').removeClass('red');
-    $('#test-run').removeClass('disabled');
+    if(!erpSimulationMode) $('#test-run').removeClass('disabled');
     $('#start').removeClass('disabled');
     $('#progress').addClass('hidden');
     $('#overlay').hide();

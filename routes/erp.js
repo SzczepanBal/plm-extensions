@@ -660,6 +660,26 @@ module.exports = function createErpRouter(dependencies) {
             }, true);
         }
     });
+
+    router.post('/custom-erp/hashes', function(req, res) {
+        try {
+            let values = req.body && Array.isArray(req.body.values) ? req.body.values : null;
+            if(values === null) throw new Error('Pole values musi być tablicą.');
+
+            sendResponse(req, res, {
+                data : {
+                    hashes : values.map(createERPHash)
+                },
+                status : 200
+            }, false);
+        } catch(error) {
+            sendResponse(req, res, {
+                message : 'Nie udało się obliczyć skrótów danych ERP.',
+                data    : { error : error.message || String(error) },
+                status  : 500
+            }, true);
+        }
+    });
     
     router.get('/custom-erp/:callName', function(req, res) {
         invokeCustomErpCall(req, res, req.params.callName, 'POST');

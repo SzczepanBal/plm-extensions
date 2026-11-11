@@ -497,6 +497,63 @@ body.details-on.no-viewer #tabs {
     padding: 0 12px;
 }
 
+#mbom-structure-check-overlay {
+    align-items: center;
+    background: rgba(0, 0, 0, 0.48);
+    display: none;
+    justify-content: center;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+}
+
+.mbom-structure-check-card {
+    align-items: center;
+    background: var(--color-surface-level-2);
+    border: 1px solid var(--color-status-yellow);
+    border-radius: 4px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    color: var(--color-font);
+    display: flex;
+    flex-direction: column;
+    font-weight: 700;
+    gap: 14px;
+    min-width: 320px;
+    padding: 28px 36px;
+}
+
+.mbom-structure-check-spinner {
+    animation: mbom-structure-check-spin 0.9s linear infinite;
+    border: 4px solid var(--color-surface-level-4);
+    border-top-color: var(--color-status-yellow);
+    border-radius: 50%;
+    height: 30px;
+    width: 30px;
+}
+
+@keyframes mbom-structure-check-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Until the full structure is loaded, only Alignment and Add Items are
+   read-only. Raw Materials, Operations and Impuls remain available. */
+body.mbom-full-load-required #mode-ebom,
+body.mbom-full-load-required #mode-add {
+    opacity: 0.65;
+}
+
+body.mbom-full-load-required.mode-ebom #ebom-tree,
+body.mbom-full-load-required.mode-ebom #ebom-actions,
+body.mbom-full-load-required.mode-ebom #mbom-tree,
+body.mbom-full-load-required.mode-ebom #mbom-add-process,
+body.mbom-full-load-required.mode-add #add,
+body.mbom-full-load-required.mode-add #mbom-tree,
+body.mbom-full-load-required.mode-add #mbom-add-process {
+    filter: grayscale(0.55);
+    opacity: 0.58;
+    pointer-events: none;
+}
+
 body.mbom-viewing-mode #save,
 body.mbom-viewing-mode #add-all,
 body.mbom-viewing-mode #add-leaf-mboms-and-materials,
@@ -544,28 +601,5 @@ body.mbom-loading-mode #ebom-tree {
 
 body.mbom-loading-mode #main,
 body.mbom-loading-mode #header-toolbar {
-    pointer-events: none;
-}
-
-/* A working mBOM with unloaded HAS_BOM branches is temporarily locked until
-   the explicit full-BOM action completes. This is separate from released view mode. */
-body.mbom-full-load-required #save,
-body.mbom-full-load-required #add-all,
-body.mbom-full-load-required #add-leaf-mboms-and-materials,
-body.mbom-full-load-required #deselect-all,
-body.mbom-full-load-required #add-raw-materials,
-body.mbom-full-load-required #sync-erp-technologies,
-body.mbom-full-load-required #mode-add,
-body.mbom-full-load-required #mode-operations,
-body.mbom-full-load-required #mbom-add-process,
-body.mbom-full-load-required #ebom .item-actions,
-body.mbom-full-load-required #mbom .item-head-actions {
-    display: none !important;
-}
-
-body.mbom-full-load-required #mbom input,
-body.mbom-full-load-required #mbom select,
-body.mbom-full-load-required #mbom-tree,
-body.mbom-full-load-required #ebom-tree {
     pointer-events: none;
 }
